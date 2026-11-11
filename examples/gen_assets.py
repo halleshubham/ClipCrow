@@ -29,7 +29,7 @@ full = enc(["ffmpeg","-y","-f","rawvideo","-pix_fmt","rgb24","-s",f"{W}x{H}","-r
             "-f","lavfi","-i",f"sine=frequency=220:duration={SECS}","-shortest",
             "-c:v","libx264","-g",str(FPS),"-pix_fmt","yuv420p","-crf","20","-c:a","aac",f"{out}/speaker.mp4"])
 cut = enc(["ffmpeg","-y","-f","rawvideo","-pix_fmt","rgba","-s",f"{W}x{H}","-r",str(FPS),"-i","-",
-           "-c:v","libvpx-vp9","-pix_fmt","yuva420p","-b:v","1M","-auto-alt-ref","0",f"{out}/cutout.webm"])
+           "-c:v","libvpx-vp9","-pix_fmt","yuva420p","-b:v","1M","-auto-alt-ref","0","-deadline","realtime","-cpu-used","8",f"{out}/cutout.webm"])
 for n in range(FPS*SECS):
     t = n/FPS; p = person(t); bg = background(t).convert("RGBA"); bg.alpha_composite(p)
     full.stdin.write(bg.convert("RGB").tobytes()); cut.stdin.write(p.tobytes())

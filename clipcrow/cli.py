@@ -18,6 +18,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("edl"); c.add_argument("--clip", required=True); c.add_argument("--out", required=True)
     c.add_argument("--media-root", default="."); c.add_argument("--gsap")
     c.add_argument("--no-media", action="store_true", help="HTML only: skip ffmpeg and the matte")
+    t = sub.add_parser("transcribe", help="speech to a word-timed transcript JSON (faster-whisper, Indic-aware)")
+    t.add_argument("media"); t.add_argument("--out", required=True); t.add_argument("--language")
     u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
     u.add_argument("edl")
     pl = sub.add_parser("plan", help="transcript -> EDL with an LLM (needs ANTHROPIC_API_KEY)")
@@ -41,7 +43,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if a.cmd == "schema":
             print(json.dumps(json_schema(), indent=2)); return 0
-        edl = None if a.cmd == "plan" else load_edl(a.edl)
+        if a.cmd == "transcribe":
+            from .asr import release_models, transcribe
+            tr = transcribe(a.media, a.language, progress=lambda m: print(f"  {m}", file=sys.stderr))
+            Path(a.out).write_text(json.dumps({"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in tr.words]},
+                                              ensure_ascii=False, indent=1), encoding="utf-8")
+            release_models()
+            print(f"{len(tr.words)} words, {len(tr.sentences)} sentences, language {tr.language} -> {a.out}")
+            return 0
+        edl = None if a.cmd in ("plan",) else load_edl(a.edl)
         if a.cmd == "usage":
             from .provenance import summary
             print(summary(edl)); return 0
