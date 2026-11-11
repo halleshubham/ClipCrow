@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 from ..costs import estimate_total
 from ..edl import EDL, AIUsage, Asset, ClipAI, EDLError
+from ..fonts import DEFAULT_DEVANAGARI
 from . import prompts
 from .llm import LLM, LLMError
 from .models import DetailResult, ScoreResult
@@ -221,7 +222,7 @@ def _clip_dict(n: int, c: PlannedClip, tr: Transcript, opts: PlannerOptions, lan
         "id": f"c{n}", "source_in": round(c.start, 3), "source_out": round(c.end, 3), "title": c.title,
         "layout": {"mode": "cutout_behind" if opts.cutout else "passthrough"},
         "captions": {"max_words": opts.caption_max_words, "emphasis_words": c.emphasis,
-                     "font_family": "Noto Sans Devanagari" if deva else "Noto Sans"},
+                     "font_family": DEFAULT_DEVANAGARI if deva else "Noto Sans"},
         "overlays": [],
     }
     ov = d["overlays"]

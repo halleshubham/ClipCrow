@@ -22,6 +22,9 @@ reproducible (same browser binary → byte-identical video, verified) and an edi
 - **Text behind the speaker** (footage → text → alpha cutout of the person → captions).
 - **Devanagari** (Marathi, Hindi) captions, correctly shaped, with the font shipped per project.
 - Sentence breaks on danda/double-danda, pause-aware caption grouping.
+- **Default font: Noto Serif Devanagari** (bold). It has no Latin letters, so Latin words ("WhatsApp", the x in
+  "10x") get a **Noto Serif** companion shipped with the project and named in the font stack; the companion is only
+  added when the text needs it. Needs `fonts-noto-core` or `CLIPCROW_FONT_DIR`.
 - Hostile-input safe: EDL values are restricted to safe shapes and HTML-escaped; media must sit
   under `--media-root`; remote URLs are refused.
 

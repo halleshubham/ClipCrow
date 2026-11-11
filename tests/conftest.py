@@ -48,6 +48,7 @@ def gsap(tmp_path):
 def fonts_available():
     from clipcrow import fonts
     try:
-        fonts.resolve_font("Noto Sans Devanagari", 700)
+        fonts.resolve_font("Noto Serif Devanagari", 700)
+        fonts.resolve_font("Noto Serif", 700)
     except fonts.FontNotFound:
-        pytest.skip("Noto Sans Devanagari is not installed (fonts-noto-core)")
+        pytest.skip("Noto Serif Devanagari / Noto Serif are not installed (fonts-noto-core)")

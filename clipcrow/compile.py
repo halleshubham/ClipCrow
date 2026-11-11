@@ -145,7 +145,7 @@ def _captions_scene(clip: Clip, groups: list[CaptionGroup], family: str, face: s
     emph = set(st.emphasis_words)
     css = f"""    {face}
     .grp {{ position: absolute; left: 0; right: 0; top: {st.top_px}px; text-align: center; overflow: visible;
-      font-family: "{family}", sans-serif; font-weight: {st.font_weight}; line-height: 1.25; color: {st.color};
+      font-family: {family}, sans-serif; font-weight: {st.font_weight}; line-height: 1.25; color: {st.color};
       text-shadow: 0 4px 0 rgba(0,0,0,.85), 0 0 24px rgba(0,0,0,.6); }}
     .grp .w {{ display: inline-block; margin: 0 .16em; }}
     .grp .hot {{ color: {st.highlight_color}; }}"""
@@ -172,7 +172,7 @@ def _captions_scene(clip: Clip, groups: list[CaptionGroup], family: str, face: s
 def _behind_scene(items, family: str, face: str, w: int, h: int) -> str:
     css = f"""    {face}
     .bw {{ position: absolute; left: 0; right: 0; text-align: center; overflow: visible; line-height: 1.1;
-      font-family: "{family}", sans-serif; font-weight: 700; text-shadow: 0 8px 40px rgba(0,0,0,.35); }}"""
+      font-family: {family}, sans-serif; font-weight: 700; text-shadow: 0 8px 40px rgba(0,0,0,.35); }}"""
     body, script = [], []
     for o, t0, d in items:
         body.append(f'    <div id="ov-{o.id}" class="bw clip" data-start="{_num(t0)}" data-duration="{_num(d)}" '
@@ -188,13 +188,13 @@ def _behind_scene(items, family: str, face: str, w: int, h: int) -> str:
 def _cards_scene(items, family: str, face: str, w: int, h: int) -> str:
     css = f"""    {face}
     .lt {{ position: absolute; left: 60px; width: 700px; padding: 26px 34px; border-radius: 22px;
-      background: rgba(15,16,22,.78); color: #fff; font-family: "{family}", sans-serif; font-weight: 700; }}
+      background: rgba(15,16,22,.78); color: #fff; font-family: {family}, sans-serif; font-weight: 700; }}
     .lt .n {{ font-size: 54px; line-height: 1.3; }}
     .lt .r {{ font-size: 36px; color: #ffd54a; margin-top: 6px; }}
     .hook {{ position: absolute; left: 60px; right: 60px; padding: 24px 32px; border-radius: 24px; text-align: center;
-      background: rgba(15,16,22,.82); color: #fff; line-height: 1.25; font-family: "{family}", sans-serif; font-weight: 700; }}
+      background: rgba(15,16,22,.82); color: #fff; line-height: 1.25; font-family: {family}, sans-serif; font-weight: 700; }}
     .pill {{ position: absolute; right: 60px; padding: 20px 30px; border-radius: 999px; background: #ffd54a;
-      color: #111; font-family: "{family}", sans-serif; font-weight: 700; font-size: 52px; }}"""
+      color: #111; font-family: {family}, sans-serif; font-weight: 700; font-size: 52px; }}"""
     body, script = [], []
     for o, t0, d in items:
         end_fade = _num(max(t0, t0 + d - 0.35))
@@ -314,19 +314,26 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
     font_file = fonts.resolve_font(family, clip.captions.font_weight)
     shutil.copyfile(font_file, project / "assets" / "fonts" / font_file.name)
     face = _font_face(family, font_file.name, clip.captions.font_weight)
+    stack = f'"{family}"'
+    latin = fonts.companion(family, *texts)           # Latin letters (WhatsApp, 10x) need their own face
+    if latin:
+        lfile = fonts.resolve_font(latin, clip.captions.font_weight)
+        shutil.copyfile(lfile, project / "assets" / "fonts" / lfile.name)
+        face += "\n    " + _font_face(latin, lfile.name, clip.captions.font_weight)
+        stack += f', "{latin}"'
 
     behind = [x for x in overlays if isinstance(x[0], TextBehind)]
     cards = [x for x in overlays if isinstance(x[0], (LowerThird, StatPill, Hook))]
     scenes: list[str] = []
     if behind:
-        (project / "compositions" / "behind.html").write_text(_behind_scene(behind, family, face, w, h), "utf-8")
+        (project / "compositions" / "behind.html").write_text(_behind_scene(behind, stack, face, w, h), "utf-8")
         scenes.append("behind")
     if groups:
         (project / "compositions" / "captions.html").write_text(
-            _captions_scene(clip, groups, family, face, w, h), "utf-8")
+            _captions_scene(clip, groups, stack, face, w, h), "utf-8")
         scenes.append("captions")
     if cards:
-        (project / "compositions" / "cards.html").write_text(_cards_scene(cards, family, face, w, h), "utf-8")
+        (project / "compositions" / "cards.html").write_text(_cards_scene(cards, stack, face, w, h), "utf-8")
         scenes.append("cards")
 
     cutout = clip.layout.mode == "cutout_behind"

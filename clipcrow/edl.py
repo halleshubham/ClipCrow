@@ -156,7 +156,7 @@ class CaptionStyle(_Model):
     enabled: bool = True
     max_words: int = Field(default=4, ge=1, le=8)
     pause_break: float = Field(default=0.15, ge=0)       # seconds of silence that ends a group
-    font_family: FontFamily = "Noto Sans Devanagari"            # resolved to a file by clipcrow.fonts
+    font_family: FontFamily = "Noto Serif Devanagari"            # resolved to a file by clipcrow.fonts
     font_weight: int = 700
     color: HexColor = "#FFFFFF"
     highlight_color: HexColor = "#FFD54A"

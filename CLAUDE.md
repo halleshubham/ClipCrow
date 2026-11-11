@@ -21,6 +21,8 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
 - Pin the HyperFrames version (`render.HYPERFRAMES_VERSION`): another Chrome/CLI build changes pixels.
 - Licence is AGPL-3.0. Do not copy code from OpenShorts' `cloud/` directory (separate commercial licence).
 - Marathi/Hindi copy must be Devanagari; keep tests with Devanagari fixtures.
+- Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
+  companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
 
 ## CI
 A green pipeline closes a task, not the push: after pushing, confirm the commit's workflow is green.

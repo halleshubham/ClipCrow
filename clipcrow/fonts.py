@@ -14,11 +14,18 @@ DEVANAGARI = re.compile("[ऀ-ॿ꣠-ꣿ]")
 
 # family -> {weight: file name}
 KNOWN = {
+    "Noto Serif Devanagari": {400: "NotoSerifDevanagari-Regular.ttf", 700: "NotoSerifDevanagari-Bold.ttf"},
+    "Noto Serif": {400: "NotoSerif-Regular.ttf", 700: "NotoSerif-Bold.ttf"},
     "Noto Sans Devanagari": {400: "NotoSansDevanagari-Regular.ttf", 700: "NotoSansDevanagari-Bold.ttf"},
     "Noto Sans": {400: "NotoSans-Regular.ttf", 700: "NotoSans-Bold.ttf"},
 }
+DEFAULT_DEVANAGARI = "Noto Serif Devanagari"
+# The Devanagari faces cover Devanagari, digits and punctuation but NOT Latin letters, so words like
+# "WhatsApp" or the x in "10x" need a companion face, shipped with the project and named in the font stack.
+LATIN_COMPANION = {"Noto Serif Devanagari": "Noto Serif", "Noto Sans Devanagari": "Noto Sans"}
+LATIN = re.compile("[A-Za-z]")
 SYSTEM_DIRS = ["/usr/share/fonts/truetype/noto", "/usr/share/fonts/noto", "/usr/local/share/fonts"]
-DEVANAGARI_FAMILIES = {"Noto Sans Devanagari"}
+DEVANAGARI_FAMILIES = {"Noto Serif Devanagari", "Noto Sans Devanagari"}
 
 
 class FontNotFound(RuntimeError):
@@ -57,5 +64,15 @@ def needs_devanagari(*texts: str) -> bool:
 def effective_family(family: str, texts: list[str]) -> str:
     """Swap a Latin-only family for the Devanagari one when the text needs it."""
     if needs_devanagari(*texts) and family not in DEVANAGARI_FAMILIES:
-        return "Noto Sans Devanagari"
+        return DEFAULT_DEVANAGARI
     return family
+
+
+def needs_latin(*texts: str) -> bool:
+    return any(LATIN.search(t or "") for t in texts)
+
+
+def companion(family: str, *texts: str) -> str | None:
+    """The Latin companion to ship with ``family`` for these texts, or None when it is not needed."""
+    name = LATIN_COMPANION.get(family)
+    return name if name and needs_latin(*texts) else None

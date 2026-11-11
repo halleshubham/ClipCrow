@@ -32,7 +32,7 @@ def test_no_scene_is_written_when_it_has_nothing_to_show(make_edl, tmp_path, gsa
 
 def test_latin_font_is_swapped_for_devanagari_text(make_edl, tmp_path, gsap, fonts_available):
     clip = {**CLIP, "captions": {"font_family": "Noto Sans"}}
-    assert build(make_edl, tmp_path, gsap, clip).font_family == "Noto Sans Devanagari"
+    assert build(make_edl, tmp_path, gsap, clip).font_family == "Noto Serif Devanagari"
 
 
 def test_hostile_text_is_escaped(make_edl, tmp_path, gsap, fonts_available):
@@ -120,3 +120,39 @@ def test_captions_drop_terminal_danda_but_keep_question_marks(make_edl, tmp_path
     res = compile_clip(edl, edl.clips[0], tmp_path / "p", media_root=tmp_path, gsap_js=gsap, prepare=False)
     html = (res.project_dir / "compositions" / "captions.html").read_text()
     assert ">आयुष्य<" in html and ">का?<" in html and ">होय<" in html
+
+
+# --- fonts: Noto Serif Devanagari is the default, with a Latin companion only when needed ------------
+
+def test_default_caption_font_is_noto_serif_devanagari():
+    from clipcrow.edl import CaptionStyle
+    assert CaptionStyle().font_family == "Noto Serif Devanagari"
+
+
+def test_devanagari_only_text_ships_just_the_default_font(make_edl, tmp_path, gsap, fonts_available):
+    res = build(make_edl, tmp_path, gsap, CLIP)
+    shipped = sorted(p.name for p in (res.project_dir / "assets" / "fonts").iterdir())
+    assert shipped == ["NotoSerifDevanagari-Bold.ttf"]
+    html = (res.project_dir / "compositions" / "captions.html").read_text()
+    assert 'font-family: "Noto Serif Devanagari", sans-serif' in html
+
+
+def test_latin_words_get_a_noto_serif_companion_in_the_font_stack(make_edl, tmp_path, gsap, fonts_available):
+    """Noto Serif Devanagari has no Latin letters: 'WhatsApp' or the x in '10x' would fall back to whatever
+    the render machine has. The companion is shipped and named in the stack."""
+    clip = {"id": "c1", "source_in": 0, "source_out": 10,
+            "overlays": [{"kind": "stat_pill", "id": "p", "t_in": 3, "text": "10x"}]}
+    res = build(make_edl, tmp_path, gsap, clip)
+    shipped = sorted(p.name for p in (res.project_dir / "assets" / "fonts").iterdir())
+    assert shipped == ["NotoSerif-Bold.ttf", "NotoSerifDevanagari-Bold.ttf"]
+    cards = (res.project_dir / "compositions" / "cards.html").read_text()
+    assert 'font-family: "Noto Serif Devanagari", "Noto Serif", sans-serif' in cards
+    assert '@font-face { font-family: "Noto Serif"' in cards
+
+
+def test_the_devanagari_font_really_lacks_latin_letters(fonts_available):
+    """The reason the companion exists; if Noto ever adds Latin this test says the companion can go."""
+    ft = pytest.importorskip("fontTools.ttLib")
+    from clipcrow import fonts
+    cmap = ft.TTFont(str(fonts.resolve_font("Noto Serif Devanagari", 700))).getBestCmap()
+    assert ord("x") not in cmap and ord("क") in cmap and ord("₹") in cmap
