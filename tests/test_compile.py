@@ -155,4 +155,8 @@ def test_the_devanagari_font_really_lacks_latin_letters(fonts_available):
     ft = pytest.importorskip("fontTools.ttLib")
     from clipcrow import fonts
     cmap = ft.TTFont(str(fonts.resolve_font("Noto Serif Devanagari", 700))).getBestCmap()
-    assert ord("x") not in cmap and ord("क") in cmap and ord("₹") in cmap
+    assert ord("क") in cmap and ord("₹") in cmap
+    if ord("x") in cmap:
+        # The Google Fonts build (npm) already carries Latin; the Debian fonts-noto-core build does not.
+        # The companion stays: we cannot know which build a deployment installs, and it is harmless.
+        pytest.skip("this Noto Serif Devanagari build already has Latin letters; the companion is redundant here")

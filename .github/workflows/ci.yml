@@ -18,12 +18,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       # Devanagari font tests need Noto; without it they skip, so install it.
-      - name: System packages (fonts, ffmpeg)
-        timeout-minutes: 4
-        run: |
-          APT='-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
-          sudo apt-get $APT update
-          sudo apt-get $APT install -y --no-install-recommends fonts-noto-core ffmpeg
+      # No apt: the runners' Ubuntu mirrors are not always reachable. GitHub and npm are.
+      - name: ffmpeg and Noto fonts
+        timeout-minutes: 8
+        run: scripts/ci_system_deps.sh
       - run: pip install -e '.[dev,llm,vision,service]'
       - run: pytest -q
 
@@ -40,12 +38,10 @@ jobs:
         with:
           node-version: "22"
       # FFmpeg is not preinstalled on every runner image.
-      - name: System packages (fonts, ffmpeg)
-        timeout-minutes: 4
-        run: |
-          APT='-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
-          sudo apt-get $APT update
-          sudo apt-get $APT install -y --no-install-recommends fonts-noto-core ffmpeg
+      # No apt: the runners' Ubuntu mirrors are not always reachable. GitHub and npm are.
+      - name: ffmpeg and Noto fonts
+        timeout-minutes: 8
+        run: scripts/ci_system_deps.sh
       - run: pip install -e '.[dev,llm,examples,vision,service]'
       - run: scripts/fetch_gsap.sh
       - run: python examples/gen_assets.py
