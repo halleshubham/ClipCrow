@@ -34,6 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     pl = sub.add_parser("plan", help="transcript -> EDL with an LLM (needs ANTHROPIC_API_KEY)")
     pl.add_argument("transcript"); pl.add_argument("--source", required=True, help="the source video file")
     pl.add_argument("--out", required=True); pl.add_argument("--media-root", default=".")
+    pl.add_argument("--duration", type=float, help="source length in seconds, when the video file is not available")
     pl.add_argument("--job-id", default="job"); pl.add_argument("--language")
     pl.add_argument("--clips", type=int, help="how many clips (default: about one per 2 minutes)")
     pl.add_argument("--min-clip", type=int, default=15); pl.add_argument("--max-clip", type=int, default=60)
@@ -42,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--model", help="default: $CLIPCROW_MODEL or claude-opus-5-5")
     pl.add_argument("--score-model", help="cheaper model for the window-scoring pass")
     pl.add_argument("--report", help="write the planning report (scores, drops, warnings) here")
+    pl.add_argument("--answers", help="answer prompts from files in this directory instead of calling an API "
+                                       "(queues unanswered prompts in DIR/pending/)")
     r = sub.add_parser("render", help="compile, check and render a clip to MP4")
     r.add_argument("edl"); r.add_argument("--clip", required=True); r.add_argument("--out", required=True)
     r.add_argument("--media-root", default="."); r.add_argument("--workdir", default="build")
@@ -84,13 +87,28 @@ def main(argv: list[str] | None = None) -> int:
             from .planner.source import probe_source
             tr = load_transcript(a.transcript, a.language)
             src_path = Path(a.media_root) / a.source
-            source = probe_source(src_path, uri=a.source)
-            llm = AnthropicLLM(a.model)
-            score_llm = AnthropicLLM(a.score_model) if a.score_model else None
+            if src_path.is_file():
+                source = probe_source(src_path, uri=a.source)
+            elif a.duration:
+                from .planner import SourceInfo
+                source = SourceInfo(uri=a.source, duration=a.duration)
+            else:
+                raise ValueError(f"{src_path} not found; pass --duration to plan from the transcript alone")
+            if a.answers:
+                from .planner import ReplayLLM
+                llm, score_llm = ReplayLLM(a.answers), None
+            else:
+                llm = AnthropicLLM(a.model)
+                score_llm = AnthropicLLM(a.score_model) if a.score_model else None
             opts = PlannerOptions(job_id=a.job_id, min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips,
                                   cutout=a.cutout, speaker_name=a.speaker_name, speaker_title=a.speaker_title,
                                   on_progress=lambda m: print(f"  {m}", file=sys.stderr))
-            plan = plan_edl(tr, source, llm, opts, score_llm=score_llm)
+            try:
+                plan = plan_edl(tr, source, llm, opts, score_llm=score_llm)
+            except Exception:
+                if a.answers and getattr(llm, "pending", None):
+                    print(f"{len(llm.pending)} prompt(s) need an answer: see {a.answers}/pending/", file=sys.stderr)
+                raise
             Path(a.out).write_text(plan.edl.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
             if a.report:
                 Path(a.report).write_text(json.dumps(plan.report, ensure_ascii=False, indent=2), encoding="utf-8")

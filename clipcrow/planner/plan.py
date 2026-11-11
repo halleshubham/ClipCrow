@@ -83,6 +83,9 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
     score_llm = score_llm or llm
     report: dict = {"warnings": [], "dropped": [], "windows": [], "clips": []}
     lang = tr.language
+    if tr.timing == "cue":
+        report["warnings"].append("word times are interpolated from subtitle cues: cuts are sentence-accurate, "
+                                  "caption highlighting is approximate")
 
     windows = build_windows(tr.sentences, window_seconds=max(90, int(opts.max_clip * 1.5)))
     say(f"{len(tr.sentences)} sentences, {len(windows)} windows")
