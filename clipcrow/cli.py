@@ -9,7 +9,7 @@ from .edl import EDLError, json_schema, load_edl
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="reelcore")
+    ap = argparse.ArgumentParser(prog="clipcrow")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("schema", help="print the EDL JSON schema")
     v = sub.add_parser("validate", help="validate an EDL file")
@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--min-clip", type=int, default=15); pl.add_argument("--max-clip", type=int, default=60)
     pl.add_argument("--cutout", action="store_true", help="allow text behind the speaker (a cutout will exist)")
     pl.add_argument("--speaker-name"); pl.add_argument("--speaker-title", default="")
-    pl.add_argument("--model", help="default: $REELCORE_MODEL or claude-opus-5-5")
+    pl.add_argument("--model", help="default: $CLIPCROW_MODEL or claude-opus-5-5")
     pl.add_argument("--score-model", help="cheaper model for the window-scoring pass")
     pl.add_argument("--report", help="write the planning report (scores, drops, warnings) here")
     r = sub.add_parser("render", help="compile, check and render a clip to MP4")

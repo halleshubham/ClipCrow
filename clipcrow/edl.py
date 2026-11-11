@@ -66,7 +66,7 @@ class Layout(_Model):
     # cutout_behind: a person matte (alpha WebM) is painted above the text layer,
     # so `text_behind` overlays sit behind the speaker. `cutout_uri`, when given,
     # must already be aligned to the CLIP (frame 0 = clip start); when absent the
-    # pipeline generates it from the prepared clip (reelcore.matte).
+    # pipeline generates it from the prepared clip (clipcrow.matte).
     mode: Literal["passthrough", "cutout_behind"] = "passthrough"
     cutout_uri: Optional[str] = None
 
@@ -75,7 +75,7 @@ class CaptionStyle(_Model):
     enabled: bool = True
     max_words: int = Field(default=4, ge=1, le=8)
     pause_break: float = Field(default=0.15, ge=0)       # seconds of silence that ends a group
-    font_family: FontFamily = "Noto Sans Devanagari"            # resolved to a file by reelcore.fonts
+    font_family: FontFamily = "Noto Sans Devanagari"            # resolved to a file by clipcrow.fonts
     font_weight: int = 700
     color: HexColor = "#FFFFFF"
     highlight_color: HexColor = "#FFD54A"

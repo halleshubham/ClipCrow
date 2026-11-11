@@ -16,7 +16,7 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
     clip = next((c for c in edl.clips if c.id == clip_id), None)
     if clip is None:
         raise EDLError(f"no clip {clip_id!r}; have {[c.id for c in edl.clips]}")
-    gsap_js = gsap_js or os.environ.get("REELCORE_GSAP")
+    gsap_js = gsap_js or os.environ.get("CLIPCROW_GSAP")
     project = Path(workdir) / f"{edl.job_id}-{clip.id}"
 
     compiled = compile_clip(
@@ -28,5 +28,5 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
         if problems:
             raise EDLError("the compiled project failed HyperFrames check:\n  " + "\n  ".join(problems))
     out = render.render(project, output, quality=edl.render.quality, workers=workers,
-                        browser_path=os.environ.get("REELCORE_BROWSER"))
+                        browser_path=os.environ.get("CLIPCROW_BROWSER"))
     return out, compiled

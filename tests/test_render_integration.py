@@ -1,5 +1,5 @@
 """End to end through the real HyperFrames CLI. Needs Node 22, FFmpeg and Chrome:
-    scripts/fetch_gsap.sh && python examples/gen_assets.py && REELCORE_RENDER_TESTS=1 pytest -m render
+    scripts/fetch_gsap.sh && python examples/gen_assets.py && CLIPCROW_RENDER_TESTS=1 pytest -m render
 """
 import json
 import os
@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from reelcore import render
-from reelcore.edl import load_edl
-from reelcore.pipeline import render_clip
+from clipcrow import render
+from clipcrow.edl import load_edl
+from clipcrow.pipeline import render_clip
 
 ROOT = Path(__file__).resolve().parent.parent
 pytestmark = [pytest.mark.render,
-              pytest.mark.skipif(not os.environ.get("REELCORE_RENDER_TESTS"), reason="set REELCORE_RENDER_TESTS=1")]
+              pytest.mark.skipif(not os.environ.get("CLIPCROW_RENDER_TESTS"), reason="set CLIPCROW_RENDER_TESTS=1")]
 
 
 def probe(path):

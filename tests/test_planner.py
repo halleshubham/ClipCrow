@@ -2,13 +2,13 @@ import re
 
 import pytest
 
-from reelcore.edl import EDL
-from reelcore.planner import FakeLLM, LLMError, PlanError, PlannerOptions, SourceInfo, parse_transcript, plan_edl
-from reelcore.planner.models import DetailResult, ScoreResult
-from reelcore.planner.select import (PlannedClip, clean_text, drop_overlaps, find_word, fit_bounds, norm_word,
+from clipcrow.edl import EDL
+from clipcrow.planner import FakeLLM, LLMError, PlanError, PlannerOptions, SourceInfo, parse_transcript, plan_edl
+from clipcrow.planner.models import DetailResult, ScoreResult
+from clipcrow.planner.select import (PlannedClip, clean_text, drop_overlaps, find_word, fit_bounds, norm_word,
                                       wrong_script)
-from reelcore.planner.transcript import split_sentences
-from reelcore.planner.windows import Window, build_windows
+from clipcrow.planner.transcript import split_sentences
+from clipcrow.planner.windows import Window, build_windows
 
 WORDS = ["क्षणात", "आयुष्य", "बदलणारे", "ज्ञान", "शक्ती", "श्रद्धा", "मार्ग", "यश"]
 
@@ -98,7 +98,7 @@ def test_drop_overlaps_keeps_the_best():
 
 def test_find_word_ignores_punctuation_and_case():
     tr = make_transcript()
-    from reelcore.planner.models import Mark
+    from clipcrow.planner.models import Mark
     assert find_word(Mark(sentence=0, word="बदलणारे।"), tr.sentences, tr, 0, 5) is not None
     assert find_word(Mark(sentence=0, word="nonsense"), tr.sentences, tr, 0, 5) is None
     assert find_word(Mark(sentence=9, word="आयुष्य"), tr.sentences, tr, 0, 5) is None   # sentence outside the clip
@@ -221,7 +221,7 @@ def test_hostile_transcript_text_stays_inside_the_fence_and_cannot_change_the_ed
 
 
 def test_planned_edl_compiles(tmp_path, fonts_available):
-    from reelcore.compile import compile_clip
+    from clipcrow.compile import compile_clip
     plan = plan_edl(make_transcript(), SRC, scripted(), PlannerOptions(target_clips=1, cutout=True, workers=1))
     g = tmp_path / "g.js"; g.write_text("x")
     res = compile_clip(plan.edl, plan.edl.clips[0], tmp_path / "p", media_root=tmp_path, gsap_js=g, prepare=False)

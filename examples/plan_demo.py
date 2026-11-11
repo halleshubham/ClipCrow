@@ -6,9 +6,9 @@ import re
 import sys
 from pathlib import Path
 
-from reelcore.pipeline import render_clip
-from reelcore.planner import FakeLLM, PlannerOptions, SourceInfo, load_transcript, plan_edl
-from reelcore.planner.models import DetailResult, ScoreResult
+from clipcrow.pipeline import render_clip
+from clipcrow.planner import FakeLLM, PlannerOptions, SourceInfo, load_transcript, plan_edl
+from clipcrow.planner.models import DetailResult, ScoreResult
 
 ROOT = Path(__file__).resolve().parent.parent
 tr = load_transcript(ROOT / "examples" / "demo_transcript.json")

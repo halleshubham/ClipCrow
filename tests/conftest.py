@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from reelcore.edl import EDL
+from clipcrow.edl import EDL
 
 ROOT = Path(__file__).resolve().parent.parent
 GSAP = ROOT / "vendor" / "gsap.min.js"
@@ -46,7 +46,7 @@ def gsap(tmp_path):
 
 @pytest.fixture
 def fonts_available():
-    from reelcore import fonts
+    from clipcrow import fonts
     try:
         fonts.resolve_font("Noto Sans Devanagari", 700)
     except fonts.FontNotFound:

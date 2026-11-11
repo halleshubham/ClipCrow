@@ -1,7 +1,8 @@
 [project]
-name = "reelcore"
+name = "clipcrow"
 version = "0.1.0"
 description = "EDL-driven short-video renderer: EDL JSON in, HyperFrames project and MP4 out."
+license = {file = "LICENSE"}
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.6"]
 
@@ -9,15 +10,15 @@ dependencies = ["pydantic>=2.6"]
 dev = ["pytest>=8"]
 
 [project.scripts]
-reelcore = "reelcore.cli:main"
+clipcrow = "clipcrow.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["reelcore*"]
+include = ["clipcrow*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["render: needs Node 22, FFmpeg, Chrome and the HyperFrames CLI (set REELCORE_RENDER_TESTS=1)"]
+markers = ["render: needs Node 22, FFmpeg, Chrome and the HyperFrames CLI (set CLIPCROW_RENDER_TESTS=1)"]

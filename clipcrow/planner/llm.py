@@ -27,7 +27,7 @@ class AnthropicLLM:
     """Claude via the official SDK, structured output through ``messages.parse``.
 
     Auth comes from the environment (ANTHROPIC_API_KEY or an `ant auth login` profile).
-    The model is ``$REELCORE_MODEL`` or claude-opus-5-5; pass ``model=`` per instance to use a
+    The model is ``$CLIPCROW_MODEL`` or claude-opus-5-5; pass ``model=`` per instance to use a
     cheaper one for the scoring pass.
     """
 
@@ -35,7 +35,7 @@ class AnthropicLLM:
         import anthropic  # imported lazily: the planner's tests need no SDK or key
         self._anthropic = anthropic
         self.client = client or anthropic.Anthropic()
-        self.model = model or os.environ.get("REELCORE_MODEL") or DEFAULT_MODEL
+        self.model = model or os.environ.get("CLIPCROW_MODEL") or DEFAULT_MODEL
         self.max_tokens = max_tokens
         self.input_tokens = 0
         self.output_tokens = 0

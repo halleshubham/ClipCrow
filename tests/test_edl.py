@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from reelcore.edl import EDL, json_schema
+from clipcrow.edl import EDL, json_schema
 from tests.conftest import base_edl
 
 

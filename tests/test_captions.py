@@ -1,5 +1,5 @@
-from reelcore.captions import clip_words, group_words
-from reelcore.edl import Word
+from clipcrow.captions import clip_words, group_words
+from clipcrow.edl import Word
 
 
 def W(w, s, e):

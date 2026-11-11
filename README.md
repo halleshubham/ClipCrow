@@ -1,6 +1,6 @@
-# reelcore
+# ClipCrow
 
-EDL in, short video out. A planner (an LLM or a person) writes an **Edit Decision List**; reelcore
+EDL in, short video out. A planner (an LLM or a person) writes an **Edit Decision List**; clipcrow
 compiles it into a [HyperFrames](https://github.com/heygen-com/hyperframes) project (HTML rendered
 deterministically by headless Chrome + FFmpeg) and renders the MP4.
 
@@ -27,7 +27,7 @@ reproducible (same browser binary → byte-identical video, verified) and an edi
 
 ## Planner (transcript → EDL)
 ```
-reelcore plan transcript.json --source podcast.mp4 --media-root media/ --out edl.json \
+clipcrow plan transcript.json --source podcast.mp4 --media-root media/ --out edl.json \
          --clips 5 --cutout --speaker-name "शुभम" --report plan-report.json
 ```
 ```
@@ -42,7 +42,7 @@ sentences ─► windows (≥90 s, overlapping) ─► [LLM] score hook / comple
   if it is still wrong the on-screen hook is dropped (the clip keeps its title and is flagged).
 - **Untrusted transcript**: it is fenced as data, the system prompt says so, and every output is
   length-capped, control-character-stripped, validated and HTML-escaped later.
-- **Models**: `$REELCORE_MODEL` or `claude-opus-5-5`; `--score-model` takes a cheaper one for the scoring pass.
+- **Models**: `$CLIPCROW_MODEL` or `claude-opus-5-5`; `--score-model` takes a cheaper one for the scoring pass.
   A refusal or truncation skips one window instead of failing the plan.
 - Tested with a scripted model; **not yet run against the live API** (needs `ANTHROPIC_API_KEY`).
 - `examples/plan_demo.py --render` runs planner → EDL → MP4 end to end with a scripted model.
@@ -52,15 +52,15 @@ sentences ─► windows (≥90 s, overlapping) ─► [LLM] score hook / comple
 pip install -e '.[dev]'
 ./scripts/fetch_gsap.sh                      # GSAP is fetched, never committed (see Licences)
 python examples/gen_assets.py                # synthetic demo footage + cutout
-reelcore validate examples/demo.edl.json
-reelcore render examples/demo.edl.json --clip c1 --out build/c1.mp4 \
+clipcrow validate examples/demo.edl.json
+clipcrow render examples/demo.edl.json --clip c1 --out build/c1.mp4 \
          --media-root examples/assets --gsap vendor/gsap.min.js
 pytest                                       # unit tests
-REELCORE_RENDER_TESTS=1 pytest -m render     # + a real render (needs Node 22, FFmpeg, Chrome)
+CLIPCROW_RENDER_TESTS=1 pytest -m render     # + a real render (needs Node 22, FFmpeg, Chrome)
 ```
-Fonts: install `fonts-noto-core` or set `REELCORE_FONT_DIR`. The CLI version is pinned
-(`render.HYPERFRAMES_VERSION`); override the command with `REELCORE_HF_BIN`, the browser with
-`REELCORE_BROWSER`.
+Fonts: install `fonts-noto-core` or set `CLIPCROW_FONT_DIR`. The CLI version is pinned
+(`render.HYPERFRAMES_VERSION`); override the command with `CLIPCROW_HF_BIN`, the browser with
+`CLIPCROW_BROWSER`.
 
 ## Measured (spike, 4 CPU cores, no GPU)
 12 s of 1080×1920 @30 fps renders in ~21 s (≈1.8 s per output second). Person matte on CPU is
@@ -90,7 +90,12 @@ free-form animation), or get the licence position confirmed before building v2.
 - GSAP: free for commercial use under GreenSock's own licence, with the Webflow-competitor
   restriction above. Fetched from npm at build time (`scripts/fetch_gsap.sh`), not redistributed here.
 - Noto fonts: SIL OFL. Parakeet (if used for non-Indic ASR): CC-BY-4.0, attribution required.
-- Code taken from the OpenShorts fork keeps its MIT notice. Do **not** copy its `cloud/` directory
-  (separate commercial licence) or depend on `ultralytics` (AGPL) without a licence.
+- Code taken from the OpenShorts fork keeps its MIT notice (MIT is compatible with AGPL). Do **not**
+  copy its `cloud/` directory: it is under a separate commercial licence that is not compatible.
+- `ultralytics` (AGPL-3.0) would be licence-compatible with this project, but it still carries its own
+  terms; check them before adding it.
 
-Project licence: not chosen yet.
+## Licence
+GNU AGPL-3.0, see [LICENSE](LICENSE). In short: anyone who runs a modified version as a network
+service must offer their users its source. As the copyright holder you can still run, license and
+dual-license your own code; outside contributions would need a contributor agreement for that.

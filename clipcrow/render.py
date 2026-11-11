@@ -2,7 +2,7 @@
 
 The CLI version is pinned: a different Chrome/CLI build changes pixels, and the
 composition contract changes between releases. Override the command with
-$REELCORE_HF_BIN (e.g. a globally installed binary) to skip npx start-up.
+$CLIPCROW_HF_BIN (e.g. a globally installed binary) to skip npx start-up.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class RenderError(RuntimeError):
 
 
 def _hf_cmd() -> list[str]:
-    custom = os.environ.get("REELCORE_HF_BIN")
+    custom = os.environ.get("CLIPCROW_HF_BIN")
     if custom:
         return shlex.split(custom)
     return ["npx", "--yes", f"hyperframes@{HYPERFRAMES_VERSION}"]

@@ -2,7 +2,7 @@
 
 HyperFrames' bundled fonts are Latin only; any other family (every Indic script)
 must be an @font-face to a file in the project, or the render draws boxes.
-Search order: $REELCORE_FONT_DIR, ./fonts, the system Noto directories.
+Search order: $CLIPCROW_FONT_DIR, ./fonts, the system Noto directories.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class FontNotFound(RuntimeError):
 
 def _dirs() -> list[Path]:
     dirs = []
-    env = os.environ.get("REELCORE_FONT_DIR")
+    env = os.environ.get("CLIPCROW_FONT_DIR")
     if env:
         dirs.append(Path(env))
     dirs.append(Path("fonts"))
@@ -40,14 +40,14 @@ def resolve_font(family: str, weight: int = 700) -> Path:
     if not files:
         raise FontNotFound(
             f"unknown font family {family!r}; known: {', '.join(sorted(KNOWN))}. "
-            f"Add it to reelcore.fonts.KNOWN and put the file in $REELCORE_FONT_DIR.")
+            f"Add it to clipcrow.fonts.KNOWN and put the file in $CLIPCROW_FONT_DIR.")
     name = files.get(weight) or files[max(files)]
     for d in _dirs():
         if (d / name).is_file():
             return d / name
     raise FontNotFound(
         f"{name} not found (looked in {', '.join(str(d) for d in _dirs())}). "
-        f"Install fonts-noto-core or set REELCORE_FONT_DIR.")
+        f"Install fonts-noto-core or set CLIPCROW_FONT_DIR.")
 
 
 def needs_devanagari(*texts: str) -> bool:

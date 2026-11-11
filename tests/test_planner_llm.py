@@ -5,8 +5,8 @@ import pytest
 
 anthropic = pytest.importorskip("anthropic")
 
-from reelcore.planner.llm import AnthropicLLM, LLMError
-from reelcore.planner.models import ScoreResult
+from clipcrow.planner.llm import AnthropicLLM, LLMError
+from clipcrow.planner.models import ScoreResult
 
 
 class Stub:
@@ -55,6 +55,6 @@ def test_api_errors_become_llm_errors():
 
 
 def test_model_comes_from_the_environment(monkeypatch):
-    monkeypatch.setenv("REELCORE_MODEL", "claude-sonnet-5-5")
+    monkeypatch.setenv("CLIPCROW_MODEL", "claude-sonnet-5-5")
     assert AnthropicLLM(client=Stub()).model == "claude-sonnet-5-5"
     assert AnthropicLLM("claude-haiku-5-5", client=Stub()).model == "claude-haiku-5-5"
