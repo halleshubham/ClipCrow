@@ -1,0 +1,149 @@
+{
+  "version": "1.0",
+  "job_id": "demo",
+  "source": {
+    "uri": "speaker.mp4",
+    "duration": 12,
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  },
+  "language": {
+    "primary": "mr",
+    "script": "Deva"
+  },
+  "transcript": [
+    {
+      "w": "क्षणात",
+      "s": 0.4,
+      "e": 0.9
+    },
+    {
+      "w": "बदलणारे",
+      "s": 0.9,
+      "e": 1.5
+    },
+    {
+      "w": "आयुष्य",
+      "s": 1.5,
+      "e": 2.2
+    },
+    {
+      "w": "ज्ञानाची",
+      "s": 2.7,
+      "e": 3.3
+    },
+    {
+      "w": "शक्ती",
+      "s": 3.3,
+      "e": 3.9
+    },
+    {
+      "w": "क्षमता",
+      "s": 3.9,
+      "e": 4.6
+    },
+    {
+      "w": "ज़िंदगी",
+      "s": 5.5,
+      "e": 6.0
+    },
+    {
+      "w": "बदल",
+      "s": 6.0,
+      "e": 6.6
+    },
+    {
+      "w": "देती",
+      "s": 6.6,
+      "e": 7.2
+    },
+    {
+      "w": "है",
+      "s": 7.2,
+      "e": 7.6
+    },
+    {
+      "w": "श्रद्धा",
+      "s": 8.8,
+      "e": 9.3
+    },
+    {
+      "w": "त्र्यंबकेश्वर",
+      "s": 9.3,
+      "e": 10.2
+    },
+    {
+      "w": "ज्ञान",
+      "s": 10.2,
+      "e": 10.9
+    }
+  ],
+  "clips": [
+    {
+      "id": "c1",
+      "source_in": 0,
+      "source_out": 12,
+      "title": "आयुष्य",
+      "layout": {
+        "mode": "cutout_behind",
+        "cutout_uri": "cutout.webm"
+      },
+      "captions": {
+        "emphasis_words": [
+          2,
+          4,
+          8
+        ]
+      },
+      "overlays": [
+        {
+          "kind": "text_behind",
+          "id": "word",
+          "trigger_word_index": 2,
+          "duration": 4.2,
+          "text": "आयुष्य"
+        },
+        {
+          "kind": "stat_pill",
+          "id": "stat",
+          "t_in": 2.8,
+          "duration": 2.4,
+          "text": "१०x वेगवान"
+        },
+        {
+          "kind": "lower_third",
+          "id": "lt",
+          "t_in": 6,
+          "duration": 4,
+          "title": "शुभम हळ्ळे",
+          "subtitle": "संस्थापक"
+        }
+      ]
+    },
+    {
+      "id": "c2",
+      "source_in": 5,
+      "source_out": 11.8,
+      "title": "ज़िंदगी",
+      "layout": {
+        "mode": "passthrough"
+      },
+      "overlays": [
+        {
+          "kind": "lower_third",
+          "id": "lt2",
+          "t_in": 0.5,
+          "duration": 3,
+          "title": "ज़िंदगी बदल देती है"
+        }
+      ]
+    }
+  ],
+  "render": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "quality": "standard"
+  }
+}
