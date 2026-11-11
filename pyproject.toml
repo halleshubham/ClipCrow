@@ -8,6 +8,8 @@ dependencies = ["pydantic>=2.6"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+llm = ["anthropic>=1.0"]
+examples = ["pillow", "numpy"]
 
 [project.scripts]
 clipcrow = "clipcrow.cli:main"
