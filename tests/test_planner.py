@@ -251,3 +251,49 @@ def test_a_stat_word_that_is_not_in_the_sentence_falls_back_to_the_sentence_with
     plan = plan_edl(make_transcript(), SRC, type(llm)(respond), PlannerOptions(target_clips=1, workers=1))
     assert any("stat word" in n for n in plan.report["clips"][0]["notes"])
     assert any(o.kind == "stat_pill" for o in plan.edl.clips[0].overlays)
+
+
+# --- spread ---------------------------------------------------------------------------------
+
+def clip_at(start, end, score):
+    return PlannedClip(0, 0, start, end, "", "", "", score)
+
+
+def test_spread_skips_a_close_clip_for_a_distant_one():
+    near, far = clip_at(60, 90, .85), clip_at(150, 180, .80)
+    best = clip_at(20, 50, .9)
+    plain = drop_overlaps([best, near, far], 2)
+    spread = drop_overlaps([best, near, far], 2, min_gap=40)
+    assert [c.start for c in plain] == [20, 60]          # best-first takes the neighbour
+    assert [c.start for c in spread] == [20, 150]        # spread prefers the distant clip, in time order
+
+
+def test_spread_is_relaxed_when_there_are_not_enough_distant_clips():
+    clips = [clip_at(20, 50, .9), clip_at(60, 90, .8), clip_at(95, 125, .7)]
+    kept = drop_overlaps(clips, 3, min_gap=100)           # nothing is 100 s apart: still return three
+    assert len(kept) == 3 and [c.start for c in kept] == [20, 60, 95]
+
+
+def test_spread_never_allows_overlap_even_when_relaxed():
+    kept = drop_overlaps([clip_at(20, 60, .9), clip_at(40, 80, .8), clip_at(100, 130, .5)], 3, min_gap=50)
+    assert [c.start for c in kept] == [20, 100]
+
+
+def test_spread_zero_is_plain_best_first():
+    clips = [clip_at(20, 50, .9), clip_at(55, 85, .8), clip_at(200, 230, .1)]
+    assert [c.start for c in drop_overlaps(clips, 2, min_gap=0)] == [20, 55]
+
+
+def test_the_planner_spreads_clips_across_a_long_talk_by_default():
+    tr = make_transcript()                                # 240 s, adjacent high-scoring windows
+    adjacent = plan_edl(tr, SRC, scripted(best_windows=(1, 2)), PlannerOptions(target_clips=2, spread=0, workers=1)).edl
+    spread = plan_edl(tr, SRC, scripted(best_windows=(1, 2)), PlannerOptions(target_clips=2, workers=1)).edl
+    gap = lambda e: e.clips[1].source_in - e.clips[0].source_out  # noqa: E731
+    assert gap(spread) >= 0.5 * 240 / 2 - 1               # default spread: at least a quarter of the talk apart
+    assert gap(spread) > gap(adjacent)
+
+
+def test_skipped_clips_are_reported():
+    tr = make_transcript()
+    plan = plan_edl(tr, SRC, scripted(best_windows=(1, 2)), PlannerOptions(target_clips=2, workers=1))
+    assert any("spread" in d["reason"] for d in plan.report["dropped"])

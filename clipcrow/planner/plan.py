@@ -55,6 +55,9 @@ class PlannerOptions:
     score_batch: int = 6
     workers: int = 4
     caption_max_words: int = 4
+    # Spread clips across the talk: clips must be at least spread * (source length / clips) seconds apart,
+    # relaxed only when there are not enough distant candidates. 0 = plain best-first.
+    spread: float = 0.5
     on_progress: Optional[Callable[[str], None]] = None
 
 
@@ -119,14 +122,19 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
 
     # --- pick windows ---------------------------------------------------------------
     n = target_count(tr.duration, opts)
+    pool = math.ceil(n * 1.5) + 1
+    ranked = sorted(windows, key=lambda w: scores.get(w.id, 0.0), reverse=True)
+    mid = lambda w: (w.start + w.end) / 2  # noqa: E731
+    heavy = lambda w, c: min(w.end, c.end) - max(w.start, c.start) > 0.6 * (w.end - w.start)  # noqa: E731
     chosen: list[Window] = []
-    for w in sorted(windows, key=lambda w: scores.get(w.id, 0.0), reverse=True):
-        if len(chosen) >= math.ceil(n * 1.5) + 1:
-            break
-        span = w.end - w.start
-        if any(min(w.end, c.end) - max(w.start, c.start) > 0.6 * span for c in chosen):
-            continue
-        chosen.append(w)
+    for win_gap in ([opts.spread * tr.duration / pool, 0.0] if opts.spread > 0 else [0.0]):
+        for w in ranked:
+            if len(chosen) >= pool:
+                break
+            if w in chosen or any(heavy(w, c) for c in chosen):
+                continue
+            if all(abs(mid(w) - mid(c)) >= win_gap for c in chosen):
+                chosen.append(w)
     say(f"detailing {len(chosen)} window(s) for {n} clip(s)")
 
     # --- pass 2: clips + copy per window ---------------------------------------------
@@ -162,7 +170,11 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
     candidates = [c for cs in _map(detail, chosen, opts.workers) for c in cs]
     if not candidates:
         raise PlanError("no usable clips came out of the plan", report)
-    picked = drop_overlaps(candidates, n)
+    min_gap = opts.spread * tr.duration / n if opts.spread > 0 else 0.0
+    picked = drop_overlaps(candidates, n, min_gap)
+    spread_skipped = [c for c in drop_overlaps(candidates, n) if c not in picked]
+    for c in spread_skipped:
+        report['dropped'].append({'window': None, 'reason': f'clip at {c.start:.0f}-{c.end:.0f}s left out to spread clips across the talk'})
 
     # --- build the EDL -----------------------------------------------------------------
     clips = [_clip_dict(i + 1, c, tr, opts, lang) for i, c in enumerate(picked)]

@@ -142,12 +142,26 @@ def finalize(raw: RawClip, win: Window, tr: Transcript, *, min_s: float, max_s: 
     return clip, ""
 
 
-def drop_overlaps(clips: list[PlannedClip], limit: int) -> list[PlannedClip]:
-    """Highest score first; a clip that overlaps an accepted one by more than 0.5 s is dropped."""
+def gap_between(a: PlannedClip, b: PlannedClip) -> float:
+    """Seconds between two clips (negative when they overlap)."""
+    return max(a.start, b.start) - min(a.end, b.end)
+
+
+def drop_overlaps(clips: list[PlannedClip], limit: int, min_gap: float = 0.0) -> list[PlannedClip]:
+    """Best clips first, never overlapping (by more than 0.5 s), spread across the talk.
+
+    Pass 1 only takes a clip that is at least ``min_gap`` seconds from every clip already taken, so the
+    result is not three adjacent slices of the one best section. If that leaves fewer than ``limit``
+    (few distant candidates), pass 2 fills the rest by score, still without overlaps. ``min_gap=0``
+    is plain best-first. Returned in time order."""
+    ranked = sorted(clips, key=lambda c: c.score, reverse=True)
     kept: list[PlannedClip] = []
-    for c in sorted(clips, key=lambda c: c.score, reverse=True):
-        if len(kept) >= limit:
-            break
-        if all(min(c.end, k.end) - max(c.start, k.start) <= 0.5 for k in kept):
-            kept.append(c)
+    for gap in ([min_gap, 0.0] if min_gap > 0 else [0.0]):
+        for c in ranked:
+            if len(kept) >= limit:
+                break
+            if c in kept:
+                continue
+            if all(gap_between(c, k) > -0.5 and gap_between(c, k) >= gap for k in kept):
+                kept.append(c)
     return sorted(kept, key=lambda c: c.start)

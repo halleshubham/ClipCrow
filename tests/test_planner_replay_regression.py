@@ -41,6 +41,22 @@ def overlap(a0, a1, b0, b1):
     return min(a1, b1) - max(a0, b0)
 
 
+def test_clips_are_spread_across_the_talk_not_two_slices_of_one_story(plan):
+    """Regression from the first run: both clips came from the opening story, back to back."""
+    edl, tr = plan
+    first, second = edl.clips
+    assert first.source_in < tr.duration / 3 < tr.duration * 2 / 3 < second.source_in       # one early, one late
+    assert second.source_in - first.source_out >= 0.5 * tr.duration / 2 - 1
+
+
+def test_without_spread_the_two_best_clips_are_adjacent_slices_of_the_story(tmp_path):
+    work = tmp_path / "a"
+    shutil.copytree(ANSWERS, work)
+    opts = PlannerOptions(target_clips=2, min_clip=20, max_clip=60, spread=0, workers=1)
+    edl = plan_edl(load_transcript(TRANSCRIPT), SourceInfo("talk.mp4", 202), ReplayLLM(work), opts).edl
+    assert edl.clips[1].source_in - edl.clips[0].source_out < 2
+
+
 def test_two_clips_of_a_sane_length_in_order(plan):
     edl, _ = plan
     assert len(edl.clips) == 2

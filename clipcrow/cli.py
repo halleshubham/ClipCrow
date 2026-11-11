@@ -26,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--edl", help="skip transcription and planning: use this EDL")
     mk.add_argument("--clips", type=int); mk.add_argument("--min-clip", type=int, default=15)
     mk.add_argument("--max-clip", type=int, default=60); mk.add_argument("--cutout", action="store_true")
+    mk.add_argument("--spread", type=float, default=0.5, help="spread clips across the talk (0 = off)")
     mk.add_argument("--speaker-name"); mk.add_argument("--speaker-title", default="")
     mk.add_argument("--model"); mk.add_argument("--score-model"); mk.add_argument("--gsap")
     mk.add_argument("--workers", type=int); mk.add_argument("--no-render", action="store_true")
@@ -40,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--min-clip", type=int, default=15); pl.add_argument("--max-clip", type=int, default=60)
     pl.add_argument("--cutout", action="store_true", help="allow text behind the speaker (a cutout will exist)")
     pl.add_argument("--speaker-name"); pl.add_argument("--speaker-title", default="")
+    pl.add_argument("--spread", type=float, default=0.5,
+                    help="spread clips across the talk (0 = off, 0.5 = default): min gap = spread x length / clips")
     pl.add_argument("--model", help="default: $CLIPCROW_MODEL or claude-opus-5-5")
     pl.add_argument("--score-model", help="cheaper model for the window-scoring pass")
     pl.add_argument("--report", help="write the planning report (scores, drops, warnings) here")
@@ -67,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
             from .make import make
             from .planner import AnthropicLLM, PlannerOptions
             opts = PlannerOptions(min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips, cutout=a.cutout,
+                                  spread=a.spread,
                                   speaker_name=a.speaker_name, speaker_title=a.speaker_title)
             need_llm = not a.edl
             res = make(a.video, a.out, language=a.language, transcript_path=a.transcript, edl_path=a.edl, opts=opts,
@@ -101,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
                 llm = AnthropicLLM(a.model)
                 score_llm = AnthropicLLM(a.score_model) if a.score_model else None
             opts = PlannerOptions(job_id=a.job_id, min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips,
+                                  spread=a.spread,
                                   cutout=a.cutout, speaker_name=a.speaker_name, speaker_title=a.speaker_title,
                                   on_progress=lambda m: print(f"  {m}", file=sys.stderr))
             try:

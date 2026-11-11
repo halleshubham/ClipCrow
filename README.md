@@ -64,6 +64,11 @@ sentences ─► windows (≥90 s, overlapping) ─► [LLM] score hook / comple
 ```
 - **The model only chooses sentence ids and short strings.** Cut points, lengths, overlay timing and
   overlap removal are code, so a bad answer can only drop a clip, never produce a broken video.
+- **Spread**: clips are spread across the talk, not stacked on the single best section. A clip must be at least
+  `spread × (talk length ÷ clips)` seconds from every clip already chosen (`--spread`, default 0.5; 0 = plain
+  best-first); this is relaxed only when there are not enough distant candidates, and overlaps are never allowed.
+  The same rule keeps the windows the model details from clustering. A clip left out for being too close is
+  listed in the report.
 - **Language**: Marathi/Hindi copy must be Devanagari. A romanised answer triggers one repair call;
   if it is still wrong the on-screen hook is dropped (the clip keeps its title and is flagged).
 - **Untrusted transcript**: it is fenced as data, the system prompt says so, and every output is
