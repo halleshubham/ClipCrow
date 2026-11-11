@@ -9,12 +9,11 @@ from tests.test_planner import make_transcript, scripted
 cv2 = pytest.importorskip("cv2")
 
 
-@pytest.fixture
-def video(tmp_path):
+@pytest.fixture(scope="module")
+def video(tmp_path_factory):
     """A short vertical dummy video: the framing stage returns 'cover' for it, no face detection needed."""
     import subprocess
-    p = tmp_path / "media" / "talk.mp4"
-    p.parent.mkdir()
+    p = tmp_path_factory.mktemp("media") / "talk.mp4"
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=90x160:r=30:d=250",
                     "-f", "lavfi", "-i", "sine=f=220:d=250", "-shortest", "-c:v", "libx264", "-g", "30",
                     "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", str(p)], check=True)
@@ -69,3 +68,50 @@ def test_a_given_edl_skips_both_recognition_and_planning(video, tmp_path):
 
     res = make(video, tmp_path / "b", edl_path=first.edl_path, transcribe_fn=boom, llm=FakeLLM(boom), render=False)
     assert [c.id for c in res.edl.clips] == [c.id for c in first.edl.clips]
+
+
+# --- hooks: progress and cancellation (used by the web service) ----------------------------
+
+def test_hooks_report_every_stage_and_each_clip_as_it_is_ready(video, tmp_path):
+    from clipcrow.make import Hooks
+    events, ready = [], []
+
+    def fake_render(edl, clip_id, out, **kw):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"mp4")
+        return out, None
+
+    hooks = Hooks(stage=lambda n, s, d="": events.append((n, s)), clip_ready=lambda c, p: ready.append(c))
+    make(video, tmp_path / "o", llm=scripted(), opts=PlannerOptions(target_clips=2, workers=1),
+         transcribe_fn=fake_transcribe(make_transcript()), render_fn=fake_render, hooks=hooks)
+    assert [e for e in events if e[1] == "running"][:4] == [("transcribe", "running"), ("plan", "running"),
+                                                           ("frame", "running"), ("render", "running")]
+    assert {n for n, s in events if s == "done"} == {"transcribe", "plan", "frame", "render"}
+    assert ready == ["c1", "c2"]
+
+
+def test_a_skipped_stage_is_reported_as_skipped(video, tmp_path):
+    from clipcrow.make import Hooks
+    first = make(video, tmp_path / "a", llm=scripted(), opts=PlannerOptions(target_clips=1, workers=1),
+                 transcribe_fn=fake_transcribe(make_transcript()), render=False)
+    events = []
+    make(video, tmp_path / "b", edl_path=first.edl_path, render=False,
+         hooks=Hooks(stage=lambda n, s, d="": events.append((n, s))))
+    assert ("transcribe", "skipped") in events and ("plan", "skipped") in events and ("render", "skipped") in events
+
+
+def test_cancellation_stops_between_stages_and_between_clips(video, tmp_path):
+    from clipcrow.make import Cancelled, Hooks
+    stop = {"now": False}
+
+    def fake_render(edl, clip_id, out, **kw):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"mp4")
+        stop["now"] = True                                  # the user cancels while clip 1 renders
+        return out, None
+
+    with pytest.raises(Cancelled):
+        make(video, tmp_path / "o", llm=scripted(), opts=PlannerOptions(target_clips=2, workers=1),
+             transcribe_fn=fake_transcribe(make_transcript()), render_fn=fake_render,
+             hooks=Hooks(cancelled=lambda: stop["now"]))
+    assert (tmp_path / "o" / "c1.mp4").exists() and not (tmp_path / "o" / "c2.mp4").exists()

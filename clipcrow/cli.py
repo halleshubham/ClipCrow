@@ -30,6 +30,12 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--speaker-name"); mk.add_argument("--speaker-title", default="")
     mk.add_argument("--model"); mk.add_argument("--score-model"); mk.add_argument("--gsap")
     mk.add_argument("--workers", type=int); mk.add_argument("--no-render", action="store_true")
+    sv = sub.add_parser("serve", help="run the web service (set CLIPCROW_TOKEN to require a login)")
+    sv.add_argument("--data", default="data", help="where jobs and clips are stored")
+    sv.add_argument("--host", default="127.0.0.1"); sv.add_argument("--port", type=int, default=8000)
+    sv.add_argument("--max-upload-mb", type=int, default=4096)
+    sv.add_argument("--demo", action="store_true", help="built-in Marathi transcript and recorded answers: no Whisper, no API key")
+    sv.add_argument("--insecure", action="store_true", help="allow a non-local address without CLIPCROW_TOKEN")
     u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
     u.add_argument("edl")
     pl = sub.add_parser("plan", help="transcript -> EDL with an LLM (needs ANTHROPIC_API_KEY)")
@@ -58,6 +64,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if a.cmd == "schema":
             print(json.dumps(json_schema(), indent=2)); return 0
+        if a.cmd == "serve":
+            import os
+            import uvicorn
+            from .service.api import create_app
+            from .service.demo import DemoPipeline
+            from .service.pipelines import RealPipeline
+            token = os.environ.get("CLIPCROW_TOKEN") or None
+            if a.host not in ("127.0.0.1", "::1", "localhost") and not token and not a.insecure:
+                raise ValueError(f"refusing to listen on {a.host} without a login: set CLIPCROW_TOKEN "
+                                 f"(or pass --insecure on a network you trust)")
+            app = create_app(a.data, DemoPipeline() if a.demo else RealPipeline(), token=token,
+                             max_upload_mb=a.max_upload_mb, demo=a.demo)
+            uvicorn.run(app, host=a.host, port=a.port, log_level="info")
+            return 0
         if a.cmd == "transcribe":
             from .asr import release_models, transcribe
             tr = transcribe(a.media, a.language, progress=lambda m: print(f"  {m}", file=sys.stderr))

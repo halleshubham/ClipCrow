@@ -6,7 +6,7 @@ the planner never touches pixels, the compiler turns the EDL into HTML, HyperFra
 
 ## Commands
 ```bash
-pip install -e '.[dev,llm,examples]'
+pip install -e '.[dev,llm,examples,service]'
 pytest -q                                          # unit tests, no network, no API key
 scripts/fetch_gsap.sh && python examples/gen_assets.py
 CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpeg, Chrome
@@ -23,6 +23,14 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
 - Marathi/Hindi copy must be Devanagari; keep tests with Devanagari fixtures.
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
+
+## Web service (`clipcrow/service/`)
+- `clipcrow serve --demo` runs it with no key, no Whisper (recorded answers); the browser test is `scripts/e2e_ui.js`.
+- The UI is plain JS with no build step. **Never put job data into markup**: use `textContent`/`el()`; a test bans
+  `innerHTML` and inline handlers. The CSP forbids inline scripts and styles and third-party requests.
+- Ids in URLs are strict hex (`jobs.JOB_ID`, `CLIP_ID`); files are resolved inside the job directory. Show a person
+  only `EXPECTED` errors' messages; unexpected ones get a generic message and a server log entry.
+- A pipeline implements `check_ready()` and `run(job, video, out, hooks, say)`; progress goes through `make.Hooks`.
 
 ## CI
 A green pipeline closes a task, not the push: after pushing, confirm the commit's workflow is green.

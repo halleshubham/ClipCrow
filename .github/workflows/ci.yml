@@ -18,7 +18,7 @@ jobs:
           python-version: ${{ matrix.python }}
       # Devanagari font tests need Noto; without it they skip, so install it.
       - run: sudo apt-get update && sudo apt-get install -y fonts-noto-core ffmpeg
-      - run: pip install -e '.[dev,llm,vision]'
+      - run: pip install -e '.[dev,llm,vision,service]'
       - run: pytest -q
 
   render:
@@ -34,7 +34,7 @@ jobs:
           node-version: "22"
       # FFmpeg is not preinstalled on every runner image.
       - run: sudo apt-get update && sudo apt-get install -y fonts-noto-core ffmpeg
-      - run: pip install -e '.[dev,llm,examples,vision]'
+      - run: pip install -e '.[dev,llm,examples,vision,service]'
       - run: scripts/fetch_gsap.sh
       - run: python examples/gen_assets.py
       - run: pytest -q -m render

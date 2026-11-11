@@ -174,7 +174,8 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
     picked = drop_overlaps(candidates, n, min_gap)
     spread_skipped = [c for c in drop_overlaps(candidates, n) if c not in picked]
     for c in spread_skipped:
-        report['dropped'].append({'window': None, 'reason': f'clip at {c.start:.0f}-{c.end:.0f}s left out to spread clips across the talk'})
+        report["dropped"].append({"window": None, "start": round(c.start, 1), "end": round(c.end, 1),
+                                  "reason": f"clip at {c.start:.0f}-{c.end:.0f}s left out to spread clips across the talk"})
 
     # --- build the EDL -----------------------------------------------------------------
     clips = [_clip_dict(i + 1, c, tr, opts, lang) for i, c in enumerate(picked)]

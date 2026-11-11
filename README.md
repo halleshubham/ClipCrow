@@ -28,6 +28,28 @@ reproducible (same browser binary → byte-identical video, verified) and an edi
 - Hostile-input safe: EDL values are restricted to safe shapes and HTML-escaped; media must sit
   under `--media-root`; remote URLs are refused.
 
+## Web service
+```bash
+pip install -e '.[service]'
+clipcrow serve --demo                 # try it: built-in Marathi transcript + recorded model answers, no key, no Whisper
+CLIPCROW_TOKEN=... clipcrow serve     # real: needs '.[asr,llm,vision]', ANTHROPIC_API_KEY, Node 22 + FFmpeg + Chrome
+```
+Open http://127.0.0.1:8000. **New job** (upload, language, clip count/length, spread, speaker card, text behind the
+speaker) → the **job page** (four stages, live log, queue position, cancel) → **clips as they finish**: a timeline of
+where they come from (with any clip left out for being too close), playable 9:16 cards, the AI's score and what it
+decided, Download MP4, and an **AI usage and disclosure** panel (calls, tokens, estimated cost, per-asset AI
+involvement).
+- **Single worker**: jobs run one at a time in a background thread; state is on disk (`--data`), so a restart keeps
+  history, requeues waiting jobs and marks interrupted ones failed.
+- **Security (v1: one trusted user or a small team)**: binds to 127.0.0.1; it refuses another address without
+  `CLIPCROW_TOKEN` (login cookie: HttpOnly, SameSite=Strict) unless you pass `--insecure`. Ids in URLs are strict hex and
+  resolved inside the job's directory; uploads are size-capped, extension-checked and probed; errors shown to the
+  browser never contain server internals; strict CSP, no third-party requests, and the UI inserts every job value as
+  text (a test guards that). Put it behind TLS if it leaves localhost.
+- **Not built yet**: the clip editor (screen 4 of the mock-up), accounts, retention/cleanup, a job queue across
+  several machines, posting to social platforms.
+- Browser test: `node scripts/e2e_ui.js <video> <dir>` (Playwright, real render, ~4 min).
+
 ## From a video (`make`)
 ```
 clipcrow make talk.mp4 --out out/ --clips 5 --speaker-name "शुभम"     # needs ANTHROPIC_API_KEY + a Whisper model
@@ -80,7 +102,7 @@ sentences ─► windows (≥90 s, overlapping) ─► [LLM] score hook / comple
 
 ## Use
 ```bash
-pip install -e '.[dev,llm,asr,vision,examples]'
+pip install -e '.[dev,llm,asr,vision,examples,service]'
 ./scripts/fetch_gsap.sh                      # GSAP is fetched, never committed (see Licences)
 python examples/gen_assets.py                # synthetic demo footage + cutout
 clipcrow validate examples/demo.edl.json
@@ -102,7 +124,7 @@ Fonts: install `fonts-noto-core` or set `CLIPCROW_FONT_DIR`. The CLI version is 
    footage (see *Status*), speaker switching and a two-person split layout for podcasts, a better face
    detector (YuNet) behind `FaceDetector`.
 2. **Service**: FastAPI + job queue + object storage; render workers (GPU for matte/encode).
-3. **UI** (see below).
+3. **UI**: v1 built (new job, job page with live progress, clip review, AI usage); the form editor is next (see below).
 4. **Explainers**: per-beat asset router (HTML chart, AI image, news-link screenshot, AI video).
 
 ### UI
