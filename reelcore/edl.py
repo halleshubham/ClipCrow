@@ -111,13 +111,20 @@ class LowerThird(_OverlayBase):
     top_px: int = 1440
 
 
+class Hook(_OverlayBase):
+    """The first-seconds hook line, as a banner below the platform's status bar."""
+    kind: Literal["hook"] = "hook"
+    text: str = Field(max_length=120)
+    top_px: int = 200
+
+
 class StatPill(_OverlayBase):
     kind: Literal["stat_pill"] = "stat_pill"
     text: str
     top_px: int = 220
 
 
-Overlay = Annotated[Union[TextBehind, LowerThird, StatPill], Field(discriminator="kind")]
+Overlay = Annotated[Union[TextBehind, LowerThird, StatPill, Hook], Field(discriminator="kind")]
 
 
 class Clip(_Model):

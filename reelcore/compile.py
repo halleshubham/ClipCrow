@@ -26,7 +26,7 @@ from typing import Callable, Optional
 
 from . import fonts
 from .captions import CaptionGroup, clip_words, group_words
-from .edl import EDL, Clip, EDLError, LowerThird, StatPill, TextBehind
+from .edl import EDL, Clip, EDLError, Hook, LowerThird, StatPill, TextBehind
 
 GSAP_HINT = "run scripts/fetch_gsap.sh, or pass gsap_js=<path to gsap.min.js>"
 
@@ -103,6 +103,11 @@ def _scene(name: str, w: int, h: int, css: str, body: str, script: str) -> str:
 """
 
 
+def _shown(text: str) -> str:
+    """Caption text as displayed: terminal full stops, commas and dandas are dropped (? and ! stay)."""
+    return text.rstrip(".,;:\u0964\u0965\u2026") or text
+
+
 def _caption_size(chars: int) -> int:
     # ~0.62 em per Devanagari/Latin glyph on average; the safe band is ~900 px wide.
     return int(max(48, min(92, 900 / (max(chars, 1) * 0.62))))
@@ -120,9 +125,9 @@ def _captions_scene(clip: Clip, groups: list[CaptionGroup], family: str, face: s
     .grp .hot {{ color: {st.highlight_color}; }}"""
     body, timeline = [], []
     for n, g in enumerate(groups):
-        chars = sum(len(x.text) for x in g.words) + len(g.words) - 1
+        chars = sum(len(_shown(x.text)) for x in g.words) + len(g.words) - 1
         spans = "".join(
-            f'<span class="w{" hot" if x.index in emph else ""}" id="g{n}w{m}">{_esc(x.text)}</span>'
+            f'<span class="w{" hot" if x.index in emph else ""}" id="g{n}w{m}">{_esc(_shown(x.text))}</span>'
             for m, x in enumerate(g.words))
         body.append(f'    <div id="g{n}" class="grp clip" data-start="{_num(g.start)}" '
                     f'data-duration="{_num(g.end - g.start)}" style="font-size:{_caption_size(chars)}px">{spans}</div>')
@@ -160,6 +165,8 @@ def _cards_scene(items, family: str, face: str, w: int, h: int) -> str:
       background: rgba(15,16,22,.78); color: #fff; font-family: "{family}", sans-serif; font-weight: 700; }}
     .lt .n {{ font-size: 54px; line-height: 1.3; }}
     .lt .r {{ font-size: 36px; color: #ffd54a; margin-top: 6px; }}
+    .hook {{ position: absolute; left: 60px; right: 60px; padding: 24px 32px; border-radius: 24px; text-align: center;
+      background: rgba(15,16,22,.82); color: #fff; line-height: 1.25; font-family: "{family}", sans-serif; font-weight: 700; }}
     .pill {{ position: absolute; right: 60px; padding: 20px 30px; border-radius: 999px; background: #ffd54a;
       color: #111; font-family: "{family}", sans-serif; font-weight: 700; font-size: 52px; }}"""
     body, script = [], []
@@ -171,6 +178,12 @@ def _cards_scene(items, family: str, face: str, w: int, h: int) -> str:
                         f'style="top:{o.top_px}px"><div class="n">{_esc(o.title)}</div>{sub}</div>')
             script.append(f'    tl.fromTo("#ov-{o.id}", {{ opacity: 0, x: -60 }}, '
                           f'{{ opacity: 1, x: 0, duration: 0.4, ease: "power2.out" }}, {_num(t0)});')
+        elif isinstance(o, Hook):
+            size = 64 if len(o.text) <= 40 else 52
+            body.append(f'    <div id="ov-{o.id}" class="hook clip" data-start="{_num(t0)}" data-duration="{_num(d)}" '
+                        f'style="top:{o.top_px}px;font-size:{size}px">{_esc(o.text)}</div>')
+            script.append(f'    tl.fromTo("#ov-{o.id}", {{ opacity: 0, y: -40 }}, '
+                          f'{{ opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }}, {_num(t0)});')
         else:
             body.append(f'    <div id="ov-{o.id}" class="pill clip" data-start="{_num(t0)}" data-duration="{_num(d)}" '
                         f'style="top:{o.top_px}px">{_esc(o.text)}</div>')
@@ -277,7 +290,7 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
     face = _font_face(family, font_file.name, clip.captions.font_weight)
 
     behind = [x for x in overlays if isinstance(x[0], TextBehind)]
-    cards = [x for x in overlays if isinstance(x[0], (LowerThird, StatPill))]
+    cards = [x for x in overlays if isinstance(x[0], (LowerThird, StatPill, Hook))]
     scenes: list[str] = []
     if behind:
         (project / "compositions" / "behind.html").write_text(_behind_scene(behind, family, face, w, h), "utf-8")

@@ -18,6 +18,17 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("edl"); c.add_argument("--clip", required=True); c.add_argument("--out", required=True)
     c.add_argument("--media-root", default="."); c.add_argument("--gsap")
     c.add_argument("--no-media", action="store_true", help="HTML only: skip ffmpeg and the matte")
+    pl = sub.add_parser("plan", help="transcript -> EDL with an LLM (needs ANTHROPIC_API_KEY)")
+    pl.add_argument("transcript"); pl.add_argument("--source", required=True, help="the source video file")
+    pl.add_argument("--out", required=True); pl.add_argument("--media-root", default=".")
+    pl.add_argument("--job-id", default="job"); pl.add_argument("--language")
+    pl.add_argument("--clips", type=int, help="how many clips (default: about one per 2 minutes)")
+    pl.add_argument("--min-clip", type=int, default=15); pl.add_argument("--max-clip", type=int, default=60)
+    pl.add_argument("--cutout", action="store_true", help="allow text behind the speaker (a cutout will exist)")
+    pl.add_argument("--speaker-name"); pl.add_argument("--speaker-title", default="")
+    pl.add_argument("--model", help="default: $REELCORE_MODEL or claude-opus-5-5")
+    pl.add_argument("--score-model", help="cheaper model for the window-scoring pass")
+    pl.add_argument("--report", help="write the planning report (scores, drops, warnings) here")
     r = sub.add_parser("render", help="compile, check and render a clip to MP4")
     r.add_argument("edl"); r.add_argument("--clip", required=True); r.add_argument("--out", required=True)
     r.add_argument("--media-root", default="."); r.add_argument("--workdir", default="build")
@@ -28,9 +39,29 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if a.cmd == "schema":
             print(json.dumps(json_schema(), indent=2)); return 0
-        edl = load_edl(a.edl)
+        edl = None if a.cmd == "plan" else load_edl(a.edl)
         if a.cmd == "validate":
             print(f"ok: {len(edl.clips)} clip(s), {len(edl.transcript)} words"); return 0
+        if a.cmd == "plan":
+            from .planner import AnthropicLLM, PlannerOptions, plan_edl, load_transcript
+            from .planner.source import probe_source
+            tr = load_transcript(a.transcript, a.language)
+            src_path = Path(a.media_root) / a.source
+            source = probe_source(src_path, uri=a.source)
+            llm = AnthropicLLM(a.model)
+            score_llm = AnthropicLLM(a.score_model) if a.score_model else None
+            opts = PlannerOptions(job_id=a.job_id, min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips,
+                                  cutout=a.cutout, speaker_name=a.speaker_name, speaker_title=a.speaker_title,
+                                  on_progress=lambda m: print(f"  {m}", file=sys.stderr))
+            plan = plan_edl(tr, source, llm, opts, score_llm=score_llm)
+            Path(a.out).write_text(plan.edl.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
+            if a.report:
+                Path(a.report).write_text(json.dumps(plan.report, ensure_ascii=False, indent=2), encoding="utf-8")
+            tok = f"{llm.input_tokens} in / {llm.output_tokens} out tokens"
+            print(f"planned {len(plan.edl.clips)} clip(s) -> {a.out} ({tok})")
+            for w in plan.report["warnings"]:
+                print(f"  warning: {w}", file=sys.stderr)
+            return 0
         if a.cmd == "compile":
             from .compile import compile_clip
             clip = next((x for x in edl.clips if x.id == a.clip), None)

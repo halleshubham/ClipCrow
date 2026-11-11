@@ -102,3 +102,21 @@ def test_cutout_layout_without_cutout_or_matte_is_an_error(make_edl, tmp_path, g
             compile_clip(edl, edl.clips[0], tmp_path / "p", media_root=tmp_path, gsap_js=gsap)
     finally:
         c.prepare_footage = orig
+
+
+def test_hook_overlay_is_a_banner_below_the_status_bar(make_edl, tmp_path, gsap, fonts_available):
+    clip = {"id": "c1", "source_in": 0, "source_out": 10,
+            "overlays": [{"kind": "hook", "id": "h", "t_in": 0.3, "text": "हे वाचल्यावर आयुष्य बदलेल"}]}
+    html = (build(make_edl, tmp_path, gsap, clip).project_dir / "compositions" / "cards.html").read_text()
+    assert 'class="hook clip"' in html and "top:200px" in html and "हे वाचल्यावर" in html
+
+
+def test_captions_drop_terminal_danda_but_keep_question_marks(make_edl, tmp_path, gsap, fonts_available):
+    from tests.conftest import base_edl
+    d = base_edl()
+    d["transcript"] = [{"w": "आयुष्य।", "s": 1.0, "e": 1.5}, {"w": "का?", "s": 1.5, "e": 2.0}, {"w": "होय.", "s": 2.0, "e": 2.5}]
+    from reelcore.edl import EDL
+    edl = EDL.model_validate(d)
+    res = compile_clip(edl, edl.clips[0], tmp_path / "p", media_root=tmp_path, gsap_js=gsap, prepare=False)
+    html = (res.project_dir / "compositions" / "captions.html").read_text()
+    assert ">आयुष्य<" in html and ">का?<" in html and ">होय<" in html
