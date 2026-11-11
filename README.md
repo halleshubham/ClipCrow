@@ -25,6 +25,29 @@ reproducible (same browser binary → byte-identical video, verified) and an edi
 - Hostile-input safe: EDL values are restricted to safe shapes and HTML-escaped; media must sit
   under `--media-root`; remote URLs are refused.
 
+## From a video (`make`)
+```
+clipcrow make talk.mp4 --out out/ --clips 5 --speaker-name "शुभम"     # needs ANTHROPIC_API_KEY + a Whisper model
+clipcrow make talk.mp4 --out out/ --edl edl.json                       # skip recognition and planning
+clipcrow make talk.mp4 --out out/ --transcript transcript.json         # skip recognition only
+```
+```
+video ─► transcribe (faster-whisper, Indic-aware) ─► plan (LLM) ─► frame (face-tracked crop) ─► render ─► out/cN.mp4
+                                                                                                         out/cN.mp4.ai.json
+```
+- **Speech recognition** (`clipcrow transcribe`): faster-whisper with a language vote over three windows,
+  a Devanagari seed prompt for Marathi/Hindi/Nepali/Sanskrit, fragment merging and repetition-loop removal.
+  `CLIPCROW_INDIC_MODEL=large-v3` uses a larger model for Indic audio only. Not yet run on real speech
+  (see *Status*).
+- **Reframing** (`clipcrow/reframe.py`): faces from OpenCV's bundled Haar cascade, chained into one
+  continuous track (stray false positives lose), then a "heavy tripod" camera: a dead band plus a speed limit,
+  so head movement never whips the frame. No face in the clip → the whole frame fitted over a blurred copy.
+  Limits: one subject per clip, no speaker switching or two-person split layout yet, Haar needs frontal faces.
+- **AI-usage record**: the EDL carries every planner call (model, tokens, estimated cost), what the AI decided
+  per clip, and per-asset provenance (`none` / `processed` / `generated`, enforced so an AI image cannot be
+  labelled "no AI"). `clipcrow usage edl.json` prints it; each render writes `cN.mp4.ai.json` including
+  whether a platform AI-content disclosure is recommended (it turns on as soon as an asset is AI-generated).
+
 ## Planner (transcript → EDL)
 ```
 clipcrow plan transcript.json --source podcast.mp4 --media-root media/ --out edl.json \
@@ -49,7 +72,7 @@ sentences ─► windows (≥90 s, overlapping) ─► [LLM] score hook / comple
 
 ## Use
 ```bash
-pip install -e '.[dev]'
+pip install -e '.[dev,llm,asr,vision,examples]'
 ./scripts/fetch_gsap.sh                      # GSAP is fetched, never committed (see Licences)
 python examples/gen_assets.py                # synthetic demo footage + cutout
 clipcrow validate examples/demo.edl.json
@@ -67,8 +90,9 @@ Fonts: install `fonts-noto-core` or set `CLIPCROW_FONT_DIR`. The CLI version is 
 ~2 fps (a 60 s reel ≈ 14 min), so production needs a GPU (`device="cuda"`) or a lower matte rate.
 
 ## Roadmap
-1. ~~Planner~~ (built, see above). Still to do: bring over the Indic ASR + language voting and
-   reframing from the OpenShorts fork (MIT parts only), and validate the planner on real transcripts.
+1. ~~Planner~~, ~~ASR~~, ~~reframing~~: built (see above). Still to do: run them on real Marathi/Hindi
+   footage (see *Status*), speaker switching and a two-person split layout for podcasts, a better face
+   detector (YuNet) behind `FaceDetector`.
 2. **Service**: FastAPI + job queue + object storage; render workers (GPU for matte/encode).
 3. **UI** (see below).
 4. **Explainers**: per-beat asset router (HTML chart, AI image, news-link screenshot, AI video).
@@ -84,6 +108,14 @@ Yes, it is in the plan. Order of build:
 Caveat: GSAP's licence forbids use in no-code visual animation tools that compete with Webflow. An
 end-user visual animation editor could fall under that, so keep the editor to EDL fields (not
 free-form animation), or get the licence position confirmed before building v2.
+
+## Status: what has and has not been verified
+- **Verified**: EDL validation, compile, real HyperFrames render (CI), Devanagari captions, planner logic with
+  a scripted model, usage/provenance, face-tracked reframing on a real (public-domain) face photo panning
+  across a frame, and the full chain video → reframe → render.
+- **Not verified**: speech recognition with a real Whisper model on real Marathi/Hindi speech (the build
+  environment could not download models); the planner against the live Claude API; person matte quality;
+  GPU speed; multi-speaker footage.
 
 ## Licences to keep in mind
 - HyperFrames: Apache-2.0. Pin the version; Chrome build changes pixels.

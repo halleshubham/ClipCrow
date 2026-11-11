@@ -55,17 +55,43 @@ def _inside(media_root: Path, uri: str) -> Path:
     return p
 
 
-def prepare_footage(src: Path, start: float, duration: float, fps: int,
-                    width: int, height: int, dest: Path) -> None:
-    """Cut the clip window out of the source at render size, a keyframe every
-    second (HyperFrames freezes on seek when keyframes are further apart)."""
-    cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}",
-           "-i", str(src),
-           "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-                  f"crop={width}:{height},fps={fps}",
-           "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-g", str(fps),
-           "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", str(dest)]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+def _even(n: float) -> int:
+    return max(2, int(n) // 2 * 2)
+
+
+def prepare_footage(src: Path, start: float, duration: float, fps: int, width: int, height: int, dest: Path,
+                    *, framing: str = "cover", keyframes=(), src_size: tuple[int, int] | None = None) -> None:
+    """Cut the clip window out of the source at render size, a keyframe every second (HyperFrames freezes
+    on seek when keyframes are further apart), fitted to the canvas by ``framing``:
+
+      cover     scale to fill and centre-crop
+      track     crop a 9:16 window whose x follows ``keyframes`` (clip time, cx fraction of source width)
+      fit_blur  whole frame fitted to the width over a blurred copy of itself
+    """
+    dest = Path(dest).resolve()
+    enc = ["-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-g", str(fps),
+           "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k"]
+    cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(src)]
+    cover = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},fps={fps}"
+    cwd = None
+    if framing == "track" and keyframes and src_size and src_size[0] / src_size[1] > width / height * 1.05:
+        sw, sh = src_size
+        cw = min(_even(sh * width / height), _even(sw))
+        xs = [(t, min(max(cx * sw - cw / 2, 0), sw - cw)) for t, cx in keyframes]
+        cmds = "\n".join(f"{t:.3f} crop@c x {x:.0f};" for t, x in xs) + "\n"
+        (dest.parent / "framing.cmd").write_text(cmds, "utf-8")
+        cwd = dest.parent                                    # relative name: no path escaping in the filtergraph
+        vf = (f"sendcmd=f=framing.cmd,crop@c=w={cw}:h={sh}:x={xs[0][1]:.0f}:y=0,"
+              f"scale={width}:{height}:flags=lanczos,fps={fps}")
+        cmd += ["-vf", vf, *enc, str(dest)]
+    elif framing == "fit_blur":
+        fc = (f"[0:v]split=2[a][b];[a]scale={width}:{height}:force_original_aspect_ratio=increase,"
+              f"crop={width}:{height},boxblur=40:6[bg];[b]scale={width}:-2[fg];"
+              f"[bg][fg]overlay=(W-w)/2:(H-h)/2,fps={fps}[v]")
+        cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "0:a?", *enc, str(dest)]
+    else:
+        cmd += ["-vf", cover, *enc, str(dest)]
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if r.returncode != 0:
         raise EDLError(f"ffmpeg could not cut the clip: {r.stderr.strip()[-400:]}")
 
@@ -314,7 +340,10 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
     if prepare:
         src = _inside(media_root, edl.source.uri)
         footage = project / "assets" / "footage.mp4"
-        prepare_footage(src, clip.source_in, clip.duration, fps, w, h, footage)
+        prepare_footage(src, clip.source_in, clip.duration, fps, w, h, footage,
+                        framing=clip.layout.framing,
+                        keyframes=[(k.t, k.cx) for k in clip.layout.reframe],
+                        src_size=(edl.source.width, edl.source.height))
         if cutout:
             dest = project / "assets" / "cutout.webm"
             if clip.layout.cutout_uri:

@@ -20,6 +20,15 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--no-media", action="store_true", help="HTML only: skip ffmpeg and the matte")
     t = sub.add_parser("transcribe", help="speech to a word-timed transcript JSON (faster-whisper, Indic-aware)")
     t.add_argument("media"); t.add_argument("--out", required=True); t.add_argument("--language")
+    mk = sub.add_parser("make", help="video -> clips: transcribe, plan, frame, render")
+    mk.add_argument("video"); mk.add_argument("--out", required=True); mk.add_argument("--language")
+    mk.add_argument("--transcript", help="skip speech recognition: use this transcript JSON")
+    mk.add_argument("--edl", help="skip transcription and planning: use this EDL")
+    mk.add_argument("--clips", type=int); mk.add_argument("--min-clip", type=int, default=15)
+    mk.add_argument("--max-clip", type=int, default=60); mk.add_argument("--cutout", action="store_true")
+    mk.add_argument("--speaker-name"); mk.add_argument("--speaker-title", default="")
+    mk.add_argument("--model"); mk.add_argument("--score-model"); mk.add_argument("--gsap")
+    mk.add_argument("--workers", type=int); mk.add_argument("--no-render", action="store_true")
     u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
     u.add_argument("edl")
     pl = sub.add_parser("plan", help="transcript -> EDL with an LLM (needs ANTHROPIC_API_KEY)")
@@ -50,6 +59,19 @@ def main(argv: list[str] | None = None) -> int:
                                               ensure_ascii=False, indent=1), encoding="utf-8")
             release_models()
             print(f"{len(tr.words)} words, {len(tr.sentences)} sentences, language {tr.language} -> {a.out}")
+            return 0
+        if a.cmd == "make":
+            from .make import make
+            from .planner import AnthropicLLM, PlannerOptions
+            opts = PlannerOptions(min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips, cutout=a.cutout,
+                                  speaker_name=a.speaker_name, speaker_title=a.speaker_title)
+            need_llm = not a.edl
+            res = make(a.video, a.out, language=a.language, transcript_path=a.transcript, edl_path=a.edl, opts=opts,
+                       llm=AnthropicLLM(a.model) if need_llm else None,
+                       score_llm=AnthropicLLM(a.score_model) if need_llm and a.score_model else None,
+                       render=not a.no_render, gsap_js=a.gsap, workers=a.workers,
+                       say=lambda m: print(f"  {m}", file=sys.stderr))
+            print(f"{len(res.edl.clips)} clip(s) -> {a.out}" + (f"; rendered {len(res.videos)}" if res.videos else ""))
             return 0
         edl = None if a.cmd in ("plan",) else load_edl(a.edl)
         if a.cmd == "usage":

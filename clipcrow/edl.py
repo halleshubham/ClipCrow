@@ -122,6 +122,12 @@ class Source(_Model):
     fps: float = Field(default=30, gt=0)
 
 
+class Keyframe(_Model):
+    """Where the crop window is centred: ``cx`` is a fraction of the SOURCE width, ``t`` is clip time."""
+    t: float = Field(ge=0)
+    cx: float = Field(ge=0, le=1)
+
+
 class Layout(_Model):
     # passthrough: the footage as given (reframing happened upstream).
     # cutout_behind: a person matte (alpha WebM) is painted above the text layer,
@@ -130,6 +136,20 @@ class Layout(_Model):
     # pipeline generates it from the prepared clip (clipcrow.matte).
     mode: Literal["passthrough", "cutout_behind"] = "passthrough"
     cutout_uri: Optional[str] = None
+    # How the source frame is fitted to the vertical canvas:
+    #   cover    centre crop (also right for sources that are already vertical)
+    #   track    crop window follows ``reframe`` keyframes (a face-tracked reframe)
+    #   fit_blur whole frame fitted to the width over a blurred copy of itself (no face to follow)
+    framing: Literal["cover", "track", "fit_blur"] = "cover"
+    reframe: list[Keyframe] = Field(default_factory=list, max_length=4000)
+
+    @model_validator(mode="after")
+    def _framing(self):
+        if self.framing == "track" and not self.reframe:
+            raise ValueError("framing 'track' needs reframe keyframes")
+        if any(b.t < a.t for a, b in zip(self.reframe, self.reframe[1:])):
+            raise ValueError("reframe keyframes must be in time order")
+        return self
 
 
 class CaptionStyle(_Model):
