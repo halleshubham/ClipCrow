@@ -7,7 +7,7 @@ on:
 
 jobs:
   unit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       matrix:
@@ -19,9 +19,9 @@ jobs:
           python-version: ${{ matrix.python }}
       # Devanagari font tests need Noto; without it they skip, so install it.
       - name: System packages (fonts, ffmpeg)
-        timeout-minutes: 8
+        timeout-minutes: 4
         run: |
-          APT='-o APT::Architecture-Variants= -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
+          APT='-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
           sudo apt-get $APT update
           sudo apt-get $APT install -y --no-install-recommends fonts-noto-core ffmpeg
       - run: pip install -e '.[dev,llm,vision,service]'
@@ -30,7 +30,7 @@ jobs:
   render:
     timeout-minutes: 30
     # One real render through the pinned HyperFrames CLI: Node, FFmpeg and Chrome.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,9 +41,9 @@ jobs:
           node-version: "22"
       # FFmpeg is not preinstalled on every runner image.
       - name: System packages (fonts, ffmpeg)
-        timeout-minutes: 8
+        timeout-minutes: 4
         run: |
-          APT='-o APT::Architecture-Variants= -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
+          APT='-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30'
           sudo apt-get $APT update
           sudo apt-get $APT install -y --no-install-recommends fonts-noto-core ffmpeg
       - run: pip install -e '.[dev,llm,examples,vision,service]'
