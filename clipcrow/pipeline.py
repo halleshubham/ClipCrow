@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from . import matte, render
+from .provenance import write_sidecar
 from .compile import CompiledClip, compile_clip
 from .edl import EDL, EDLError
 
@@ -29,4 +30,5 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
             raise EDLError("the compiled project failed HyperFrames check:\n  " + "\n  ".join(problems))
     out = render.render(project, output, quality=edl.render.quality, workers=workers,
                         browser_path=os.environ.get("CLIPCROW_BROWSER"))
+    write_sidecar(edl, clip, out)
     return out, compiled

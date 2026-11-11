@@ -11,7 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from ..edl import EDL, EDLError
+from ..costs import estimate_total
+from ..edl import EDL, AIUsage, Asset, ClipAI, EDLError
 from . import prompts
 from .llm import LLM, LLMError
 from .models import DetailResult, ScoreResult
@@ -158,6 +159,8 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
 
     # --- build the EDL -----------------------------------------------------------------
     clips = [_clip_dict(i + 1, c, tr, opts, lang) for i, c in enumerate(picked)]
+    for d, c in zip(clips, picked):
+        d["ai"] = _clip_ai(c, d).model_dump()
     for i, c in enumerate(picked):
         report["clips"].append({"id": f"c{i + 1}", "start": round(c.start, 2), "end": round(c.end, 2),
                                 "score": round(c.score, 3), "title": c.title, "why": c.why, "notes": c.notes})
@@ -170,10 +173,40 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
             "language": {"primary": lang, "script": "Deva" if deva else "Latn"},
             "transcript": [w.model_dump(exclude_none=True) for w in tr.words],
             "clips": clips,
+            "assets": _assets(source, opts),
+            "ai": _usage(llm, score_llm),
         })
     except ValueError as e:
         raise EDLError(f"the planner produced an invalid EDL: {e}") from e
     return Plan(edl, report)
+
+
+def _usage(llm: LLM, score_llm: LLM) -> dict:
+    calls = list(llm.usage()) + ([] if score_llm is llm else list(score_llm.usage()))
+    u = AIUsage(calls=calls, est_cost_usd=estimate_total(calls))
+    return u.model_dump()
+
+
+def _assets(source: SourceInfo, opts: PlannerOptions) -> list[dict]:
+    out = [Asset(id="source", kind="video", origin="upload", ai="none").model_dump()]
+    if opts.cutout:
+        out.append(Asset(id="cutout", kind="video", origin="matte", ai="processed",
+                         tool="u2net_human_seg").model_dump())
+    return out
+
+
+def _clip_ai(c: PlannedClip, d: dict) -> ClipAI:
+    kinds = {o["kind"] for o in d["overlays"]}
+    decided = ["cut points", "title"]
+    if "hook" in kinds:
+        decided.append("hook text")
+    if c.emphasis:
+        decided.append("emphasis words")
+    if "stat_pill" in kinds:
+        decided.append("stat")
+    if "text_behind" in kinds:
+        decided.append("text behind speaker")
+    return ClipAI(decided=decided, why=c.why, score=round(c.score, 3), notes=list(c.notes))
 
 
 def _clip_dict(n: int, c: PlannedClip, tr: Transcript, opts: PlannerOptions, lang: str) -> dict:

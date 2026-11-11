@@ -33,6 +33,67 @@ SafeId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,40}$")]
 FontFamily = Annotated[str, Field(pattern=r"^[A-Za-z0-9 _-]{1,60}$")]
 
 
+class CallUsage(_Model):
+    """One LLM call, as billed."""
+    purpose: str
+    model: str
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+
+
+class AIUsage(_Model):
+    """What the planner spent. ``est_cost_usd`` is an estimate from list prices, not an invoice."""
+    provider: str = "anthropic"
+    calls: list[CallUsage] = Field(default_factory=list)
+    est_cost_usd: Optional[float] = None
+
+    @property
+    def input_tokens(self) -> int:
+        return sum(c.input_tokens for c in self.calls)
+
+    @property
+    def output_tokens(self) -> int:
+        return sum(c.output_tokens for c in self.calls)
+
+    @property
+    def models(self) -> list[str]:
+        return sorted({c.model for c in self.calls})
+
+
+AssetOrigin = Literal["upload", "stock", "matte", "ai_image", "ai_video", "tts", "render"]
+# How much AI touched an asset: none, processed (a model transformed real footage, e.g. a person
+# matte) or generated (the content itself is synthetic: AI image/video/voice). Platforms ask creators
+# to disclose the last kind.
+AIInvolvement = Literal["none", "processed", "generated"]
+_REQUIRED_INVOLVEMENT = {"ai_image": "generated", "ai_video": "generated", "tts": "generated",
+                         "matte": "processed", "upload": "none", "stock": "none", "render": "none"}
+
+
+class Asset(_Model):
+    id: SafeId
+    kind: Literal["video", "image", "audio"]
+    origin: AssetOrigin
+    ai: AIInvolvement = "none"
+    tool: str = ""            # e.g. "u2net_human_seg", a provider name
+    model: str = ""
+    prompt: str = ""          # for generated assets: what was asked
+
+    @model_validator(mode="after")
+    def _honest(self):
+        want = _REQUIRED_INVOLVEMENT[self.origin]
+        if self.ai != want:
+            raise ValueError(f"asset {self.id!r}: origin {self.origin!r} is ai={want!r}, not {self.ai!r}")
+        return self
+
+
+class ClipAI(_Model):
+    """What the AI decided for this clip (for review and for the usage record)."""
+    decided: list[str] = Field(default_factory=list)   # e.g. ["cut points", "title", "hook"]
+    why: str = ""
+    score: Optional[float] = None
+    notes: list[str] = Field(default_factory=list)
+
+
 class Word(_Model):
     w: str
     s: float = Field(ge=0)
@@ -135,6 +196,7 @@ class Clip(_Model):
     layout: Layout = Field(default_factory=Layout)
     captions: CaptionStyle = Field(default_factory=CaptionStyle)
     overlays: list[Overlay] = Field(default_factory=list)
+    ai: Optional[ClipAI] = None
 
     @property
     def duration(self) -> float:
@@ -169,6 +231,8 @@ class EDL(_Model):
     transcript: list[Word] = Field(default_factory=list)
     clips: list[Clip] = Field(min_length=1)
     render: RenderSettings = Field(default_factory=RenderSettings)
+    assets: list[Asset] = Field(default_factory=list)
+    ai: Optional[AIUsage] = None
 
     @model_validator(mode="after")
     def _clips_inside_source(self):
@@ -179,6 +243,9 @@ class EDL(_Model):
         ids = [c.id for c in self.clips]
         if len(ids) != len(set(ids)):
             raise ValueError("clip ids must be unique")
+        aids = [a.id for a in self.assets]
+        if len(aids) != len(set(aids)):
+            raise ValueError("asset ids must be unique")
         return self
 
 

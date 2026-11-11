@@ -11,6 +11,8 @@ from typing import Callable, Protocol, Type, TypeVar
 
 from pydantic import BaseModel
 
+from ..edl import CallUsage
+
 T = TypeVar("T", bound=BaseModel)
 DEFAULT_MODEL = "claude-opus-5-5"
 
@@ -21,6 +23,9 @@ class LLMError(RuntimeError):
 
 class LLM(Protocol):
     def generate(self, system: str, user: str, schema: Type[T], *, purpose: str = "") -> T: ...
+
+    def usage(self) -> list[CallUsage]:
+        """Every call made so far, with tokens as billed."""
 
 
 class AnthropicLLM:
@@ -37,9 +42,20 @@ class AnthropicLLM:
         self.client = client or anthropic.Anthropic()
         self.model = model or os.environ.get("CLIPCROW_MODEL") or DEFAULT_MODEL
         self.max_tokens = max_tokens
-        self.input_tokens = 0
-        self.output_tokens = 0
+        self._calls: list[CallUsage] = []
         self._lock = threading.Lock()
+
+    @property
+    def input_tokens(self) -> int:
+        return sum(c.input_tokens for c in self._calls)
+
+    @property
+    def output_tokens(self) -> int:
+        return sum(c.output_tokens for c in self._calls)
+
+    def usage(self) -> list[CallUsage]:
+        with self._lock:
+            return list(self._calls)
 
     def generate(self, system, user, schema, *, purpose=""):
         a = self._anthropic
@@ -53,9 +69,10 @@ class AnthropicLLM:
             raise LLMError(f"Claude API error {e.status_code} ({purpose}): {e.message}") from e
         except a.APIConnectionError as e:
             raise LLMError(f"could not reach the Claude API ({purpose})") from e
-        with self._lock:
-            self.input_tokens += resp.usage.input_tokens
-            self.output_tokens += resp.usage.output_tokens
+        with self._lock:      # billed whether or not the answer is usable
+            self._calls.append(CallUsage(purpose=purpose, model=self.model,
+                                         input_tokens=resp.usage.input_tokens,
+                                         output_tokens=resp.usage.output_tokens))
         if resp.stop_reason == "refusal":
             raise LLMError(f"the model declined this request ({purpose})")
         if resp.stop_reason == "max_tokens":
@@ -72,6 +89,9 @@ class FakeLLM:
         self.respond = respond
         self.calls: list[tuple[str, str]] = []
         self._lock = threading.Lock()
+
+    def usage(self):
+        return [CallUsage(purpose=p, model="fake") for p, _ in self.calls]
 
     def generate(self, system, user, schema, *, purpose=""):
         with self._lock:

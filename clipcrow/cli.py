@@ -18,6 +18,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("edl"); c.add_argument("--clip", required=True); c.add_argument("--out", required=True)
     c.add_argument("--media-root", default="."); c.add_argument("--gsap")
     c.add_argument("--no-media", action="store_true", help="HTML only: skip ffmpeg and the matte")
+    u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
+    u.add_argument("edl")
     pl = sub.add_parser("plan", help="transcript -> EDL with an LLM (needs ANTHROPIC_API_KEY)")
     pl.add_argument("transcript"); pl.add_argument("--source", required=True, help="the source video file")
     pl.add_argument("--out", required=True); pl.add_argument("--media-root", default=".")
@@ -40,6 +42,9 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "schema":
             print(json.dumps(json_schema(), indent=2)); return 0
         edl = None if a.cmd == "plan" else load_edl(a.edl)
+        if a.cmd == "usage":
+            from .provenance import summary
+            print(summary(edl)); return 0
         if a.cmd == "validate":
             print(f"ok: {len(edl.clips)} clip(s), {len(edl.transcript)} words"); return 0
         if a.cmd == "plan":
@@ -57,8 +62,9 @@ def main(argv: list[str] | None = None) -> int:
             Path(a.out).write_text(plan.edl.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
             if a.report:
                 Path(a.report).write_text(json.dumps(plan.report, ensure_ascii=False, indent=2), encoding="utf-8")
-            tok = f"{llm.input_tokens} in / {llm.output_tokens} out tokens"
-            print(f"planned {len(plan.edl.clips)} clip(s) -> {a.out} ({tok})")
+            from .provenance import summary
+            print(f"planned {len(plan.edl.clips)} clip(s) -> {a.out}")
+            print(summary(plan.edl))
             for w in plan.report["warnings"]:
                 print(f"  warning: {w}", file=sys.stderr)
             return 0

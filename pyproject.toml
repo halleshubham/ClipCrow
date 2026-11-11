@@ -23,4 +23,5 @@ include = ["clipcrow*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = ["render: needs Node 22, FFmpeg, Chrome and the HyperFrames CLI (set CLIPCROW_RENDER_TESTS=1)"]
