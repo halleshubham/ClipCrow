@@ -65,8 +65,9 @@ clip. No clickbait the clip does not deliver.
 - virality: integer 0-10.
 - emphasis: up to 3 {{sentence, word}} pairs: single words copied EXACTLY from that sentence that carry the point.
 {behind_rule}
-- stat: {{sentence, text}} for a number, amount or percentage the speaker says (text = the figure as shown on \
-screen, e.g. "10x" or "₹50,000"), else null.
+- stat: {{sentence, word, text}} for a number, amount or percentage the speaker says, else null. word = the \
+spoken word of the figure, copied EXACTLY from that sentence (for "दहा पट" use "दहा"); text = the figure as shown on \
+screen (e.g. "10x" or "₹50,000").
 {language_instruction(language)}
 
 <transcript window="{window_id}">

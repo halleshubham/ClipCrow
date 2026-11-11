@@ -28,7 +28,8 @@ class Mark(BaseModel):
 
 class Stat(BaseModel):
     sentence: int
-    text: str
+    word: str      # the spoken word of the figure, copied exactly from the sentence (anchors the pill in time)
+    text: str      # the figure as shown on screen
 
 
 class RawClip(BaseModel):

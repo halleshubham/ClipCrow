@@ -1,0 +1,8 @@
+{"windows": [
+ {"id": 0, "hook": 8, "completeness": 9, "standalone": 8, "emotion": 8,
+  "why": "A full arc: Rs 50,000 gone in three months, crying outside the shop, the insight that success is a small daily act, the one-call-a-day habit, the grandmother who sent fifteen customers, 10x result. The intro and subscribe request in the first 20 s must be cut."},
+ {"id": 1, "hook": 6, "completeness": 6, "standalone": 6, "emotion": 5,
+  "why": "Starts mid-story and ends in sponsor read and filler; the 'if you have no money, invest time' section (S17-S22) is a decent standalone idea with a clear question and a payoff, but weaker than window 0."},
+ {"id": 2, "hook": 7, "completeness": 8, "standalone": 7, "emotion": 6,
+  "why": "The three rules plus the Rs 12 lakh debt and 'nothing is impossible, only consistency is needed' land cleanly from S26 to S33; the opening lines are a sponsor read and filler and must not be included."}
+]}

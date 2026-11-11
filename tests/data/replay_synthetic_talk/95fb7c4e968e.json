@@ -1,0 +1,32 @@
+{
+ "clips": [
+  {
+   "first_sentence": 26,
+   "last_sentence": 33,
+   "title": "नवीन उद्योजकासाठी तीन नियम आणि १२ लाखांचं कर्ज फेडण्याचं रहस्य",
+   "hook_text": "तीन नियम ज्यांनी १२ लाखांचं कर्ज फेडलं",
+   "why": "Three practical rules, a hard number, and a closing line about consistency that lands the whole clip.",
+   "virality": 9,
+   "emphasis": [
+    {
+     "sentence": 27,
+     "word": "उधारीवर"
+    },
+    {
+     "sentence": 31,
+     "word": "अशक्य"
+    },
+    {
+     "sentence": 32,
+     "word": "सातत्य"
+    }
+   ],
+   "behind": null,
+   "stat": {
+    "sentence": 31,
+    "word": "बारा",
+    "text": "₹12 लाख"
+   }
+  }
+ ]
+}

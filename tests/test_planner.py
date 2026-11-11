@@ -48,7 +48,7 @@ def scripted(best_windows=(1,), hook="हे ऐकल्यावर आयु�
             first_sentence=first, last_sentence=last, title=title, hook_text=hook, why="strong claim", virality=8,
             emphasis=[dict(sentence=first, word=word)],
             behind=dict(sentence=first, word=word) if behind else None,
-            stat=dict(sentence=first, text="१०x"))])
+            stat=dict(sentence=first, word=word, text="१०x"))])
     return FakeLLM(respond)
 
 
@@ -226,3 +226,28 @@ def test_planned_edl_compiles(tmp_path, fonts_available):
     g = tmp_path / "g.js"; g.write_text("x")
     res = compile_clip(plan.edl, plan.edl.clips[0], tmp_path / "p", media_root=tmp_path, gsap_js=g, prepare=False)
     assert "captions" in res.scenes and "cards" in res.scenes and "behind" in res.scenes
+
+
+def test_stat_pill_is_on_screen_while_the_figure_is_spoken():
+    """Regression from a real run: the pill was anchored to the sentence start and could vanish before the number."""
+    plan = plan_edl(make_transcript(), SRC, scripted(), PlannerOptions(target_clips=1, workers=1))
+    clip = plan.edl.clips[0]
+    stat = next(o for o in clip.overlays if o.kind == "stat_pill")
+    # the fake's stat word is the 4th word of the clip's first sentence
+    first = next(w for w in plan.edl.transcript if w.s >= clip.source_in)
+    spoken = [w for w in plan.edl.transcript if w.s >= clip.source_in][3].s - clip.source_in
+    assert stat.t_in <= spoken + 1.5 and spoken <= stat.t_in + stat.duration
+
+
+def test_a_stat_word_that_is_not_in_the_sentence_falls_back_to_the_sentence_with_a_note():
+    llm = scripted()
+    real = llm.respond
+
+    def respond(purpose, prompt, schema):
+        out = real(purpose, prompt, schema)
+        if purpose.startswith("detail"):
+            out.clips[0].stat.word = "नाहीच"
+        return out
+    plan = plan_edl(make_transcript(), SRC, type(llm)(respond), PlannerOptions(target_clips=1, workers=1))
+    assert any("stat word" in n for n in plan.report["clips"][0]["notes"])
+    assert any(o.kind == "stat_pill" for o in plan.edl.clips[0].overlays)

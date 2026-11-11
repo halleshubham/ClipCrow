@@ -1,0 +1,32 @@
+{
+ "clips": [
+  {
+   "first_sentence": 17,
+   "last_sentence": 22,
+   "title": "पैसे नसतील तर काय करायचं? आधी वेळ गुंतवा",
+   "hook_text": "पैसे नसतील तर काय करायचं? आधी वेळ गुंतवा",
+   "why": "A direct question answered in under 30 seconds, with a personal reels-versus-customers contrast.",
+   "virality": 8,
+   "emphasis": [
+    {
+     "sentence": 18,
+     "word": "वेळ"
+    },
+    {
+     "sentence": 19,
+     "word": "भांडवल"
+    },
+    {
+     "sentence": 21,
+     "word": "रील्स"
+    }
+   ],
+   "behind": null,
+   "stat": {
+    "sentence": 21,
+    "word": "तीन",
+    "text": "रोज ३ तास"
+   }
+  }
+ ]
+}

@@ -53,7 +53,7 @@ class PlannedClip:
     score: float
     emphasis: list[int] = field(default_factory=list)   # global word indices
     behind: Optional[int] = None                          # global word index
-    stat: Optional[tuple[int, str]] = None                # (global word index of the sentence start, text)
+    stat: Optional[tuple[int, str, bool]] = None          # (global word index, text, anchored to the spoken word)
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -135,7 +135,10 @@ def finalize(raw: RawClip, win: Window, tr: Transcript, *, min_s: float, max_s: 
     if raw.stat is not None and first <= raw.stat.sentence <= last:
         txt = clean_text(raw.stat.text, 24)
         if txt:
-            clip.stat = (sent[raw.stat.sentence].first, txt)
+            i = find_word(Mark(sentence=raw.stat.sentence, word=raw.stat.word), sent, tr, first, last)
+            if i is None:        # the model's word is not in the sentence: fall back to the sentence start
+                clip.notes.append(f"stat word {raw.stat.word!r} not found; anchored to its sentence")
+            clip.stat = (i if i is not None else sent[raw.stat.sentence].first, txt, i is not None)
     return clip, ""
 
 

@@ -20,6 +20,9 @@ from .select import (DEVANAGARI_LANGS, PlannedClip, drop_overlaps, finalize, wro
 from .transcript import Transcript
 from .windows import Window, build_windows
 
+STAT_LEAD = 0.4        # the pill appears this long before the figure is said
+STAT_SECONDS = 2.4
+STAT_MAX_LATE = 1.5    # a pill that would appear this long after the figure was said is dropped
 WEIGHTS = {"hook": 0.35, "completeness": 0.25, "standalone": 0.25, "emotion": 0.15}
 
 
@@ -230,9 +233,14 @@ def _clip_dict(n: int, c: PlannedClip, tr: Transcript, opts: PlannerOptions, lan
         ov.append({"kind": "text_behind", "id": "behind", "trigger_word_index": c.behind,
                    "duration": 3.0, "text": tr.words[c.behind].w.strip(".,!?।॥")})
     if c.stat is not None:
-        t0 = max(tr.words[c.stat[0]].s - c.start, hook_end + 0.3, 0.5)
-        if t0 + 1.5 <= c.duration:
-            ov.append({"kind": "stat_pill", "id": "stat", "t_in": round(t0, 2), "duration": 2.4, "text": c.stat[1]})
+        idx, text, exact = c.stat
+        spoken = tr.words[idx].s - c.start
+        t0 = max(spoken - STAT_LEAD if exact else spoken, hook_end + 0.3, 0.5)
+        late = t0 - spoken                       # how long after the figure was said the pill would appear
+        if exact and late > STAT_MAX_LATE:
+            c.notes.append("stat dropped: the figure is spoken while the hook is on screen")
+        elif t0 + 1.5 <= c.duration:
+            ov.append({"kind": "stat_pill", "id": "stat", "t_in": round(t0, 2), "duration": STAT_SECONDS, "text": text})
     if opts.speaker_name:
         ov.append({"kind": "lower_third", "id": "speaker", "t_in": 1.0, "duration": 3.0,
                    "title": opts.speaker_name, "subtitle": opts.speaker_title})

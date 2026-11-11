@@ -1,0 +1,60 @@
+{
+ "clips": [
+  {
+   "first_sentence": 4,
+   "last_sentence": 10,
+   "title": "५० हजार रुपये तीन महिन्यांत गमावले, आणि मग एक गोष्ट कळली",
+   "hook_text": "पन्नास हजार रुपये तीन महिन्यांत गमावले",
+   "why": "A complete low-to-insight story that ends on the line 'success is a small thing done every day'.",
+   "virality": 9,
+   "emphasis": [
+    {
+     "sentence": 4,
+     "word": "पन्नास"
+    },
+    {
+     "sentence": 8,
+     "word": "रडलो"
+    },
+    {
+     "sentence": 10,
+     "word": "यश"
+    }
+   ],
+   "behind": null,
+   "stat": {
+    "sentence": 4,
+    "word": "पन्नास",
+    "text": "₹50,000"
+   }
+  },
+  {
+   "first_sentence": 11,
+   "last_sentence": 15,
+   "title": "रोज एक फोन आणि दुकानाची उलाढाल दहा पट",
+   "hook_text": "रोज एकच फोन, आणि उलाढाल दहा पट",
+   "why": "A concrete habit with a surprising result: one ten-minute call a day, then ten times the original capital.",
+   "virality": 8,
+   "emphasis": [
+    {
+     "sentence": 11,
+     "word": "फोन"
+    },
+    {
+     "sentence": 15,
+     "word": "दहा"
+    },
+    {
+     "sentence": 15,
+     "word": "पट"
+    }
+   ],
+   "behind": null,
+   "stat": {
+    "sentence": 15,
+    "word": "दहा",
+    "text": "10x"
+   }
+  }
+ ]
+}
