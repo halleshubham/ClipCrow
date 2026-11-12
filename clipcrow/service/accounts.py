@@ -80,10 +80,6 @@ CREATE TABLE IF NOT EXISTS usage (
   kind TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS usage_user_month ON usage(user_id, month);
 CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, received_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS posts (
-  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, job_id TEXT NOT NULL,
-  clip_id TEXT NOT NULL, channel TEXT NOT NULL, channel_name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
-  detail TEXT NOT NULL DEFAULT '', scheduled_for TEXT, created_at TEXT NOT NULL);
 """
 
 
@@ -253,22 +249,6 @@ class Accounts:
             return True
         except sqlite3.IntegrityError:
             return False
-
-    # --- posts ----------------------------------------------------------------------------------
-    def add_post(self, user_id: str, job_id: str, clip_id: str, channel: str, channel_name: str, status: str,
-                 detail: str = "", scheduled_for: str | None = None) -> str:
-        pid = uuid.uuid4().hex[:16]
-        self._q("INSERT INTO posts VALUES (?,?,?,?,?,?,?,?,?,?)", (pid, user_id, job_id, clip_id, channel, channel_name, status,
-                                                                    detail[:300], scheduled_for, _now()))
-        return pid
-
-    def update_post(self, post_id: str, status: str, detail: str = "") -> None:
-        self._q("UPDATE posts SET status=?, detail=? WHERE id=?", (status, detail[:300], post_id))
-
-    def posts_for(self, user_id: str, job_id: str, clip_id: str) -> list[dict]:
-        return [dict(r) for r in self._q("SELECT id, channel, channel_name, status, detail, scheduled_for, created_at FROM posts "
-                                         "WHERE user_id=? AND job_id=? AND clip_id=? ORDER BY created_at DESC",
-                                         (user_id, job_id, clip_id)).fetchall()]
 
     def count(self) -> int:
         return int(self._q("SELECT COUNT(*) AS n FROM users").fetchone()["n"])

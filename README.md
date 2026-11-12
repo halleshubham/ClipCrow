@@ -68,9 +68,34 @@ involvement).
   `playwright install chromium`; images use `GEMINI_API_KEY` (`CLIPCROW_IMAGE_MODEL` to change the model; written to
   Google's documented image output but **not tried against the live API from the build environment**). AI *video* has an
   interface (`clipcrow.assets.video`) and **no provider**: nothing asks for generated video until one is registered.
-- **Not built yet**: accounts, retention/cleanup, a job queue across several machines, posting to social platforms.
-- Browser test: `node scripts/e2e_ui.js <video> <dir>` (Playwright, real render and re-render, ~8 min;
-  `JOB_ID=<id>` re-tests the editor on a job that already exists).
+- **Accounts** (`clipcrow serve --accounts [--no-signup]`, data in `<data>/clipcrow.db`): email + password (scrypt),
+  session cookie (HttpOnly, SameSite=Strict, only its hash is stored), sign-in attempts rate limited, per-user jobs (someone
+  else's job is a 404 everywhere), account deletion (password required; cancels a Razorpay subscription first and stops if
+  that fails). **Not built**: email verification and password reset (nothing here sends mail; an operator can call
+  `Accounts.set_password`). Serve it behind TLS.
+- **Minutes and plans**: a job reserves its source minutes (rounded up) from the month's allowance, then from purchased
+  credits, atomically; a job that fails or is cancelled gives them back once. Plans live in a JSON file
+  (`CLIPCROW_PLANS`; the built-in numbers are placeholders and there are **no prices in the code**: a plan's price is the
+  Razorpay plan you create, `price_label` is only the text shown). A paid plan that has lapsed counts as free.
+- **Retention**: finished jobs are deleted after the plan's `retention_days`, the uploaded original sooner (`source_days`;
+  clips stay downloadable but cannot be edited without it). A running job is never touched. Without accounts set
+  `CLIPCROW_RETENTION_DAYS` / `CLIPCROW_SOURCE_DAYS`.
+- **Billing (Razorpay)**: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`; point Razorpay's webhook at
+  `/api/billing/razorpay/webhook` (events: `subscription.*`, `payment_link.paid`). A plan changes or minutes are added
+  **only** from a webhook whose HMAC signature verifies against the raw body; what a payment is worth comes from the
+  catalog (a payment of the wrong amount is ignored); each event applies once. Tested with a fake network and
+  independently computed signatures; **not tried against live Razorpay** (no credentials in the build environment).
+- **Posting (SocioBird)**: `SOCIOBIRD_API_URL`, `SOCIOBIRD_API_KEY`. YouTube, Instagram (Reels) and TikTok; the
+  per-platform settings are exactly what SocioBird's published schemas require (TikTok's AI label is switched on for clips
+  with AI-generated pictures, and the person must confirm they will label it elsewhere). One upload, one post per channel,
+  scheduling supported, per-channel results. The key is the **operator's** workspace, so with accounts on, posting is off
+  unless `CLIPCROW_SOCIOBIRD_SHARED=1` (everyone who can sign in may post to those channels); per-user keys are future work.
+  The request shapes follow the Postiz-style public API SocioBird's tools mirror; **not tried against the live service**.
+- **Not built yet**: email verification and password reset, per-user SocioBird keys, a job queue across several machines,
+  a live preview and a timeline editor.
+- Browser tests: `node scripts/e2e_ui.js <video> <dir>` (Playwright, real render and re-render, ~8 min; `JOB_ID=<id>`
+  re-tests the editor on a job that already exists) and `scripts/e2e_accounts.js` (sign-up, usage, billing section,
+  sign-in/out, deletion).
 
 ## From a video (`make`)
 ```

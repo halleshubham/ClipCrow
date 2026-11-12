@@ -78,7 +78,9 @@ def main(argv: list[str] | None = None) -> int:
             import os
             import uvicorn
             from .service.api import create_app
+            from .service.billing import Razorpay
             from .service.demo import DemoPipeline
+            from .service.publish import SocioBird
             from .service.pipelines import RealPipeline
             token = os.environ.get("CLIPCROW_TOKEN") or None
             accounts = None
@@ -91,7 +93,9 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(f"refusing to listen on {a.host} without a login: set CLIPCROW_TOKEN "
                                  f"(or pass --insecure on a network you trust)")
             app = create_app(a.data, DemoPipeline() if a.demo else RealPipeline(), token=token,
-                             max_upload_mb=a.max_upload_mb, demo=a.demo, accounts=accounts, allow_signup=not a.no_signup)
+                             max_upload_mb=a.max_upload_mb, demo=a.demo, accounts=accounts, allow_signup=not a.no_signup,
+                             razorpay=Razorpay.from_env() if accounts else None, sociobird=SocioBird.from_env(),
+                             sociobird_shared=os.environ.get("CLIPCROW_SOCIOBIRD_SHARED") == "1")
             uvicorn.run(app, host=a.host, port=a.port, log_level="info")
             return 0
         if a.cmd == "transcribe":

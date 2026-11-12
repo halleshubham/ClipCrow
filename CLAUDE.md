@@ -43,6 +43,16 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   only `EXPECTED` errors' messages; unexpected ones get a generic message and a server log entry.
 - A pipeline implements `check_ready()`, `run(job, video, out, hooks, say)` and `render_clip(...)` (re-render after an
   edit); progress goes through `make.Hooks`.
+- Accounts: every job route goes through `job_or_404(job_id, request)` (owner check; another user's job is a 404). A
+  new route that takes a job id must too. Passwords are scrypt, sessions are stored hashed, sign-in errors do not say
+  whether an email exists. Wrong password on a signed-in action is 403, never 401 (the UI treats 401 as "sign in").
+- Billing: plans change and minutes are added ONLY from a signature-verified Razorpay webhook (raw body, constant-time
+  compare); amounts come from the catalog, never the request; events are idempotent; no prices in code. Deleting an
+  account cancels the subscription first and aborts if that fails.
+- Minutes: reserve at submit (atomic), refund once on failed/cancelled (`JobRunner.on_finish`); keep both when adding a
+  job state. Retention never touches queued/running jobs.
+- Posting: captions are escaped plain text; only checked platforms are allowed; with accounts on it needs
+  `CLIPCROW_SOCIOBIRD_SHARED=1` because the key is the operator's. AI-generated media needs the person's confirmation.
 - Clip edits are `service.editor.ClipEdit`, a closed set of fields applied by the pure `apply_edit`; never accept a raw
   EDL or a path from the browser. The AI's `decided` list is not rewritten by a person: add a note instead.
   All edl.json writes go through the runner's edit lock; a render finishes only the latest edit (`_gen`).

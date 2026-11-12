@@ -127,9 +127,9 @@ def test_webhook_events_are_seen_once(db):
 
 def test_deleting_a_user_removes_everything_of_theirs(db):
     u = db.register("a@example.com", PW)
-    db.reserve(u.id, "j", 1, 10); db.new_session(u.id); db.add_post(u.id, "j", "c1", "ch", "name", "done")
+    db.reserve(u.id, "j", 1, 10); db.new_session(u.id)
     db.delete(u.id)
-    for table in ("users", "sessions", "usage", "posts"):
+    for table in ("users", "sessions", "usage"):
         assert db._q(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"] == 0
 
 
@@ -238,7 +238,7 @@ def test_deleting_an_account_needs_the_password_and_removes_the_jobs(tmp_path, v
     c, a, app = app_client(tmp_path)
     signup(c)
     jid = wait(c, upload(c, video_bytes).json()["id"])["id"]
-    assert c.request("DELETE", "/api/account", json={"password": "wrong password"}).status_code == 401
+    assert c.request("DELETE", "/api/account", json={"password": "wrong password"}).status_code == 403          # not 401: that means "sign in"
     assert (tmp_path / "data" / "jobs" / jid).exists()
     assert c.request("DELETE", "/api/account", json={"password": PW}).status_code == 200
     assert not (tmp_path / "data" / "jobs" / jid).exists() and a.count() == 0

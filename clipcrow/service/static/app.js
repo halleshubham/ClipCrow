@@ -26,7 +26,7 @@ class SignInNeeded extends Error {}
 
 async function api(path, opts = {}) {
   const res = await fetch('/api' + path, { credentials: 'same-origin', ...opts });
-  if (res.status === 401 && path !== '/login') {
+  if (res.status === 401 && path !== '/login' && path !== '/auth/login') {
     state.config.signed_in = false;
     throw new SignInNeeded('Sign in first.');
   }
@@ -164,7 +164,42 @@ async function accountView() {
     billing,
     el('section', { class: 'card stack' }, el('h2', { text: 'Delete account' }),
       el('p', { class: 'small muted', style: { margin: 0 }, text: 'Removes your account, every job and every clip. Cancel running jobs first.' }), err, delForm)));
-  return { billing, me };
+  if (state.config.billing) await renderBilling(billing);
+}
+
+async function renderBilling(box) {
+  let info;
+  try { info = await api('/billing'); } catch (_) { return; }
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const go = async (path, body, label, btn) => {
+    err.hidden = true; btn.disabled = true;
+    try {
+      const r = await api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (r.url) { location.assign(r.url); return; }          // the hosted checkout page; the plan changes when the payment is confirmed
+      await route();
+    } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+  };
+  const buy = info.plans.filter((p) => p.can_subscribe && p.id !== info.current);
+  const parts = [el('h2', { text: 'Plan and minutes' })];
+  for (const p of buy) {
+    const b = el('button', { class: 'btn dark', type: 'button', text: info.subscribed ? 'Cancel your current plan first' : `Choose ${p.name}`, disabled: info.subscribed });
+    if (!info.subscribed) b.addEventListener('click', () => go('/billing/subscribe', { plan: p.id }, p.name, b));
+    parts.push(el('div', { class: 'row', style: { justifyContent: 'space-between' } },
+      el('div', {}, el('strong', { text: p.name }), el('div', { class: 'small muted', text: `${p.monthly_minutes} minutes of video a month${p.price_label ? ' · ' + p.price_label : ''}` })), b));
+  }
+  if (info.subscribed) {
+    const b = el('button', { class: 'btn', type: 'button', text: 'Cancel subscription' });
+    b.addEventListener('click', () => { if (confirm('Cancel your subscription? Your plan stays active until the end of the period you paid for.')) go('/billing/cancel', {}, 'cancel', b); });
+    parts.push(el('div', { class: 'row' }, b, el('span', { class: 'small muted', text: 'Your plan stays active until the end of the period you paid for.' })));
+  }
+  for (const k of info.packs) {
+    const b = el('button', { class: 'btn', type: 'button', text: 'Buy' });
+    b.addEventListener('click', () => go('/billing/credits', { pack: k.id }, k.label, b));
+    parts.push(el('div', { class: 'row', style: { justifyContent: 'space-between' } },
+      el('div', {}, el('strong', { text: k.label }), el('div', { class: 'small muted', text: `${k.minutes} extra minutes that do not expire at the end of the month` })), b));
+  }
+  if (parts.length === 1) return;
+  box.replaceChildren(el('section', { class: 'card stack' }, ...parts, err));
 }
 
 function newJobView() {
@@ -376,6 +411,7 @@ async function jobView(jobId) {
     const score = c.score == null ? null : Math.round(c.score * 100);
     const actions = el('div', { class: 'row' });
     if (c.ready) actions.append(el('a', { class: 'btn dark', href: `${url}/download`, text: 'Download MP4' }));
+    if (c.ready && job.status === 'done' && state.config.publishing) actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}/share`, text: 'Share' }));
     if (c.ready && job.status === 'done' && job.source_removed) actions.append(el('span', { class: 'small muted', text: 'Original video removed: no more edits' }));
     else if (c.ready && job.status === 'done') actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}`, text: 'Edit' }));
     return el('article', { class: 'card clipcard', 'data-clip': c.id }, player,
@@ -655,6 +691,76 @@ async function clipEditorView(jobId, clipId) {
   return { cleanup() { dead = true; clearTimeout(timer); } };
 }
 
+// ---- sharing ---------------------------------------------------------------------------------------
+
+const STATUS_WORD = { queued: 'Waiting…', sent: 'Posted', scheduled: 'Scheduled', failed: 'Failed' };
+const PLATFORM_WORD = { youtube: 'YouTube', instagram: 'Instagram', 'instagram-standalone': 'Instagram', tiktok: 'TikTok' };
+
+async function shareView(jobId, clipId) {
+  const [job, channels, usage] = await Promise.all([api(`/jobs/${jobId}`), api('/publish/channels'), api(`/jobs/${jobId}/usage`).catch(() => ({ disclosure_recommended: false }))]);
+  const clip = job.clips.find((c) => c.id === clipId);
+  if (!clip) { app.replaceChildren(el('div', { class: 'card empty', text: 'No such clip.' })); return { cleanup() {} }; }
+  let timer = null, dead = false;
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const list = el('div', { class: 'stack', style: { gap: '8px' } });
+  const boxes = channels.map((ch) => ({ ch, box: el('input', { type: 'checkbox', id: `ch-${ch.id}`, 'data-ch': ch.id }) }));
+  const title = el('input', { id: 'sh-title', type: 'text', maxlength: '100', class: 'deva', value: clip.title });
+  const caption = el('textarea', { id: 'sh-caption', rows: '4', class: 'deva', maxlength: '2000' });
+  caption.value = [clip.title, clip.hook].filter(Boolean).join('\n');
+  const privacy = el('select', { id: 'sh-privacy' }, [['public', 'Public'], ['unlisted', 'Unlisted (YouTube; followers only on TikTok)'], ['private', 'Private']].map(([v, t]) => el('option', { value: v, text: t })));
+  const when = el('input', { id: 'sh-when', type: 'datetime-local' });
+  const kids = el('input', { id: 'sh-kids', type: 'checkbox' });
+  const ai = el('input', { id: 'sh-ai', type: 'checkbox' });
+  const send = el('button', { class: 'btn primary', type: 'button', text: 'Post' });
+
+  function paint(rows) {
+    list.replaceChildren(...rows.map((r) => el('div', { class: 'row small' },
+      el('span', { class: `badge ${r.status === 'failed' ? 'failed' : r.status === 'queued' ? 'running' : 'done'}`, text: STATUS_WORD[r.status] || r.status }),
+      el('span', { translate: 'no', text: `${PLATFORM_WORD[r.platform] || r.platform} · ${r.name}` }),
+      r.when && el('span', { class: 'muted', text: `for ${when_(r.when)}` }),
+      r.detail && el('span', { class: 'muted', text: r.detail }))));
+  }
+  const when_ = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  async function refresh() {
+    if (dead) return;
+    try {
+      const rows = await api(`/jobs/${jobId}/clips/${clipId}/posts`);
+      paint(rows);
+      if (rows.some((r) => r.status === 'queued')) timer = setTimeout(refresh, 1500);
+    } catch (e) { if (e instanceof SignInNeeded) route(); }
+  }
+  send.addEventListener('click', async () => {
+    err.hidden = true;
+    const chosen = boxes.filter((b) => b.box.checked).map((b) => b.ch.id);
+    if (!chosen.length) { err.textContent = 'Choose at least one channel.'; err.hidden = false; return; }
+    const body = { channels: chosen, title: title.value, caption: caption.value, privacy: privacy.value, made_for_kids: kids.checked, ai_confirmed: ai.checked };
+    if (when.value) body.when = new Date(when.value).toISOString();
+    send.disabled = true;
+    try {
+      await api(`/jobs/${jobId}/clips/${clipId}/publish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      await refresh();
+    } catch (e) { if (e instanceof SignInNeeded) { route(); return; } err.textContent = e.message; err.hidden = false; }
+    send.disabled = false;
+  });
+  const field = (label, control, hint) => el('div', {}, el('label', { class: 'field', for: control.id, text: label }), control, hint && el('div', { class: 'hint', text: hint }));
+  app.replaceChildren(el('div', { class: 'stack' },
+    el('div', { class: 'row' }, el('div', { class: 'grow' }, el('h1', { text: 'Share clip' }), el('div', { class: 'small muted', translate: 'no', text: clip.title })),
+      el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
+    channels.length === 0 ? el('div', { class: 'card empty', text: 'No YouTube, Instagram or TikTok channels are connected in SocioBird yet.' }) : el('div', { class: 'card stack' },
+      el('fieldset', { class: 'stack', style: { border: 0, padding: 0, margin: 0 } }, el('legend', { class: 'field', text: 'Post to' }),
+        ...boxes.map(({ ch, box }) => el('label', { class: 'check', for: box.id }, box, el('span', {}, el('strong', { translate: 'no', text: ch.name }), el('br'), el('span', { class: 'muted', text: PLATFORM_WORD[ch.platform] || ch.platform }))))),
+      field('Title', title, 'YouTube and TikTok show it; Instagram uses the caption.'),
+      field('Caption', caption, 'Plain text. Hashtags and links are fine.'),
+      el('div', { class: 'grid2', style: { marginTop: 0 } }, field('Who can see it', privacy), field('Post at (your time, optional)', when, 'Leave empty to post now.')),
+      el('label', { class: 'check', for: 'sh-kids' }, kids, el('span', {}, el('strong', { text: 'This video is made for kids' }), el('br'), el('span', { class: 'muted', text: 'YouTube asks every creator to declare this.' }))),
+      usage.disclosure_recommended && el('label', { class: 'check', for: 'sh-ai' }, ai, el('span', {}, el('strong', { text: 'I will label this video as AI content' }), el('br'),
+        el('span', { class: 'muted', text: 'It includes AI-generated pictures. TikTok’s own AI label is switched on for you; on YouTube and Instagram set the label in the app if it asks.' }))),
+      err, el('div', {}, send)),
+    el('section', { class: 'card stack', hidden: false }, el('h2', { text: 'Posts' }), list)));
+  await refresh();
+  return { cleanup() { dead = true; clearTimeout(timer); } };
+}
+
 // ---- router -----------------------------------------------------------------------------------
 let cleanup = null;
 async function route() {
@@ -671,6 +777,7 @@ async function route() {
     if (hash === '#/' || hash === '#' || hash === '#/new') newJobView();
     else if (hash === '#/jobs') await jobsView();
     else if (hash === '#/account') await accountView();
+    else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})\/share$/))) { const v = await shareView(m[1], m[2]); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})$/))) { const v = await clipEditorView(m[1], m[2]); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})$/))) { const v = await jobView(m[1]); cleanup = v.cleanup; }
     else app.replaceChildren(el('div', { class: 'card empty', text: 'Page not found.' }));

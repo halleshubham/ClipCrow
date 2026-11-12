@@ -9,12 +9,17 @@ to the browser never contain server internals; responses carry a strict Content-
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
+import json
+import logging
 import math
 import re
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -26,9 +31,11 @@ from ..costs import estimate_cost, estimate_total
 from ..edl import load_edl
 from ..planner.source import probe_source
 from .accounts import AccountError, Accounts, User
+from .billing import BillingError, Razorpay, apply_event
 from .editor import ClipEdit, clip_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Catalog, load_catalog
+from .publish import PublishError, SocioBird, caption_html, settings_for, validate_when
 from .retention import Sweeper, env_days, expires_at
 from .runner import JobRunner, Pipeline
 
@@ -54,6 +61,24 @@ class Password(BaseModel):
     password: str
 
 
+class PlanChoice(BaseModel):
+    plan: str
+
+
+class PackChoice(BaseModel):
+    pack: str
+
+
+class PublishBody(BaseModel):
+    channels: list[str]
+    caption: str = ""
+    title: str = ""
+    privacy: Literal["public", "unlisted", "private"] = "public"
+    when: Optional[str] = None
+    made_for_kids: bool = False
+    ai_confirmed: bool = False
+
+
 def _opt_int(v: Optional[str]) -> Optional[int]:
     return int(v) if v not in (None, "") else None
 
@@ -64,7 +89,8 @@ def _opt_float(v: Optional[str], default: float) -> float:
 
 def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = None, max_upload_mb: int = 4096,
                demo: bool = False, start_runner: bool = True, accounts: Accounts | None = None,
-               catalog: Catalog | None = None, allow_signup: bool = True) -> FastAPI:
+               catalog: Catalog | None = None, allow_signup: bool = True, razorpay: Razorpay | None = None,
+               sociobird: SocioBird | None = None, sociobird_shared: bool = False) -> FastAPI:
     """``accounts``: multi-user mode (sign-up, per-user jobs, minutes metered against the plan). Without it the app is
     single-user, optionally behind ``token``."""
     store = JobStore(data_dir)
@@ -158,7 +184,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         except HTTPException:
             signed_in = False
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
-                "signup": bool(accounts) and allow_signup, "email": email,
+                "signup": bool(accounts) and allow_signup, "email": email, "billing": bool(accounts and razorpay), "publishing": bool(sociobird) and (not accounts or sociobird_shared),
                 "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready(),
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False))}
 
@@ -229,9 +255,15 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         try:
             accounts.authenticate(user.email, body.password, who=request.client.host if request.client else "")
         except AccountError as e:
-            raise HTTPException(401, "That password is not right.")
+            raise HTTPException(403, "That password is not right.")
         if any(j.status in ("queued", "running") for j in store.list() if j.owner == user.id):
             raise HTTPException(409, "Cancel your running jobs first.")
+        if user.subscription and razorpay:                       # stop the charges FIRST; if that fails, delete nothing
+            try:
+                razorpay.cancel_subscription(user.subscription, at_cycle_end=False)
+            except BillingError:
+                raise HTTPException(502, "Your subscription could not be cancelled just now, so the account was not deleted. "
+                                         "Try again in a minute.")
         for j in store.list():
             if j.owner == user.id:
                 store.delete(j.id)
@@ -239,6 +271,158 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(SESSION_COOKIE)
         return resp
+
+    # --- publishing (SocioBird) -------------------------------------------------------------------
+    publish_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="clipcrow-publish")
+
+    def need_publishing() -> SocioBird:
+        if not sociobird or (accounts and not sociobird_shared):
+            raise HTTPException(404, "Posting to social channels is not set up on this server.")
+        return sociobird
+
+    @app.get("/api/publish/channels", dependencies=[Depends(authed)])
+    def publish_channels() -> list[dict]:
+        sb = need_publishing()
+        try:
+            return [{"id": c.id, "name": c.name, "platform": c.platform} for c in sb.channels()]
+        except PublishError as e:
+            raise HTTPException(502, str(e))
+
+    @app.get("/api/jobs/{job_id}/clips/{clip_id}/posts", dependencies=[Depends(authed)])
+    def clip_posts(job_id: str, clip_id: str, request: Request) -> list[dict]:
+        job_or_404(job_id, request)
+        return store.posts(job_id, clip_id)
+
+    @app.post("/api/jobs/{job_id}/clips/{clip_id}/publish", dependencies=[Depends(authed)], status_code=202)
+    def clip_publish(job_id: str, clip_id: str, body: PublishBody, request: Request) -> list[dict]:
+        sb = need_publishing()
+        job = job_or_404(job_id, request)
+        info = next((c for c in job.clips if c.id == clip_id), None)
+        if info is None or job.status != "done":
+            raise HTTPException(404, "No such clip.")
+        path = store.clip_path(job_id, clip_id)
+        if not path.is_file() or info.render in ("queued", "rendering"):
+            raise HTTPException(409, "This clip is not ready yet.")
+        from ..provenance import provenance
+        try:
+            edl = load_edl(store.edl_path(job_id))
+            ai_media = provenance(edl, next(c for c in edl.clips if c.id == clip_id))["disclosure_recommended"]
+        except (OSError, StopIteration, ValueError):
+            raise HTTPException(404, "The plan for this clip is not on disk.")
+        if ai_media and not body.ai_confirmed:
+            raise HTTPException(422, "This clip includes AI-generated pictures. Confirm that you will label it as AI content where the platform asks.")
+        if not body.channels or len(body.channels) > 6 or len(set(body.channels)) != len(body.channels):
+            raise HTTPException(422, "Choose between 1 and 6 different channels.")
+        try:
+            when = validate_when(body.when)
+            known = {c.id: c for c in sb.channels()}
+        except PublishError as e:
+            raise HTTPException(422 if "date" in str(e) or "time" in str(e) or "year" in str(e) else 502, str(e))
+        chosen = []
+        for cid in body.channels:
+            if cid not in known:
+                raise HTTPException(422, "One of those channels is not available.")
+            chosen.append(known[cid])
+        title = (body.title or info.title).strip()
+        try:                                                      # check every channel's settings BEFORE anything is queued
+            plans = [(ch, settings_for(ch.platform, title=title, privacy=body.privacy, made_for_kids=body.made_for_kids,
+                                       ai_generated=ai_media), caption_html(body.caption or title, ch.platform)) for ch in chosen]
+        except PublishError as e:
+            raise HTTPException(422, str(e))
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        rows = [{"id": uuid.uuid4().hex[:12], "clip": clip_id, "channel": ch.id, "name": ch.name, "platform": ch.platform,
+                 "status": "queued", "detail": "", "when": when.isoformat(timespec="seconds") if when else None, "at": now}
+                for ch, _, _ in plans]
+        store.add_posts(job_id, rows)
+
+        def work() -> None:
+            try:
+                media = sb.upload(path)
+            except PublishError as e:
+                for r in rows:
+                    store.update_post(job_id, r["id"], "failed", str(e))
+                return
+            except Exception:
+                logging.getLogger("clipcrow.service").exception("upload to SocioBird failed")
+                for r in rows:
+                    store.update_post(job_id, r["id"], "failed", "The video could not be uploaded.")
+                return
+            for (ch, settings, content), r in zip(plans, rows):
+                try:
+                    sb.post(ch, content, media, settings, when=when)
+                    store.update_post(job_id, r["id"], "scheduled" if when else "sent")
+                except PublishError as e:
+                    store.update_post(job_id, r["id"], "failed", str(e))
+                except Exception:
+                    logging.getLogger("clipcrow.service").exception("post to SocioBird failed")
+                    store.update_post(job_id, r["id"], "failed", "The post could not be created.")
+        publish_pool.submit(work)
+        return rows
+
+    # --- billing (Razorpay) ----------------------------------------------------------------------
+    def need_billing() -> Razorpay:
+        if not (accounts and razorpay):
+            raise HTTPException(404, "Billing is not set up on this server.")
+        return razorpay
+
+    @app.get("/api/billing", dependencies=[Depends(authed)])
+    def billing_info(request: Request) -> dict:
+        user = request.state.user
+        need_accounts()
+        return {"enabled": bool(razorpay), "subscribed": bool(user.subscription), "current": effective_plan(user).id,
+                "plans": [{"id": p.id, "name": p.name, "price_label": p.price_label, "monthly_minutes": p.monthly_minutes,
+                           "can_subscribe": bool(p.razorpay_plan_id) and p.id != "free"} for p in catalog.plans.values()],
+                "packs": [{"id": k.id, "minutes": k.minutes, "label": k.label} for k in catalog.packs.values()]}
+
+    @app.post("/api/billing/subscribe", dependencies=[Depends(authed)])
+    def subscribe(body: PlanChoice, request: Request) -> dict:
+        user, rz = request.state.user, need_billing()
+        plan = catalog.plans.get(body.plan)
+        if plan is None or plan.id == "free" or not plan.razorpay_plan_id:
+            raise HTTPException(422, "That plan cannot be bought.")
+        if user.subscription:
+            raise HTTPException(409, "You already have a subscription. Cancel it first to change plan.")
+        try:
+            return {"url": rz.create_subscription(plan.razorpay_plan_id, user.id, plan.id)["url"]}
+        except BillingError as e:
+            raise HTTPException(502, str(e))
+
+    @app.post("/api/billing/credits", dependencies=[Depends(authed)])
+    def buy_credits(body: PackChoice, request: Request) -> dict:
+        user, rz = request.state.user, need_billing()
+        pack = catalog.packs.get(body.pack)
+        if pack is None:
+            raise HTTPException(422, "That pack does not exist.")
+        try:
+            return {"url": rz.create_payment_link(pack.amount_paise, pack.label, user.id, pack.id)["url"]}
+        except BillingError as e:
+            raise HTTPException(502, str(e))
+
+    @app.post("/api/billing/cancel", dependencies=[Depends(authed)])
+    def cancel_subscription(request: Request) -> dict:
+        user, rz = request.state.user, need_billing()
+        if not user.subscription:
+            raise HTTPException(409, "You do not have a subscription.")
+        try:
+            rz.cancel_subscription(user.subscription, at_cycle_end=True)
+        except BillingError as e:
+            raise HTTPException(502, str(e))
+        return {"ok": True, "note": "Your plan stays active until the end of the period you paid for."}
+
+    @app.post("/api/billing/razorpay/webhook")
+    async def razorpay_webhook(request: Request) -> dict:
+        rz = need_billing()
+        if int(request.headers.get("content-length") or 0) > 1_000_000:
+            raise HTTPException(413, "Too large.")
+        body = await request.body()
+        if len(body) > 1_000_000 or not rz.verify(body, request.headers.get("x-razorpay-signature", "")):
+            raise HTTPException(400, "Bad signature.")                  # nothing is read from an unsigned body
+        try:
+            event = json.loads(body)
+        except ValueError:
+            raise HTTPException(400, "Not JSON.")
+        event_id = request.headers.get("x-razorpay-event-id") or hashlib.sha256(body).hexdigest()
+        return {"status": apply_event(event, event_id[:100], accounts, catalog)}
 
     # --- jobs -----------------------------------------------------------------------------
     @app.post("/api/jobs", dependencies=[Depends(authed)], status_code=201)

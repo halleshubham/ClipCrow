@@ -148,6 +148,27 @@ class JobStore:
             self.save(job)
             return job
 
+    # posts to social channels: <job>/out/posts.json, a list of {id, clip, channel, name, platform, status, detail, when, at}
+    def posts(self, job_id: str, clip_id: str | None = None) -> list[dict]:
+        try:
+            rows = json.loads((self.dir(job_id) / "out" / "posts.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            rows = []
+        return [r for r in rows if clip_id is None or r.get("clip") == clip_id]
+
+    def add_posts(self, job_id: str, rows: list[dict]) -> None:
+        with self._lock:
+            path = self.dir(job_id) / "out" / "posts.json"
+            path.write_text(json.dumps(self.posts(job_id) + rows, ensure_ascii=False), encoding="utf-8")
+
+    def update_post(self, job_id: str, post_id: str, status: str, detail: str = "") -> None:
+        with self._lock:
+            rows = self.posts(job_id)
+            for r in rows:
+                if r["id"] == post_id:
+                    r["status"], r["detail"] = status, detail[:300]
+            (self.dir(job_id) / "out" / "posts.json").write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+
     def edl_path(self, job_id: str) -> Path:
         return self.dir(job_id) / "out" / "edl.json"
 
