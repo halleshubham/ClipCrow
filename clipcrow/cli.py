@@ -43,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
     sv.add_argument("--max-upload-mb", type=int, default=4096)
     sv.add_argument("--demo", action="store_true", help="built-in Marathi transcript and recorded answers: no Whisper, no API key")
     sv.add_argument("--insecure", action="store_true", help="allow a non-local address without CLIPCROW_TOKEN")
+    sv.add_argument("--accounts", action="store_true", help="multi-user: sign-up, per-user jobs, minutes metered against a plan, retention")
+    sv.add_argument("--no-signup", action="store_true", help="with --accounts: do not let new people register")
     u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
     u.add_argument("edl")
     pl = sub.add_parser("plan", help="transcript -> EDL with an LLM (needs ANTHROPIC_API_KEY)")
@@ -79,11 +81,17 @@ def main(argv: list[str] | None = None) -> int:
             from .service.demo import DemoPipeline
             from .service.pipelines import RealPipeline
             token = os.environ.get("CLIPCROW_TOKEN") or None
-            if a.host not in ("127.0.0.1", "::1", "localhost") and not token and not a.insecure:
+            accounts = None
+            if a.accounts:
+                from .service.accounts import Accounts
+                accounts = Accounts(Path(a.data) / "clipcrow.db")
+                if a.host not in ("127.0.0.1", "::1", "localhost"):
+                    print("note: accounts use cookies and passwords: serve this behind TLS (a reverse proxy)", file=sys.stderr)
+            if a.host not in ("127.0.0.1", "::1", "localhost") and not token and not accounts and not a.insecure:
                 raise ValueError(f"refusing to listen on {a.host} without a login: set CLIPCROW_TOKEN "
                                  f"(or pass --insecure on a network you trust)")
             app = create_app(a.data, DemoPipeline() if a.demo else RealPipeline(), token=token,
-                             max_upload_mb=a.max_upload_mb, demo=a.demo)
+                             max_upload_mb=a.max_upload_mb, demo=a.demo, accounts=accounts, allow_signup=not a.no_signup)
             uvicorn.run(app, host=a.host, port=a.port, log_level="info")
             return 0
         if a.cmd == "transcribe":

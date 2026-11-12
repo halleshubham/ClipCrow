@@ -15,6 +15,9 @@ a:hover { color: var(--blue); }
 .skip { position: absolute; left: -999px; } .skip:focus { left: 8px; top: 8px; background: var(--ink); color: #fff; padding: 8px 12px; z-index: 10; }
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; padding: 14px 32px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; text-decoration: none; }
+.acct { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 14px; color: var(--muted); }
+.meter { height: 10px; border-radius: 5px; background: #EFEDE4; overflow: hidden; } .meter > div { height: 100%; background: var(--blue); }
+.meter.low > div { background: var(--bad); }
 nav { display: flex; gap: 4px; font-size: 14px; font-weight: 500; }
 nav a { padding: 8px 14px; border-radius: 8px; color: var(--muted); text-decoration: none; }
 nav a[aria-current="page"] { background: var(--ink); color: #fff; }

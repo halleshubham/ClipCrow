@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import math
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -23,12 +25,16 @@ from ..assets.urlguard import UnsafeURL, assert_public_url
 from ..costs import estimate_cost, estimate_total
 from ..edl import load_edl
 from ..planner.source import probe_source
+from .accounts import AccountError, Accounts, User
 from .editor import ClipEdit, clip_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
+from .plans import Catalog, load_catalog
+from .retention import Sweeper, env_days, expires_at
 from .runner import JobRunner, Pipeline
 
 STATIC = Path(__file__).parent / "static"
 COOKIE = "clipcrow_token"
+SESSION_COOKIE = "clipcrow_session"
 LANGUAGES = [{"code": "", "name": "Auto-detect"}, {"code": "mr", "name": "Marathi"}, {"code": "hi", "name": "Hindi"},
              {"code": "en", "name": "English"}]
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; "
@@ -37,6 +43,15 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' 
 
 class Login(BaseModel):
     token: str
+
+
+class Credentials(BaseModel):
+    email: str
+    password: str
+
+
+class Password(BaseModel):
+    password: str
 
 
 def _opt_int(v: Optional[str]) -> Optional[int]:
@@ -48,13 +63,23 @@ def _opt_float(v: Optional[str], default: float) -> float:
 
 
 def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = None, max_upload_mb: int = 4096,
-               demo: bool = False, start_runner: bool = True) -> FastAPI:
+               demo: bool = False, start_runner: bool = True, accounts: Accounts | None = None,
+               catalog: Catalog | None = None, allow_signup: bool = True) -> FastAPI:
+    """``accounts``: multi-user mode (sign-up, per-user jobs, minutes metered against the plan). Without it the app is
+    single-user, optionally behind ``token``."""
     store = JobStore(data_dir)
+    catalog = catalog or load_catalog()
     runner = JobRunner(store, pipeline)
+
+    def finish(job: Job) -> None:
+        """A job that failed or was cancelled gives its minutes back."""
+        if accounts and job.owner and job.reserved_minutes and job.status in ("failed", "cancelled"):
+            accounts.refund(job.owner, job.id)
+    runner.on_finish = finish
     if start_runner:
         runner.recover()
     app = FastAPI(title="ClipCrow", docs_url=None, redoc_url=None)
-    app.state.store, app.state.runner = store, runner
+    app.state.store, app.state.runner, app.state.accounts, app.state.catalog = store, runner, accounts, catalog
     limit = max_upload_mb * 1024 * 1024
 
     @app.middleware("http")
@@ -67,37 +92,74 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             resp.headers["Cache-Control"] = "no-store"
         return resp
 
-    def authed(request: Request) -> None:
+    def effective_plan(user: User):
+        """A paid plan that has run out (and not been renewed by a webhook yet) counts as free."""
+        plan = catalog.plan(user.plan)
+        if plan.id != "free" and user.plan_until and user.plan_until < datetime.now(timezone.utc).isoformat(timespec="seconds"):
+            return catalog.plan("free")
+        return plan
+
+    def authed(request: Request) -> Optional[User]:
+        if accounts:
+            user = accounts.user_for_session(request.cookies.get(SESSION_COOKIE, ""))
+            if user is None:
+                raise HTTPException(401, "Sign in first.")
+            request.state.user = user
+            return user
+        request.state.user = None
         if not token:
-            return
+            return None
         given = request.cookies.get(COOKIE, "")
         header = request.headers.get("authorization", "")
         if header.lower().startswith("bearer "):
             given = given or header[7:]
         if not hmac.compare_digest(given.encode(), token.encode()):
             raise HTTPException(401, "Sign in first.")
+        return None
 
-    def job_or_404(job_id: str) -> Job:
+    def job_or_404(job_id: str, request: Request) -> Job:
         try:
-            return store.get(job_id)
+            job = store.get(job_id)
         except KeyError:
             raise HTTPException(404, "No such job.")
+        user = getattr(request.state, "user", None)
+        if accounts and (user is None or job.owner != user.id):      # someone else's job is simply not there
+            raise HTTPException(404, "No such job.")
+        return job
+
+    def days_for(job: Job) -> tuple[int, int]:
+        """(retention days, original-video days) for a job: its owner's plan, or the environment defaults."""
+        if accounts and job.owner:
+            try:
+                p = effective_plan(accounts.get(job.owner))
+                return p.retention_days, p.source_days
+            except KeyError:
+                return (0, 0)
+        return env_days()
+
+    if start_runner and (accounts or any(env_days())):
+        app.state.sweeper = Sweeper(store, days_for)
+        app.state.sweeper.start()
 
     def view(job: Job) -> dict:
         d = job.model_dump()
         d["queue_position"] = runner.queue_position(job.id) if job.status == "queued" else 0
+        days = days_for(job)[0]
+        d["expires_at"] = expires_at(job, days)
         return d
 
     # --- config and login ---------------------------------------------------------------
     @app.get("/api/config")
     def config(request: Request) -> dict:
-        signed_in = True
+        signed_in, email = True, None
         try:
-            authed(request)
+            u = authed(request)
+            email = u.email if u else None
         except HTTPException:
             signed_in = False
-        return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb,
-                "needs_login": bool(token), "signed_in": signed_in, "ready": pipeline.check_ready(),
+        return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
+                "signup": bool(accounts) and allow_signup, "email": email,
+                "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready(),
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False))}
 
     @app.post("/api/login")
@@ -107,6 +169,75 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         resp = JSONResponse({"ok": True})
         resp.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=30 * 86400,
                         secure=request.url.scheme == "https")
+        return resp
+
+    # --- accounts -------------------------------------------------------------------------------
+    def set_session(resp: JSONResponse, request: Request, user: User) -> JSONResponse:
+        resp.set_cookie(SESSION_COOKIE, accounts.new_session(user.id), httponly=True, samesite="strict",
+                        max_age=30 * 86400, secure=request.url.scheme == "https")
+        return resp
+
+    def need_accounts() -> Accounts:
+        if not accounts:
+            raise HTTPException(404, "Accounts are not turned on.")
+        return accounts
+
+    def me_view(user: User) -> dict:
+        plan = effective_plan(user)
+        used = accounts.used_this_month(user.id)
+        return {"email": user.email, "plan": {"id": plan.id, "name": plan.name, "monthly_minutes": plan.monthly_minutes,
+                                              "retention_days": plan.retention_days, "price_label": plan.price_label},
+                "used_minutes": round(used, 1), "left_minutes": round(max(plan.monthly_minutes - used, 0) + user.credits, 1),
+                "credit_minutes": round(user.credits, 1), "plan_until": user.plan_until, "subscribed": bool(user.subscription)}
+
+    @app.post("/api/auth/register")
+    def register(body: Credentials, request: Request) -> JSONResponse:
+        need_accounts()
+        if not allow_signup:
+            raise HTTPException(403, "Sign-ups are closed on this server.")
+        try:
+            user = accounts.register(body.email, body.password)
+        except AccountError as e:
+            raise HTTPException(422, str(e))
+        return set_session(JSONResponse({"ok": True}), request, user)
+
+    @app.post("/api/auth/login")
+    def account_login(body: Credentials, request: Request) -> JSONResponse:
+        need_accounts()
+        try:
+            user = accounts.authenticate(body.email, body.password, who=request.client.host if request.client else "")
+        except AccountError as e:
+            raise HTTPException(429 if "Too many" in str(e) else 401, str(e))
+        return set_session(JSONResponse({"ok": True}), request, user)
+
+    @app.post("/api/auth/logout")
+    def logout(request: Request) -> JSONResponse:
+        need_accounts().end_session(request.cookies.get(SESSION_COOKIE, ""))
+        resp = JSONResponse({"ok": True})
+        resp.delete_cookie(SESSION_COOKIE)
+        return resp
+
+    @app.get("/api/me", dependencies=[Depends(authed)])
+    def me(request: Request) -> dict:
+        need_accounts()
+        return me_view(request.state.user)
+
+    @app.delete("/api/account", dependencies=[Depends(authed)])
+    def delete_account(body: Password, request: Request) -> JSONResponse:
+        user = request.state.user
+        need_accounts()
+        try:
+            accounts.authenticate(user.email, body.password, who=request.client.host if request.client else "")
+        except AccountError as e:
+            raise HTTPException(401, "That password is not right.")
+        if any(j.status in ("queued", "running") for j in store.list() if j.owner == user.id):
+            raise HTTPException(409, "Cancel your running jobs first.")
+        for j in store.list():
+            if j.owner == user.id:
+                store.delete(j.id)
+        accounts.delete(user.id)
+        resp = JSONResponse({"ok": True})
+        resp.delete_cookie(SESSION_COOKIE)
         return resp
 
     # --- jobs -----------------------------------------------------------------------------
@@ -156,7 +287,11 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if problem:
             raise HTTPException(503, problem)
 
+        user = request.state.user
         job = store.create(Path(file.filename or "video").name, params, demo=demo)
+        if accounts:
+            job.owner = user.id                              # from the first moment, so nobody else can see it
+            store.save(job)
         dest = store.dir(job.id) / f"source{suffix}"
         try:
             size = 0
@@ -177,33 +312,44 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             store.delete(job.id)
             raise
         job.source = {"duration": info.duration, "width": info.width, "height": info.height}
+        if accounts:
+            minutes = max(1, math.ceil(info.duration / 60))
+            plan = effective_plan(user)
+            left = accounts.reserve(user.id, job.id, minutes, plan.monthly_minutes)
+            if left is None:
+                store.delete(job.id)
+                have = max(plan.monthly_minutes - accounts.used_this_month(user.id), 0) + accounts.get(user.id).credits
+                raise HTTPException(402, f"This video is {minutes} min long and you have {have:.0f} min left on the {plan.name} plan this "
+                                         f"month. Upgrade, buy minutes, or wait for the month to reset.")
+            job.reserved_minutes = minutes
         store.save(job)
         runner.submit(job.id)
         return view(store.get(job.id))
 
     @app.get("/api/jobs", dependencies=[Depends(authed)])
-    def list_jobs() -> list[dict]:
-        return [view(j) for j in store.list()]
+    def list_jobs(request: Request) -> list[dict]:
+        user = request.state.user
+        return [view(j) for j in store.list() if not accounts or j.owner == user.id]
 
     @app.get("/api/jobs/{job_id}", dependencies=[Depends(authed)])
-    def get_job(job_id: str) -> dict:
-        return view(job_or_404(job_id))
+    def get_job(job_id: str, request: Request) -> dict:
+        return view(job_or_404(job_id, request))
 
     @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(authed)])
-    def cancel_job(job_id: str) -> dict:
-        job_or_404(job_id)
+    def cancel_job(job_id: str, request: Request) -> dict:
+        job_or_404(job_id, request)
         runner.cancel(job_id)
         return view(store.get(job_id))
 
     @app.delete("/api/jobs/{job_id}", dependencies=[Depends(authed)], status_code=204)
-    def delete_job(job_id: str) -> None:
-        job = job_or_404(job_id)
+    def delete_job(job_id: str, request: Request) -> None:
+        job = job_or_404(job_id, request)
         if job.status in ("queued", "running"):
             raise HTTPException(409, "Cancel the job before deleting it.")
         store.delete(job_id)
 
-    def clip_file(job_id: str, clip_id: str) -> Path:
-        job_or_404(job_id)
+    def clip_file(job_id: str, clip_id: str, request: Request) -> Path:
+        job_or_404(job_id, request)
         try:
             path = store.clip_path(job_id, clip_id)
         except KeyError:
@@ -213,27 +359,30 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return path
 
     @app.get("/api/jobs/{job_id}/clips/{clip_id}/video", dependencies=[Depends(authed)])
-    def clip_video(job_id: str, clip_id: str) -> FileResponse:
-        return FileResponse(clip_file(job_id, clip_id), media_type="video/mp4")
+    def clip_video(job_id: str, clip_id: str, request: Request) -> FileResponse:
+        return FileResponse(clip_file(job_id, clip_id, request), media_type="video/mp4")
 
     @app.get("/api/jobs/{job_id}/clips/{clip_id}/download", dependencies=[Depends(authed)])
-    def clip_download(job_id: str, clip_id: str) -> FileResponse:
-        job = job_or_404(job_id)
+    def clip_download(job_id: str, clip_id: str, request: Request) -> FileResponse:
+        job = job_or_404(job_id, request)
         stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(job.name).stem).strip("._") or "clip"
-        return FileResponse(clip_file(job_id, clip_id), media_type="video/mp4", filename=f"{stem[:60]}-{clip_id}.mp4")
+        return FileResponse(clip_file(job_id, clip_id, request), media_type="video/mp4", filename=f"{stem[:60]}-{clip_id}.mp4")
 
     # --- editing one clip ---------------------------------------------------------------------
-    def editable(job_id: str, clip_id: str) -> Job:
-        job = job_or_404(job_id)
+    def editable(job_id: str, clip_id: str, request: Request) -> Job:
+        job = job_or_404(job_id, request)
         if not any(c.id == clip_id for c in job.clips):
             raise HTTPException(404, "No such clip.")
         if job.status != "done":
             raise HTTPException(409, "Wait for the job to finish before editing its clips.")
+        if job.source_removed or store.source_path(job_id) is None:
+            raise HTTPException(409, "The original video was removed to save space, so this clip can no longer be edited. "
+                                     "You can still download it.")
         return job
 
     @app.get("/api/jobs/{job_id}/clips/{clip_id}", dependencies=[Depends(authed)])
-    def clip_get(job_id: str, clip_id: str) -> dict:
-        job = editable(job_id, clip_id)
+    def clip_get(job_id: str, clip_id: str, request: Request) -> dict:
+        job = editable(job_id, clip_id, request)
         try:
             edl = load_edl(store.edl_path(job_id))
             view = clip_view(edl, clip_id, source_duration=float(job.source.get("duration", 0)))
@@ -242,8 +391,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return {**view, "render": job.clip(clip_id).model_dump()}
 
     @app.put("/api/jobs/{job_id}/clips/{clip_id}", dependencies=[Depends(authed)])
-    def clip_put(job_id: str, clip_id: str, edit: ClipEdit) -> dict:
-        editable(job_id, clip_id)
+    def clip_put(job_id: str, clip_id: str, edit: ClipEdit, request: Request) -> dict:
+        editable(job_id, clip_id, request)
         try:
             changed = runner.edit_clip(job_id, clip_id, edit)
         except ValueError as e:
@@ -251,8 +400,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return {"changed": changed, "render": store.get(job_id).clip(clip_id).model_dump()}
 
     @app.post("/api/jobs/{job_id}/clips/{clip_id}/reset", dependencies=[Depends(authed)])
-    def clip_reset(job_id: str, clip_id: str) -> dict:
-        editable(job_id, clip_id)
+    def clip_reset(job_id: str, clip_id: str, request: Request) -> dict:
+        editable(job_id, clip_id, request)
         try:
             changed = runner.reset_clip(job_id, clip_id)
         except ValueError as e:
@@ -260,16 +409,16 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return {"changed": changed, "render": store.get(job_id).clip(clip_id).model_dump()}
 
     @app.post("/api/jobs/{job_id}/clips/{clip_id}/render", dependencies=[Depends(authed)])
-    def clip_render(job_id: str, clip_id: str) -> dict:
-        editable(job_id, clip_id)
+    def clip_render(job_id: str, clip_id: str, request: Request) -> dict:
+        editable(job_id, clip_id, request)
         if store.get(job_id).clip(clip_id).render in ("queued", "rendering"):
             raise HTTPException(409, "This clip is already rendering.")
         runner.rerender(job_id, clip_id)
         return {"render": store.get(job_id).clip(clip_id).model_dump()}
 
     @app.get("/api/jobs/{job_id}/usage", dependencies=[Depends(authed)])
-    def usage(job_id: str) -> dict:
-        job_or_404(job_id)
+    def usage(job_id: str, request: Request) -> dict:
+        job_or_404(job_id, request)
         path = store.dir(job_id) / "out" / "edl.json"
         if not path.is_file():
             raise HTTPException(404, "The plan is not ready yet.")

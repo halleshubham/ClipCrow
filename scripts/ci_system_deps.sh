@@ -10,12 +10,20 @@ echo "== ffmpeg"
 if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; then
   echo "already installed: $(ffmpeg -version | head -1)"
 else
-  URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz"
-  if curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 "$URL" -o "$TMP/ffmpeg.tar.xz"; then
+  REL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest"
+  # Find the build's current file name (it has changed before), then try the long-standing name, then give up.
+  NAME="$(curl -fsSL --retry 2 --connect-timeout 20 https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/latest 2>/dev/null \
+          | grep -oE 'ffmpeg-master-latest-linux64-gpl\.tar\.xz' | head -1 || true)"
+  ok=0
+  for n in "$NAME" "ffmpeg-master-latest-linux64-gpl.tar.xz"; do
+    [ -n "$n" ] || continue
+    if curl -fsSL --retry 3 --connect-timeout 20 --max-time 400 "$REL/$n" -o "$TMP/ffmpeg.tar.xz"; then ok=1; break; fi
+  done
+  if [ "$ok" = 1 ]; then
     tar -xJf "$TMP/ffmpeg.tar.xz" -C "$TMP"
     cp "$TMP"/ffmpeg-*/bin/ffmpeg "$TMP"/ffmpeg-*/bin/ffprobe "$BIN/"
   else
-    echo "GitHub build unavailable, falling back to the npm static binaries"
+    echo "::warning::could not download a current ffmpeg build; using the npm static binaries (a 2018 ffmpeg): renders may differ slightly"
     (cd "$TMP" && npm init -y >/dev/null && npm i --silent --no-audit --no-fund \
        @ffmpeg-installer/linux-x64 @ffprobe-installer/linux-x64)
     cp "$TMP/node_modules/@ffmpeg-installer/linux-x64/ffmpeg" "$TMP/node_modules/@ffprobe-installer/linux-x64/ffprobe" "$BIN/"

@@ -47,6 +47,7 @@ class JobRunner:
     def __init__(self, store: JobStore, pipeline: Pipeline):
         self.store, self.pipeline = store, pipeline
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-job")
+        self.on_finish = None                                      # called with the job once it is done, failed or cancelled
         self._cancel: dict[str, threading.Event] = {}
         self._edit_lock = threading.Lock()                       # one edit at a time touches edl.json
         self._replan: dict[tuple[str, str], str] = {}            # (job, clip) -> multi mode to re-plan framing with
@@ -60,6 +61,7 @@ class JobRunner:
             elif job.status == "running":
                 job.status, job.error = "failed", "The server restarted while this job was running."
                 self.store.save(job)
+                self._finished(job)
             elif any(c.render in ("queued", "rendering") for c in job.clips):
                 for c in job.clips:
                     if c.render in ("queued", "rendering"):
@@ -80,7 +82,15 @@ class JobRunner:
         if job.status == "queued":
             job.status = "cancelled"
             self.store.save(job)
+            self._finished(job)
         return True
+
+    def _finished(self, job: Job) -> None:
+        if self.on_finish:
+            try:
+                self.on_finish(job)
+            except Exception:
+                log.exception("on_finish failed for %s", job.id)
 
     def queue_position(self, job_id: str) -> int:
         queued = [j for j in reversed(self.store.list()) if j.status == "queued"]
@@ -143,6 +153,7 @@ class JobRunner:
             if s.state == "running":
                 s.state = "failed" if job.status == "failed" else "pending"
         store.save(job)
+        self._finished(job)
 
     # --- editing a finished clip ------------------------------------------------------------------
 

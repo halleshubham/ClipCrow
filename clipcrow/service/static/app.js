@@ -65,6 +65,7 @@ function showBanner() {
 
 // ---- views ----------------------------------------------------------------------------------
 function loginView() {
+  if (state.config.accounts) return accountLoginView();
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
   const input = el('input', { id: 'token', type: 'password', autocomplete: 'current-password', required: true });
   const form = el('form', { class: 'card stack', style: { maxWidth: '420px' }, onsubmit: async (e) => {
@@ -81,6 +82,89 @@ function loginView() {
     err,
     el('button', { class: 'btn dark', type: 'submit', text: 'Sign in' }));
   app.replaceChildren(form);
+}
+
+function accountLoginView() {
+  let mode = 'login';
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const email = el('input', { id: 'email', type: 'text', inputmode: 'email', autocomplete: 'username', required: true });
+  const pw = el('input', { id: 'password', type: 'password', autocomplete: 'current-password', required: true });
+  const title = el('h1');
+  const submit = el('button', { class: 'btn dark', type: 'submit' });
+  const toggle = el('button', { class: 'btn', type: 'button' });
+  const hint = el('div', { class: 'hint', hidden: true, text: 'At least 10 characters.' });
+  function paint() {
+    title.textContent = mode === 'login' ? 'Sign in' : 'Create your account';
+    submit.textContent = mode === 'login' ? 'Sign in' : 'Create account';
+    toggle.textContent = mode === 'login' ? 'New here? Create an account' : 'Have an account? Sign in';
+    toggle.hidden = !state.config.signup;
+    pw.setAttribute('autocomplete', mode === 'login' ? 'current-password' : 'new-password');
+    hint.hidden = mode === 'login';
+    err.hidden = true;
+  }
+  toggle.addEventListener('click', () => { mode = mode === 'login' ? 'register' : 'login'; paint(); });
+  const form = el('form', { class: 'card stack', style: { maxWidth: '420px' }, onsubmit: async (e) => {
+    e.preventDefault();
+    err.hidden = true;
+    try {
+      await api(mode === 'login' ? '/auth/login' : '/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.value, password: pw.value }) });
+      state.config = await api('/config');
+      location.hash = '#/';
+      route();
+    } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+  } }, title,
+    el('div', {}, el('label', { class: 'field', for: 'email', text: 'Email' }), email),
+    el('div', {}, el('label', { class: 'field', for: 'password', text: 'Password' }), pw, hint),
+    err, el('div', { class: 'row' }, submit, toggle));
+  paint();
+  app.replaceChildren(form);
+}
+
+function renderAcct() {
+  const box = document.getElementById('acct');
+  box.replaceChildren();
+  const c = state.config;
+  if (!c || !c.accounts || !c.signed_in) return;
+  box.append(el('a', { href: '#/account', text: c.email, translate: 'no' }),
+    el('button', { class: 'btn', type: 'button', text: 'Sign out', onclick: async () => {
+      try { await api('/auth/logout', { method: 'POST' }); } catch (_) { /* already signed out */ }
+      state.config = await api('/config'); renderAcct(); location.hash = '#/'; route();
+    } }));
+}
+
+async function accountView() {
+  if (!state.config.accounts) { app.replaceChildren(el('div', { class: 'card empty', text: 'Accounts are not turned on.' })); return; }
+  const me = await api('/me');
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const pct = me.plan.monthly_minutes ? Math.min(100, (me.used_minutes / me.plan.monthly_minutes) * 100) : 100;
+  const pw = el('input', { id: 'del-pw', type: 'password', autocomplete: 'current-password' });
+  const delForm = el('form', { class: 'stack', onsubmit: async (e) => {
+    e.preventDefault(); err.hidden = true;
+    if (!confirm('Delete your account and every job and clip in it? This cannot be undone.')) return;
+    try {
+      await api('/account', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw.value }) });
+      state.config = await api('/config'); renderAcct(); location.hash = '#/'; route();
+    } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+  } },
+    el('div', {}, el('label', { class: 'field', for: 'del-pw', text: 'Your password' }), pw),
+    el('div', {}, el('button', { class: 'btn', type: 'submit', style: { color: 'var(--bad)' }, text: 'Delete my account' })));
+  const billing = el('div', { id: 'billing' });
+  app.replaceChildren(el('div', { class: 'stack' },
+    el('h1', { text: 'Account' }),
+    el('section', { class: 'card stack' },
+      el('div', { class: 'row', style: { justifyContent: 'space-between' } },
+        el('div', {}, el('strong', { translate: 'no', text: me.email }), el('div', { class: 'small muted', text: `${me.plan.name} plan${me.plan.price_label ? ' · ' + me.plan.price_label : ''}` })),
+        me.plan_until && el('div', { class: 'small muted', text: `Renews or ends ${new Date(me.plan_until).toLocaleDateString()}` })),
+      el('div', {}, el('div', { class: 'row small', style: { justifyContent: 'space-between' } }, el('span', { text: 'Minutes of video used this month' }),
+          el('span', { text: `${me.used_minutes} of ${me.plan.monthly_minutes}` })),
+        el('div', { class: me.left_minutes < 5 ? 'meter low' : 'meter', role: 'img', 'aria-label': `${me.used_minutes} of ${me.plan.monthly_minutes} minutes used` }, el('div', { style: { width: `${pct}%` } }))),
+      me.credit_minutes > 0 && el('div', { class: 'small' }, `Plus ${me.credit_minutes} purchased minutes. ${me.left_minutes} minutes left in all.`),
+      el('div', { class: 'small muted', text: `Finished jobs are kept for ${me.plan.retention_days} days, then deleted.` })),
+    billing,
+    el('section', { class: 'card stack' }, el('h2', { text: 'Delete account' }),
+      el('p', { class: 'small muted', style: { margin: 0 }, text: 'Removes your account, every job and every clip. Cancel running jobs first.' }), err, delForm)));
+  return { billing, me };
 }
 
 function newJobView() {
@@ -292,7 +376,8 @@ async function jobView(jobId) {
     const score = c.score == null ? null : Math.round(c.score * 100);
     const actions = el('div', { class: 'row' });
     if (c.ready) actions.append(el('a', { class: 'btn dark', href: `${url}/download`, text: 'Download MP4' }));
-    if (c.ready && job.status === 'done') actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}`, text: 'Edit' }));
+    if (c.ready && job.status === 'done' && job.source_removed) actions.append(el('span', { class: 'small muted', text: 'Original video removed: no more edits' }));
+    else if (c.ready && job.status === 'done') actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}`, text: 'Edit' }));
     return el('article', { class: 'card clipcard', 'data-clip': c.id }, player,
       el('div', { class: 'grow stack', style: { gap: '12px', minWidth: '220px' } },
         el('div', { class: 'chips' },
@@ -355,7 +440,7 @@ async function jobView(jobId) {
   function update() {
     title.textContent = job.name;
     const len = job.source.duration ? `${fmt(job.source.duration)} · ` : '';
-    meta.textContent = `${len}started ${when(job.created_at)}${job.demo ? ' · demo mode' : ''}`;
+    meta.textContent = `${len}started ${when(job.created_at)}${job.demo ? ' · demo mode' : ''}${job.expires_at ? ` · kept until ${when(job.expires_at)}` : ''}`;
     badge.textContent = statusText(job);
     badge.className = `badge ${STATUS_CLASS[job.status]}`;
     cancelBtn.hidden = !['queued', 'running'].includes(job.status);
@@ -575,6 +660,7 @@ let cleanup = null;
 async function route() {
   if (cleanup) { cleanup(); cleanup = null; }
   const hash = location.hash || '#/';
+  renderAcct();
   document.querySelectorAll('nav a').forEach((a) => {
     const on = (a.dataset.nav === 'new' && (hash === '#/' || hash === '#' || hash === '#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs'));
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -584,6 +670,7 @@ async function route() {
     let m;
     if (hash === '#/' || hash === '#' || hash === '#/new') newJobView();
     else if (hash === '#/jobs') await jobsView();
+    else if (hash === '#/account') await accountView();
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})$/))) { const v = await clipEditorView(m[1], m[2]); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})$/))) { const v = await jobView(m[1]); cleanup = v.cleanup; }
     else app.replaceChildren(el('div', { class: 'card empty', text: 'Page not found.' }));

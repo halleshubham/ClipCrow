@@ -91,6 +91,9 @@ class Job(_M):
     clips: list[ClipInfo] = Field(default_factory=list)
     left_out: list[LeftOut] = Field(default_factory=list)   # clips the planner skipped, and why
     demo: bool = False
+    owner: Optional[str] = None             # the user id when accounts are on; None in single-user mode
+    reserved_minutes: float = 0             # source minutes taken from the owner's allowance for this job
+    source_removed: bool = False            # the uploaded original was deleted by retention
 
     def clip(self, clip_id: str) -> ClipInfo:
         return next(c for c in self.clips if c.id == clip_id)

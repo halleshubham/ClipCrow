@@ -98,7 +98,7 @@ def test_text_sits_behind_the_person_and_a_push_in_scales_both_together(tmp_path
     x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
     assert 380 <= x1 - x0 + 1 <= 420 and 780 <= y1 - y0 + 1 <= 820                 # the block is where the matte put it
     assert yellow.sum() > 5_000, "the text behind the person is not visible"
-    inside = yellow[y0:y1 + 1, x0:x1 + 1].sum()
+    inside = yellow[y0 + 10:y1 + 1 - 10, x0 + 10:x1 + 1 - 10].sum()                 # the interior; edge pixels blend a little
     assert inside == 0, f"text is painted over the person ({inside} yellow pixels inside the block)"
     band = yellow[700:1130]
     assert band[:, :x0].sum() > 1_000 or band[:, x1 + 1:].sum() > 1_000           # the text does show beside the person
@@ -107,7 +107,8 @@ def test_text_sits_behind_the_person_and_a_push_in_scales_both_together(tmp_path
     ys2, xs2 = np.nonzero(red2)
     w2, h2 = xs2.max() - xs2.min() + 1, ys2.max() - ys2.min() + 1
     assert 1.18 * 400 <= w2 <= 1.32 * 400 and 1.18 * 800 <= h2 <= 1.32 * 800, (w2, h2)   # the person grew
-    assert yellow2[ys2.min():ys2.max() + 1, xs2.min():xs2.max() + 1].sum() == 0    # and the text is still behind them
+    m = 10                                                                          # edges blend a little (chroma subsampling, scaler)
+    assert yellow2[ys2.min() + m:ys2.max() + 1 - m, xs2.min() + m:xs2.max() + 1 - m].sum() == 0   # the text is still behind them
     plain_h = _masks(_frame(outs["push"], 2.9))[0]                                  # after the push ends it snaps back
     ys3, xs3 = np.nonzero(plain_h)
     assert 380 <= xs3.max() - xs3.min() + 1 <= 420
