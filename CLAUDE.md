@@ -20,6 +20,8 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   (never committed; GreenSock licence). Fonts for non-Latin text are shipped per project.
 - Pin the HyperFrames version (`render.HYPERFRAMES_VERSION`): another Chrome/CLI build changes pixels.
 - Licence is AGPL-3.0. Do not copy code from OpenShorts' `cloud/` directory (separate commercial licence).
+- A speaker change is a hard cut (a jump between two `reframe` keyframes), never a pan; the active speaker comes
+  from mouth movement normalised per person (`reframe.normalise_activity`) with hysteresis. Keep both when changing it.
 - Marathi/Hindi copy must be Devanagari; keep tests with Devanagari fixtures.
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.

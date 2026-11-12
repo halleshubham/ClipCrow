@@ -128,6 +128,12 @@ class Keyframe(_Model):
     cx: float = Field(ge=0, le=1)
 
 
+class SplitPoint(_Model):
+    """One window of a two-person split: where the face is, as fractions of the SOURCE frame."""
+    cx: float = Field(ge=0, le=1)
+    cy: float = Field(ge=0, le=1)
+
+
 class Layout(_Model):
     # passthrough: the footage as given (reframing happened upstream).
     # cutout_behind: a person matte (alpha WebM) is painted above the text layer,
@@ -140,13 +146,18 @@ class Layout(_Model):
     #   cover    centre crop (also right for sources that are already vertical)
     #   track    crop window follows ``reframe`` keyframes (a face-tracked reframe)
     #   fit_blur whole frame fitted to the width over a blurred copy of itself (no face to follow)
-    framing: Literal["cover", "track", "fit_blur"] = "cover"
+    #   split    two people stacked: the top half follows ``split[0]``, the bottom half ``split[1]``
+    # A speaker change in a ``track`` framing is just a jump between two keyframes: a hard cut.
+    framing: Literal["cover", "track", "fit_blur", "split"] = "cover"
     reframe: list[Keyframe] = Field(default_factory=list, max_length=4000)
+    split: list[SplitPoint] = Field(default_factory=list, max_length=2)
 
     @model_validator(mode="after")
     def _framing(self):
         if self.framing == "track" and not self.reframe:
             raise ValueError("framing 'track' needs reframe keyframes")
+        if (self.framing == "split") != (len(self.split) == 2):
+            raise ValueError("framing 'split' needs exactly two split points (and only then)")
         if any(b.t < a.t for a, b in zip(self.reframe, self.reframe[1:])):
             raise ValueError("reframe keyframes must be in time order")
         return self

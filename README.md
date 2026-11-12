@@ -67,7 +67,13 @@ video ─► transcribe (faster-whisper, Indic-aware) ─► plan (LLM) ─► f
 - **Reframing** (`clipcrow/reframe.py`): faces from OpenCV's bundled Haar cascade, chained into one
   continuous track (stray false positives lose), then a "heavy tripod" camera: a dead band plus a speed limit,
   so head movement never whips the frame. No face in the clip → the whole frame fitted over a blurred copy.
-  Limits: one subject per clip, no speaker switching or two-person split layout yet, Haar needs frontal faces.
+  **Several people** (`--multi switch|split|off`, default `switch`): each persistent face is tracked, the
+  talker is whoever's mouth region moves (normalised per person, with hysteresis so the picture does not
+  flicker) and the picture *cuts* to them; `split` stacks two people instead, with the captions on the seam;
+  two people close enough to share a crop window are framed together.
+  Limits: the speaker is chosen by mouth movement, not by voice (no diarisation model), so a laugh can
+  steal a turn for a moment; at most two people on screen; Haar needs frontal faces. Tested on synthetic
+  talkers and pixels, not yet on real interview footage.
 - **AI-usage record**: the EDL carries every planner call (model, tokens, estimated cost), what the AI decided
   per clip, and per-asset provenance (`none` / `processed` / `generated`, enforced so an AI image cannot be
   labelled "no AI"). `clipcrow usage edl.json` prints it; each render writes `cN.mp4.ai.json` including
@@ -121,8 +127,8 @@ Fonts: install `fonts-noto-core` or set `CLIPCROW_FONT_DIR`. The CLI version is 
 
 ## Roadmap
 1. ~~Planner~~, ~~ASR~~, ~~reframing~~: built (see above). Still to do: run them on real Marathi/Hindi
-   footage (see *Status*), speaker switching and a two-person split layout for podcasts, a better face
-   detector (YuNet) behind `FaceDetector`.
+   footage (see *Status*), a better face detector (YuNet) behind `FaceDetector`, and voice-based speaker
+   identification to complement the mouth-movement signal.
 2. **Service**: FastAPI + job queue + object storage; render workers (GPU for matte/encode).
 3. **UI**: v1 built (new job, job page with live progress, clip review, AI usage); the form editor is next (see below).
 4. **Explainers**: per-beat asset router (HTML chart, AI image, news-link screenshot, AI video).

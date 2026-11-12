@@ -31,4 +31,5 @@ class RealPipeline:
     def run(self, job: Job, video: Path, out: Path, hooks: Hooks, say) -> MakeResult:
         from ..planner import AnthropicLLM
         return make(video, out, language=job.params.language, llm=AnthropicLLM(), opts=planner_options(job),
-                    hooks=hooks, say=say, gsap_js=os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"))
+                    hooks=hooks, say=say, multi=job.params.multi,
+                    gsap_js=os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"))

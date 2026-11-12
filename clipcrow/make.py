@@ -50,7 +50,8 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
          llm: LLM | None = None, score_llm: LLM | None = None, opts: PlannerOptions | None = None,
          detector=None, render: bool = True, gsap_js: str | Path | None = None, workers: int | None = None,
          transcribe_fn: Callable | None = None, render_fn: Callable | None = None,
-         say: Callable[[str], None] = lambda _m: None, hooks: Hooks | None = None) -> MakeResult:
+         say: Callable[[str], None] = lambda _m: None, hooks: Hooks | None = None,
+         multi: str = "switch") -> MakeResult:
     video, out = Path(video), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     report: dict = {}
@@ -94,7 +95,7 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
 
     hk.check()
     hk.stage("frame", "running", "")
-    edl = apply_framing(edl, str(video), detector=detector, say=say)
+    edl = apply_framing(edl, str(video), detector=detector, say=say, multi=multi)
     hk.stage("frame", "done", ", ".join(f"{c.id}: {c.layout.framing}" for c in edl.clips))
     hk.planned(edl, report)
     (out / "edl.json").write_text(edl.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")

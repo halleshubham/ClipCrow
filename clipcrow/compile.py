@@ -60,13 +60,16 @@ def _even(n: float) -> int:
 
 
 def prepare_footage(src: Path, start: float, duration: float, fps: int, width: int, height: int, dest: Path,
-                    *, framing: str = "cover", keyframes=(), src_size: tuple[int, int] | None = None) -> None:
+                    *, framing: str = "cover", keyframes=(), src_size: tuple[int, int] | None = None,
+                    split=()) -> None:
     """Cut the clip window out of the source at render size, a keyframe every second (HyperFrames freezes
     on seek when keyframes are further apart), fitted to the canvas by ``framing``:
 
       cover     scale to fill and centre-crop
       track     crop a 9:16 window whose x follows ``keyframes`` (clip time, cx fraction of source width)
       fit_blur  whole frame fitted to the width over a blurred copy of itself
+      split     two people stacked: each half is a crop of the source centred on that person (``split`` is
+                two ``(cx, cy)`` fractions of the source), scaled to half the canvas height
     """
     dest = Path(dest).resolve()
     enc = ["-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-g", str(fps),
@@ -84,6 +87,18 @@ def prepare_footage(src: Path, start: float, duration: float, fps: int, width: i
         vf = (f"sendcmd=f=framing.cmd,crop@c=w={cw}:h={sh}:x={xs[0][1]:.0f}:y=0,"
               f"scale={width}:{height}:flags=lanczos,fps={fps}")
         cmd += ["-vf", vf, *enc, str(dest)]
+    elif framing == "split" and len(split) == 2 and src_size:
+        sw, sh = src_size
+        half = height // 2
+        cw = min(_even(sh * width / half), _even(sw))          # window with the aspect of one half
+        ch = min(_even(cw * half / width), _even(sh))
+        wins = []
+        for cx, cy in split:
+            x = min(max(cx * sw - cw / 2, 0), sw - cw)
+            y = min(max(cy * sh - ch / 2, 0), sh - ch)
+            wins.append(f"crop={cw}:{ch}:{x:.0f}:{y:.0f},scale={width}:{half}:flags=lanczos,setsar=1")
+        fc = (f"[0:v]split=2[a][b];[a]{wins[0]}[top];[b]{wins[1]}[bot];[top][bot]vstack,fps={fps}[v]")
+        cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "0:a?", *enc, str(dest)]
     elif framing == "fit_blur":
         fc = (f"[0:v]split=2[a][b];[a]scale={width}:{height}:force_original_aspect_ratio=increase,"
               f"crop={width}:{height},boxblur=40:6[bg];[b]scale={width}:-2[fg];"
@@ -350,7 +365,8 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
         prepare_footage(src, clip.source_in, clip.duration, fps, w, h, footage,
                         framing=clip.layout.framing,
                         keyframes=[(k.t, k.cx) for k in clip.layout.reframe],
-                        src_size=(edl.source.width, edl.source.height))
+                        src_size=(edl.source.width, edl.source.height),
+                        split=[(p.cx, p.cy) for p in clip.layout.split])
         if cutout:
             dest = project / "assets" / "cutout.webm"
             if clip.layout.cutout_uri:

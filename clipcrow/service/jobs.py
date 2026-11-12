@@ -40,6 +40,7 @@ class Params(_M):
     speaker_name: Optional[str] = Field(default=None, max_length=60)
     speaker_title: str = Field(default="", max_length=60)
     cutout: bool = False
+    multi: Literal["switch", "split", "off"] = "switch"
 
 
 class Stage(_M):

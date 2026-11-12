@@ -112,7 +112,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          language: Optional[str] = Form(None), clips: Optional[str] = Form(None),
                          min_clip: Optional[str] = Form(None), max_clip: Optional[str] = Form(None),
                          spread: Optional[str] = Form(None), speaker_name: Optional[str] = Form(None),
-                         speaker_title: Optional[str] = Form(""), cutout: Optional[str] = Form(None)) -> dict:
+                         speaker_title: Optional[str] = Form(""), cutout: Optional[str] = Form(None),
+                         multi: Optional[str] = Form(None)) -> dict:
         if rights.lower() not in ("1", "true", "on", "yes"):
             raise HTTPException(400, "Confirm that you own this video or have the rights to process it.")
         declared = int(request.headers.get("content-length") or 0)
@@ -123,7 +124,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                             max_clip=_opt_int(max_clip) or 60, spread=_opt_float(spread, 0.5),
                             speaker_name=(speaker_name or "").strip() or None,
                             speaker_title=(speaker_title or "").strip(),
-                            cutout=str(cutout).lower() in ("1", "true", "on", "yes"))
+                            cutout=str(cutout).lower() in ("1", "true", "on", "yes"),
+                            multi=multi or "switch")
         except (ValidationError, ValueError) as e:
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
         if params.min_clip >= params.max_clip:

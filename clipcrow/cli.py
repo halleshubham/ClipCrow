@@ -27,6 +27,8 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--clips", type=int); mk.add_argument("--min-clip", type=int, default=15)
     mk.add_argument("--max-clip", type=int, default=60); mk.add_argument("--cutout", action="store_true")
     mk.add_argument("--spread", type=float, default=0.5, help="spread clips across the talk (0 = off)")
+    mk.add_argument("--multi", choices=["switch", "split", "off"], default="switch",
+                    help="two or more people on screen: cut to whoever talks, stack two, or follow one face")
     mk.add_argument("--speaker-name"); mk.add_argument("--speaker-title", default="")
     mk.add_argument("--model"); mk.add_argument("--score-model"); mk.add_argument("--gsap")
     mk.add_argument("--workers", type=int); mk.add_argument("--no-render", action="store_true")
@@ -96,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
             res = make(a.video, a.out, language=a.language, transcript_path=a.transcript, edl_path=a.edl, opts=opts,
                        llm=AnthropicLLM(a.model) if need_llm else None,
                        score_llm=AnthropicLLM(a.score_model) if need_llm and a.score_model else None,
-                       render=not a.no_render, gsap_js=a.gsap, workers=a.workers,
+                       render=not a.no_render, gsap_js=a.gsap, workers=a.workers, multi=a.multi,
                        say=lambda m: print(f"  {m}", file=sys.stderr))
             print(f"{len(res.edl.clips)} clip(s) -> {a.out}" + (f"; rendered {len(res.videos)}" if res.videos else ""))
             return 0

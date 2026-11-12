@@ -135,6 +135,7 @@ function newJobView() {
     fd.append('min_clip', minClip);
     fd.append('max_clip', maxClip);
     fd.append('spread', $('spread').value);
+    fd.append('multi', $('multi').value);
     fd.append('speaker_name', $('speaker').value);
     fd.append('speaker_title', $('role').value);
     fd.append('cutout', $('cutout').checked ? 'true' : '');
@@ -171,6 +172,8 @@ function newJobView() {
       select('length', 'Clip length', [['15-60', '15–60 seconds'], ['30-90', '30–90 seconds']]),
       select('spread', 'Spread across the video', [['0.5', 'Balanced (recommended)'], ['0', 'Off: best clips first'], ['0.8', 'Wide']],
         'Keeps clips from being slices of one section.'),
+      select('multi', 'Several people on screen', [['switch', 'Cut to whoever is talking (recommended)'], ['split', 'Stack two people'], ['off', 'Follow one face']],
+        'For interviews and podcasts filmed with a wide shot.'),
       text('speaker', 'Speaker name (lower third)', { autocomplete: 'off', class: 'deva' }),
       text('role', 'Role', { autocomplete: 'off', class: 'deva' })),
     el('div', { class: 'stack', style: { marginTop: '24px' } },
