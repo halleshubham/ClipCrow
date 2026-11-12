@@ -19,9 +19,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
+from ..assets.urlguard import UnsafeURL, assert_public_url
 from ..costs import estimate_cost, estimate_total
 from ..edl import load_edl
 from ..planner.source import probe_source
+from .editor import ClipEdit, clip_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .runner import JobRunner, Pipeline
 
@@ -95,7 +97,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         except HTTPException:
             signed_in = False
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb,
-                "needs_login": bool(token), "signed_in": signed_in, "ready": pipeline.check_ready()}
+                "needs_login": bool(token), "signed_in": signed_in, "ready": pipeline.check_ready(),
+                "ai_images": bool(getattr(pipeline, "can_generate_images", False))}
 
     @app.post("/api/login")
     def login(body: Login, request: Request) -> JSONResponse:
@@ -113,18 +116,34 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          min_clip: Optional[str] = Form(None), max_clip: Optional[str] = Form(None),
                          spread: Optional[str] = Form(None), speaker_name: Optional[str] = Form(None),
                          speaker_title: Optional[str] = Form(""), cutout: Optional[str] = Form(None),
-                         multi: Optional[str] = Form(None)) -> dict:
+                         multi: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
+                         explainer: Optional[str] = Form(None), links: Optional[str] = Form(None),
+                         ai_images: Optional[str] = Form(None)) -> dict:
         if rights.lower() not in ("1", "true", "on", "yes"):
             raise HTTPException(400, "Confirm that you own this video or have the rights to process it.")
         declared = int(request.headers.get("content-length") or 0)
         if declared > limit + 1_000_000:
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
+        link_list = [x.strip() for x in (links or "").splitlines() if x.strip()]
+        want_images = str(ai_images).lower() in ("1", "true", "on", "yes")
+        if len(link_list) > 6:
+            raise HTTPException(422, "Use at most 6 links.")
+        for u in link_list:
+            try:
+                assert_public_url(u)
+            except UnsafeURL as e:
+                raise HTTPException(422, f"Link {link_list.index(u) + 1}: {e}")
+        if want_images and not getattr(pipeline, "can_generate_images", False):
+            raise HTTPException(422, "AI image generation is not set up on this server.")
         try:
             params = Params(language=language or None, clips=_opt_int(clips), min_clip=_opt_int(min_clip) or 15,
                             max_clip=_opt_int(max_clip) or 60, spread=_opt_float(spread, 0.5),
                             speaker_name=(speaker_name or "").strip() or None,
                             speaker_title=(speaker_title or "").strip(),
                             cutout=str(cutout).lower() in ("1", "true", "on", "yes"),
+                            immersive=str(immersive).lower() in ("1", "true", "on", "yes"),
+                            explainer=str(explainer).lower() in ("1", "true", "on", "yes"), links=link_list,
+                            ai_images=want_images,
                             multi=multi or "switch")
         except (ValidationError, ValueError) as e:
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
@@ -202,6 +221,51 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         job = job_or_404(job_id)
         stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(job.name).stem).strip("._") or "clip"
         return FileResponse(clip_file(job_id, clip_id), media_type="video/mp4", filename=f"{stem[:60]}-{clip_id}.mp4")
+
+    # --- editing one clip ---------------------------------------------------------------------
+    def editable(job_id: str, clip_id: str) -> Job:
+        job = job_or_404(job_id)
+        if not any(c.id == clip_id for c in job.clips):
+            raise HTTPException(404, "No such clip.")
+        if job.status != "done":
+            raise HTTPException(409, "Wait for the job to finish before editing its clips.")
+        return job
+
+    @app.get("/api/jobs/{job_id}/clips/{clip_id}", dependencies=[Depends(authed)])
+    def clip_get(job_id: str, clip_id: str) -> dict:
+        job = editable(job_id, clip_id)
+        try:
+            edl = load_edl(store.edl_path(job_id))
+            view = clip_view(edl, clip_id, source_duration=float(job.source.get("duration", 0)))
+        except (KeyError, OSError):
+            raise HTTPException(404, "The plan for this clip is not on disk.")
+        return {**view, "render": job.clip(clip_id).model_dump()}
+
+    @app.put("/api/jobs/{job_id}/clips/{clip_id}", dependencies=[Depends(authed)])
+    def clip_put(job_id: str, clip_id: str, edit: ClipEdit) -> dict:
+        editable(job_id, clip_id)
+        try:
+            changed = runner.edit_clip(job_id, clip_id, edit)
+        except ValueError as e:
+            raise HTTPException(422, str(e)[:300])
+        return {"changed": changed, "render": store.get(job_id).clip(clip_id).model_dump()}
+
+    @app.post("/api/jobs/{job_id}/clips/{clip_id}/reset", dependencies=[Depends(authed)])
+    def clip_reset(job_id: str, clip_id: str) -> dict:
+        editable(job_id, clip_id)
+        try:
+            changed = runner.reset_clip(job_id, clip_id)
+        except ValueError as e:
+            raise HTTPException(422, str(e)[:300])
+        return {"changed": changed, "render": store.get(job_id).clip(clip_id).model_dump()}
+
+    @app.post("/api/jobs/{job_id}/clips/{clip_id}/render", dependencies=[Depends(authed)])
+    def clip_render(job_id: str, clip_id: str) -> dict:
+        editable(job_id, clip_id)
+        if store.get(job_id).clip(clip_id).render in ("queued", "rendering"):
+            raise HTTPException(409, "This clip is already rendering.")
+        runner.rerender(job_id, clip_id)
+        return {"render": store.get(job_id).clip(clip_id).model_dump()}
 
     @app.get("/api/jobs/{job_id}/usage", dependencies=[Depends(authed)])
     def usage(job_id: str) -> dict:

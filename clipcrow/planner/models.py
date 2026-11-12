@@ -46,3 +46,15 @@ class RawClip(BaseModel):
 
 class DetailResult(BaseModel):
     clips: list[RawClip]
+
+
+class Beat(BaseModel):
+    sentence: int            # the sentence this picture belongs to (an id as given)
+    kind: str                # "screenshot" (a link from the list), "image" (a generated picture) or "none"
+    link: Optional[int] = None
+    prompt: str = ""         # for "image": what to draw, plain description
+    caption: str = ""        # at most a few words shown under the picture
+
+
+class BeatsResult(BaseModel):
+    beats: list[Beat]

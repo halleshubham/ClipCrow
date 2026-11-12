@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 JOB_ID = re.compile(r"^[a-f0-9]{12}$")
 CLIP_ID = re.compile(r"^c\d{1,3}$")
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
-STAGE_NAMES = ("transcribe", "plan", "frame", "render")
+STAGE_NAMES = ("transcribe", "plan", "assets", "frame", "render")
 LOG_LIMIT = 400
 
 
@@ -40,6 +40,10 @@ class Params(_M):
     speaker_name: Optional[str] = Field(default=None, max_length=60)
     speaker_title: str = Field(default="", max_length=60)
     cutout: bool = False
+    immersive: bool = False
+    explainer: bool = False                 # pictures over the footage (screenshots of the links, AI images)
+    links: list[str] = Field(default_factory=list, max_length=6)
+    ai_images: bool = False
     multi: Literal["switch", "split", "off"] = "switch"
 
 
@@ -60,6 +64,12 @@ class ClipInfo(_M):
     ai_decided: list[str] = Field(default_factory=list)
     framing: str = "cover"
     ready: bool = False
+    # editing: a ready clip can be re-rendered after an edit; the old video stays playable meanwhile
+    render: Literal["ready", "queued", "rendering", "failed"] = "ready"
+    render_error: str = ""
+    rev: int = 0                 # bumps after each re-render so the browser reloads the video
+    edited: bool = False
+    notes: list[str] = Field(default_factory=list)      # e.g. text behind the speaker skipped: no matte
 
 
 class LeftOut(_M):
@@ -82,6 +92,9 @@ class Job(_M):
     left_out: list[LeftOut] = Field(default_factory=list)   # clips the planner skipped, and why
     demo: bool = False
 
+    def clip(self, clip_id: str) -> ClipInfo:
+        return next(c for c in self.clips if c.id == clip_id)
+
     def stage(self, name: str) -> Stage:
         return next(s for s in self.stages if s.name == name)
 
@@ -98,7 +111,7 @@ class JobStore:
     def __init__(self, root: str | Path):
         self.root = Path(root) / "jobs"
         self.root.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def dir(self, job_id: str) -> Path:
         if not JOB_ID.match(job_id):
@@ -123,6 +136,17 @@ class JobStore:
             return Job.model_validate(json.loads((self.dir(job_id) / "job.json").read_text(encoding="utf-8")))
         except (OSError, ValueError, KeyError) as e:
             raise KeyError(job_id) from e
+
+    def update(self, job_id: str, fn) -> Job:
+        """Load, change and save a job as one step (so two threads never overwrite each other's change)."""
+        with self._lock:
+            job = self.get(job_id)
+            fn(job)
+            self.save(job)
+            return job
+
+    def edl_path(self, job_id: str) -> Path:
+        return self.dir(job_id) / "out" / "edl.json"
 
     def list(self) -> list[Job]:
         jobs = []

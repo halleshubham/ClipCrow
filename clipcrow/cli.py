@@ -26,6 +26,11 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--edl", help="skip transcription and planning: use this EDL")
     mk.add_argument("--clips", type=int); mk.add_argument("--min-clip", type=int, default=15)
     mk.add_argument("--max-clip", type=int, default=60); mk.add_argument("--cutout", action="store_true")
+    mk.add_argument("--immersive", action="store_true", help="slow push-ins at sentence starts (face-to-camera reels)")
+    mk.add_argument("--explainer", action="store_true", help="show pictures over the footage where the speaker names something")
+    mk.add_argument("--link", action="append", default=[], help="a public page the explainer may show (repeat up to 6 times)")
+    mk.add_argument("--ai-images", action="store_true", help="let the explainer ask for AI-generated images (GEMINI_API_KEY; "
+                    "marks the clip as AI-generated media)")
     mk.add_argument("--spread", type=float, default=0.5, help="spread clips across the talk (0 = off)")
     mk.add_argument("--multi", choices=["switch", "split", "off"], default="switch",
                     help="two or more people on screen: cut to whoever talks, stack two, or follow one face")
@@ -48,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--clips", type=int, help="how many clips (default: about one per 2 minutes)")
     pl.add_argument("--min-clip", type=int, default=15); pl.add_argument("--max-clip", type=int, default=60)
     pl.add_argument("--cutout", action="store_true", help="allow text behind the speaker (a cutout will exist)")
+    pl.add_argument("--immersive", action="store_true", help="slow push-ins at sentence starts")
     pl.add_argument("--speaker-name"); pl.add_argument("--speaker-title", default="")
     pl.add_argument("--spread", type=float, default=0.5,
                     help="spread clips across the talk (0 = off, 0.5 = default): min gap = spread x length / clips")
@@ -91,14 +97,24 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "make":
             from .make import make
             from .planner import AnthropicLLM, PlannerOptions
-            opts = PlannerOptions(min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips, cutout=a.cutout,
+            if len(a.link) > 6:
+                raise ValueError("use at most 6 --link addresses")
+            from .assets.urlguard import assert_public_url
+            for u in a.link:
+                assert_public_url(u)
+            images = None
+            if a.ai_images:
+                from .assets.images import GeminiImages
+                images = GeminiImages()
+            opts = PlannerOptions(min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips, cutout=a.cutout, immersive=a.immersive,
+                                  explainer=a.explainer, links=tuple(a.link), ai_images=a.ai_images,
                                   spread=a.spread,
                                   speaker_name=a.speaker_name, speaker_title=a.speaker_title)
             need_llm = not a.edl
             res = make(a.video, a.out, language=a.language, transcript_path=a.transcript, edl_path=a.edl, opts=opts,
                        llm=AnthropicLLM(a.model) if need_llm else None,
                        score_llm=AnthropicLLM(a.score_model) if need_llm and a.score_model else None,
-                       render=not a.no_render, gsap_js=a.gsap, workers=a.workers, multi=a.multi,
+                       render=not a.no_render, gsap_js=a.gsap, workers=a.workers, multi=a.multi, images=images,
                        say=lambda m: print(f"  {m}", file=sys.stderr))
             print(f"{len(res.edl.clips)} clip(s) -> {a.out}" + (f"; rendered {len(res.videos)}" if res.videos else ""))
             return 0
@@ -128,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
                 score_llm = AnthropicLLM(a.score_model) if a.score_model else None
             opts = PlannerOptions(job_id=a.job_id, min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips,
                                   spread=a.spread,
-                                  cutout=a.cutout, speaker_name=a.speaker_name, speaker_title=a.speaker_title,
+                                  cutout=a.cutout, immersive=a.immersive, speaker_name=a.speaker_name, speaker_title=a.speaker_title,
                                   on_progress=lambda m: print(f"  {m}", file=sys.stderr))
             try:
                 plan = plan_edl(tr, source, llm, opts, score_llm=score_llm)

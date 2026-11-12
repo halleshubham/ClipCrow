@@ -1,0 +1,14 @@
+{
+  "clip": "c1",
+  "ai_decided": [
+    "cut points"
+  ],
+  "ai_assets": {
+    "generated": [],
+    "processed": []
+  },
+  "disclosure_recommended": false,
+  "models": [],
+  "planner_tokens": null,
+  "planner_est_cost_usd": null
+}

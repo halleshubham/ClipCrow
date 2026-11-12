@@ -60,13 +60,14 @@ class AIUsage(_Model):
         return sorted({c.model for c in self.calls})
 
 
-AssetOrigin = Literal["upload", "stock", "matte", "ai_image", "ai_video", "tts", "render"]
+AssetOrigin = Literal["upload", "stock", "matte", "ai_image", "ai_video", "tts", "render", "capture"]
 # How much AI touched an asset: none, processed (a model transformed real footage, e.g. a person
 # matte) or generated (the content itself is synthetic: AI image/video/voice). Platforms ask creators
 # to disclose the last kind.
 AIInvolvement = Literal["none", "processed", "generated"]
 _REQUIRED_INVOLVEMENT = {"ai_image": "generated", "ai_video": "generated", "tts": "generated",
-                         "matte": "processed", "upload": "none", "stock": "none", "render": "none"}
+                         "matte": "processed", "upload": "none", "stock": "none", "render": "none",
+                         "capture": "none"}          # capture: a screenshot of a web page the user pointed at
 
 
 class Asset(_Model):
@@ -76,7 +77,10 @@ class Asset(_Model):
     ai: AIInvolvement = "none"
     tool: str = ""            # e.g. "u2net_human_seg", a provider name
     model: str = ""
-    prompt: str = ""          # for generated assets: what was asked
+    prompt: str = Field(default="", max_length=600)   # for generated assets: what was asked
+    uri: str = Field(default="", max_length=300)      # the file, relative to the media root ("" until it has been fetched)
+    source_url: str = Field(default="", max_length=2000)   # a captured page's address (recorded, never fetched at render)
+    alt: str = Field(default="", max_length=200)
 
     @model_validator(mode="after")
     def _honest(self):
@@ -134,6 +138,15 @@ class SplitPoint(_Model):
     cy: float = Field(ge=0, le=1)
 
 
+class PunchIn(_Model):
+    """A slow push-in on the footage (and the cutout and the text behind it, together) that snaps back at the end.
+    ``t`` is clip time. ``anchor_y`` is where the push aims, as a fraction of the frame height (a face sits near 0.4)."""
+    t: float = Field(ge=0)
+    duration: float = Field(ge=0.5, le=8)
+    scale: float = Field(default=1.15, ge=1.03, le=1.5)
+    anchor_y: float = Field(default=0.4, ge=0, le=1)
+
+
 class Layout(_Model):
     # passthrough: the footage as given (reframing happened upstream).
     # cutout_behind: a person matte (alpha WebM) is painted above the text layer,
@@ -151,11 +164,14 @@ class Layout(_Model):
     framing: Literal["cover", "track", "fit_blur", "split"] = "cover"
     reframe: list[Keyframe] = Field(default_factory=list, max_length=4000)
     split: list[SplitPoint] = Field(default_factory=list, max_length=2)
+    punch_ins: list[PunchIn] = Field(default_factory=list, max_length=12)
 
     @model_validator(mode="after")
     def _framing(self):
         if self.framing == "track" and not self.reframe:
             raise ValueError("framing 'track' needs reframe keyframes")
+        if any(b.t < a.t + a.duration for a, b in zip(self.punch_ins, self.punch_ins[1:])):
+            raise ValueError("punch_ins must be in time order and must not overlap")
         if (self.framing == "split") != (len(self.split) == 2):
             raise ValueError("framing 'split' needs exactly two split points (and only then)")
         if any(b.t < a.t for a, b in zip(self.reframe, self.reframe[1:])):
@@ -216,7 +232,20 @@ class StatPill(_OverlayBase):
     top_px: int = 220
 
 
-Overlay = Annotated[Union[TextBehind, LowerThird, StatPill, Hook], Field(discriminator="kind")]
+class MediaCard(_OverlayBase):
+    """A picture or video shown over the footage for a few seconds (explainer mode): ``full`` replaces the whole
+    frame (B-roll cutaway, the audio and captions carry on), ``panel`` is a rounded card in the upper part. The
+    file is an ``Asset`` of this EDL, so what is shown, and whether the AI made it, is on the record."""
+    kind: Literal["media"] = "media"
+    asset: SafeId
+    placement: Literal["full", "panel"] = "full"
+    top_px: int = Field(default=200, ge=0)
+    height_px: int = Field(default=900, ge=200, le=1800)
+    motion: Literal["none", "zoom_in", "pan_left", "pan_right"] = "zoom_in"
+    caption: str = Field(default="", max_length=80)
+
+
+Overlay = Annotated[Union[TextBehind, LowerThird, StatPill, Hook, MediaCard], Field(discriminator="kind")]
 
 
 class Clip(_Model):
@@ -239,6 +268,8 @@ class Clip(_Model):
             raise ValueError(f"clip {self.id!r}: source_out must be after source_in")
         if self.duration > 180:
             raise ValueError(f"clip {self.id!r}: {self.duration:.0f}s is not a short")
+        if any(p.t + p.duration > self.duration + 0.01 for p in self.layout.punch_ins):
+            raise ValueError(f"clip {self.id!r}: a punch-in runs past the end of the clip")
         ids = [o.id for o in self.overlays]
         if len(ids) != len(set(ids)):
             raise ValueError(f"clip {self.id!r}: overlay ids must be unique")
@@ -277,6 +308,12 @@ class EDL(_Model):
         aids = [a.id for a in self.assets]
         if len(aids) != len(set(aids)):
             raise ValueError("asset ids must be unique")
+        kinds = {a.id: a.kind for a in self.assets}
+        for c in self.clips:
+            for o in c.overlays:
+                if o.kind == "media" and kinds.get(o.asset) not in ("image", "video"):
+                    raise ValueError(f"clip {c.id!r}: media overlay {o.id!r} needs an image or video asset, "
+                                     f"{o.asset!r} is {kinds.get(o.asset, 'not in the EDL')}")
         return self
 
 

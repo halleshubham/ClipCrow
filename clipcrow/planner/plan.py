@@ -50,6 +50,10 @@ class PlannerOptions:
     target_clips: Optional[int] = None      # None: about one per two minutes of source
     max_clips: int = 10
     cutout: bool = False                    # a person cutout will exist: allow text behind the speaker
+    immersive: bool = False                 # slow push-ins at sentence starts (timing is code, not the model)
+    explainer: bool = False                 # pictures over the footage: screenshots of the links below, AI images
+    links: tuple = ()                       # pages the explainer may show (the model picks by number, never invents)
+    ai_images: bool = False                 # the model may ask for a generated picture (needs an image provider)
     speaker_name: Optional[str] = None      # adds a lower third
     speaker_title: str = ""
     score_batch: int = 6
@@ -184,6 +188,9 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
     for i, c in enumerate(picked):
         report["clips"].append({"id": f"c{i + 1}", "start": round(c.start, 2), "end": round(c.end, 2),
                                 "score": round(c.score, 3), "title": c.title, "why": c.why, "notes": c.notes})
+    extra_assets: list[dict] = []
+    if opts.explainer:
+        extra_assets = _add_pictures(clips, picked, tr, opts, llm, lang, report)
     deva = lang in DEVANAGARI_LANGS
     try:
         edl = EDL.model_validate({
@@ -193,7 +200,7 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
             "language": {"primary": lang, "script": "Deva" if deva else "Latn"},
             "transcript": [w.model_dump(exclude_none=True) for w in tr.words],
             "clips": clips,
-            "assets": _assets(source, opts),
+            "assets": _assets(source, opts) + extra_assets,
             "ai": _usage(llm, score_llm),
         })
     except ValueError as e:
@@ -238,6 +245,10 @@ def _clip_dict(n: int, c: PlannedClip, tr: Transcript, opts: PlannerOptions, lan
                      "font_family": DEFAULT_DEVANAGARI if deva else "Noto Sans"},
         "overlays": [],
     }
+    if opts.immersive:
+        from ..punch import plan_punch_ins
+        spans = [(s.start - c.start, s.end - c.start) for s in tr.sentences if s.start >= c.start - 0.01 and s.end <= c.end + 0.01]
+        d["layout"]["punch_ins"] = plan_punch_ins(spans, c.duration)
     ov = d["overlays"]
     hook_end = 0.0
     if c.hook:
@@ -259,3 +270,37 @@ def _clip_dict(n: int, c: PlannedClip, tr: Transcript, opts: PlannerOptions, lan
         ov.append({"kind": "lower_third", "id": "speaker", "t_in": 1.0, "duration": 3.0,
                    "title": opts.speaker_name, "subtitle": opts.speaker_title})
     return d
+
+
+def _add_pictures(clips: list[dict], picked: list[PlannedClip], tr: Transcript, opts: PlannerOptions, llm: LLM,
+                  lang: str, report: dict) -> list[dict]:
+    """Explainer beats: media overlays plus the (not yet fetched) assets they show. Timing is code."""
+    from .explainer import plan_beats
+
+    links = list(opts.links)
+
+    def beats(pair):
+        d, c = pair
+        sents = [s for s in tr.sentences if s.start >= c.start - 0.01 and s.end <= c.end + 0.01]
+        hook_end = 2.8 if any(o["kind"] == "hook" for o in d["overlays"]) else 0.5
+        return plan_beats(llm, sents, c.start, c.duration, links, allow_images=opts.ai_images, language=lang,
+                          hook_end=hook_end, purpose=f"beats:{d['id']}")
+
+    assets: list[dict] = []
+    for (d, c), (plans, warnings) in zip(zip(clips, picked), _map(beats, list(zip(clips, picked)), opts.workers)):
+        report["warnings"].extend(f"{d['id']}: {w}" for w in warnings)
+        for k, b in enumerate(plans):
+            aid = f"{d['id']}-pic{k + 1}"
+            if b.kind == "capture":
+                assets.append(Asset(id=aid, kind="image", origin="capture", ai="none",
+                                    source_url=links[b.link], alt=b.caption).model_dump())
+                placement = {"placement": "panel", "top_px": 240, "height_px": 1000, "motion": "none"}
+            else:
+                assets.append(Asset(id=aid, kind="image", origin="ai_image", ai="generated", prompt=b.prompt,
+                                    alt=b.caption).model_dump())
+                placement = {"placement": "full", "motion": "zoom_in"}
+            d["overlays"].append({"kind": "media", "id": f"pic{k + 1}", "t_in": b.t, "duration": b.duration,
+                                  "asset": aid, "caption": b.caption, **placement})
+        if plans:
+            d["ai"]["decided"] = [*d["ai"]["decided"], "picture choices"]
+    return assets

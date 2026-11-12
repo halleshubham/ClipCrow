@@ -13,6 +13,7 @@ examples = ["pillow", "numpy"]
 asr = ["faster-whisper>=1.0"]
 vision = ["opencv-python-headless>=4.8,<5", "numpy"]
 service = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
+assets = ["playwright>=1.40"]          # page screenshots for explainer mode (then: playwright install chromium)
 
 [project.scripts]
 clipcrow = "clipcrow.cli:main"

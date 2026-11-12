@@ -16,6 +16,7 @@ Everything that came from the EDL is HTML-escaped or restricted to a safe shape
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import shutil
@@ -26,7 +27,7 @@ from typing import Callable, Optional
 
 from . import fonts
 from .captions import CaptionGroup, clip_words, group_words
-from .edl import EDL, Clip, EDLError, Hook, LowerThird, StatPill, TextBehind
+from .edl import EDL, Clip, EDLError, Hook, LowerThird, MediaCard, StatPill, TextBehind
 
 GSAP_HINT = "run scripts/fetch_gsap.sh, or pass gsap_js=<path to gsap.min.js>"
 
@@ -38,6 +39,7 @@ class CompiledClip:
     groups: list[CaptionGroup] = field(default_factory=list)
     font_family: str = ""
     scenes: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)    # things a person should know (e.g. no matte, so no text behind)
 
 
 # --- media ------------------------------------------------------------------
@@ -109,6 +111,28 @@ def prepare_footage(src: Path, start: float, duration: float, fps: int, width: i
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if r.returncode != 0:
         raise EDLError(f"ffmpeg could not cut the clip: {r.stderr.strip()[-400:]}")
+
+
+def _cached_matte(footage: Path, dest: Path, matte_fn, cache_dir: str | Path | None) -> None:
+    """The matte is the slow step (about 2 fps on a CPU), and it depends only on the prepared footage. Keyed by a
+    hash of that file, so re-rendering after a text edit reuses it and a change to the cut or the framing does not."""
+    if cache_dir is None:
+        matte_fn(footage, dest)
+        return
+    h = hashlib.sha256()
+    with open(footage, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    cache = Path(cache_dir)
+    cache.mkdir(parents=True, exist_ok=True)
+    hit = cache / f"{h.hexdigest()[:24]}.webm"
+    if hit.is_file() and hit.stat().st_size > 0:
+        shutil.copyfile(hit, dest)
+        return
+    matte_fn(footage, dest)
+    tmp = hit.with_suffix(".tmp")
+    shutil.copyfile(dest, tmp)
+    tmp.replace(hit)
 
 
 # --- html -------------------------------------------------------------------
@@ -234,7 +258,36 @@ def _cards_scene(items, family: str, face: str, w: int, h: int) -> str:
     return _scene("cards", w, h, css, "\n".join(body), "\n".join(script))
 
 
-def _index(duration: float, w: int, h: int, lang: str, scenes: set[str], cutout: bool) -> str:
+MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _media_scene(items, files: dict[str, str], stack: str, face: str, w: int, h: int) -> str:
+    """Pictures shown over the footage: a full-frame cutaway or a rounded panel, with a slow move and a fade."""
+    css = f"""    {face}
+    .mc {{ position: absolute; overflow: hidden; opacity: 0; background: #000; }}
+    .mc.full {{ left: 0; top: 0; width: {w}px; height: {h}px; }}
+    .mc.panel {{ left: 60px; width: {w - 120}px; border-radius: 36px; box-shadow: 0 18px 60px rgba(0,0,0,.55); }}
+    .mc img {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
+    .mc.full img {{ object-fit: cover; }} .mc.panel img {{ object-fit: contain; }}
+    .mc .cap {{ position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 36px; text-align: center;
+      font-family: {stack}, sans-serif; font-weight: 700; font-size: 42px; line-height: 1.3; color: #fff;
+      background: linear-gradient(transparent, rgba(0,0,0,.72)); }}"""
+    body, script = [], []
+    for o, t0, d in items:
+        geom = f"top:{o.top_px}px;height:{o.height_px}px" if o.placement == "panel" else ""
+        cap = f'<div class="cap">{_esc(o.caption)}</div>' if o.caption else ""
+        body.append(f'    <div id="m-{o.id}" class="mc {o.placement} clip" data-start="{_num(t0)}" '
+                    f'data-duration="{_num(d)}" style="{geom}"><img id="mi-{o.id}" src="{files[o.asset]}" alt="">{cap}</div>')
+        move = {"zoom_in": '{ scale: 1.12 }', "pan_left": '{ x: -70, scale: 1.1 }', "pan_right": '{ x: 70, scale: 1.1 }'}.get(o.motion)
+        script.append(f'    tl.fromTo("#m-{o.id}", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.25, ease: "power1.out" }}, {_num(t0)});')
+        if move:
+            script.append(f'    tl.fromTo("#mi-{o.id}", {{ scale: 1, x: 0 }}, Object.assign({move}, '
+                          f'{{ duration: {_num(d)}, ease: "none" }}), {_num(t0)});')
+        script.append(f'    tl.to("#m-{o.id}", {{ opacity: 0, duration: 0.25, ease: "power1.in" }}, {_num(max(t0, t0 + d - 0.25))});')
+    return _scene("media", w, h, css, "\n".join(body), "\n".join(script))
+
+
+def _index(duration: float, w: int, h: int, lang: str, scenes: set[str], cutout: bool, punch=()) -> str:
     def host(name, z, track, kind):
         return (f'      <div id="{name}" data-composition-id="{name}" data-composition-src="compositions/{name}.html" '
                 f'data-start="0" data-duration="{_num(duration)}" data-track-index="{track}" '
@@ -248,10 +301,23 @@ def _index(duration: float, w: int, h: int, lang: str, scenes: set[str], cutout:
         parts.append(f'      <video id="cutout" class="clip full" src="assets/cutout.webm" data-start="0" '
                      f'data-duration="{_num(duration)}" data-track-index="2" muted playsinline '
                      f'data-layout-allow-occlusion style="z-index:3"></video>')
+    if "media" in scenes:                       # above the cutout: a cutaway must hide the person too
+        parts.append(host("media", 4, 5, "graphics"))
     if "captions" in scenes:
-        parts.append(host("captions", 4, 3, "captions"))
+        parts.append(host("captions", 5, 3, "captions"))
     if "cards" in scenes:
-        parts.append(host("cards", 5, 4, "graphics"))
+        parts.append(host("cards", 6, 4, "graphics"))
+    pushes = ""
+    if punch:
+        # The footage, the text behind the speaker and the cutout must move together or the text would slide
+        # across the person: one tween on all of them, around the same point.
+        tweens = []
+        for p in punch:
+            tweens.append(f'      tl.fromTo(stage, {{ scale: 1, transformOrigin: "50% {_num(p.anchor_y * 100)}%" }}, '
+                          f'{{ scale: {_num(p.scale)}, duration: {_num(p.duration)}, ease: "none" }}, {_num(p.t)});\n'
+                          f'      tl.set(stage, {{ scale: 1 }}, {_num(p.t + p.duration)});')
+        pushes = ('      const stage = ["#footage", "#behind", "#cutout"].filter((s) => document.querySelector(s));\n'
+                  + "\n".join(tweens) + "\n")
     return f"""<!doctype html>
 <html lang="{_esc(lang)}">
   <head>
@@ -271,8 +337,9 @@ def _index(duration: float, w: int, h: int, lang: str, scenes: set[str], cutout:
     </div>
     <script>
       window.__timelines = window.__timelines || {{}};
-      window.__timelines["main"] = gsap.timeline({{ paused: true }});
-    </script>
+      const tl = gsap.timeline({{ paused: true }});
+      window.__timelines["main"] = tl;
+{pushes}    </script>
   </body>
 </html>
 """
@@ -299,6 +366,7 @@ def _overlay_times(edl: EDL, clip: Clip):
 def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: str | Path,
                  gsap_js: str | Path | None = None,
                  matte_fn: Optional[Callable[[Path, Path], object]] = None,
+                 matte_cache: str | Path | None = None, asset_root: str | Path | None = None,
                  prepare: bool = True) -> CompiledClip:
     """Write the HyperFrames project for ``clip`` into ``project_dir``.
 
@@ -310,6 +378,8 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
 
     (project / "assets" / "fonts").mkdir(parents=True, exist_ok=True)
     (project / "compositions").mkdir(parents=True, exist_ok=True)
+    for stale in (project / "compositions").glob("*.html"):   # a re-render (after an edit) reuses the folder:
+        stale.unlink()                                         # a scene that no longer exists must not linger
 
     # vendored GSAP: the render browser must not fetch it from a CDN
     gsap = Path(gsap_js) if gsap_js else None
@@ -324,7 +394,7 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
 
     texts = [x.text for g in groups for x in g.words]
     for o, _, _ in overlays:
-        texts += [getattr(o, a) for a in ("text", "title", "subtitle") if hasattr(o, a)]
+        texts += [getattr(o, a) for a in ("text", "title", "subtitle", "caption") if hasattr(o, a)]
     family = fonts.effective_family(clip.captions.font_family, texts)
     font_file = fonts.resolve_font(family, clip.captions.font_weight)
     shutil.copyfile(font_file, project / "assets" / "fonts" / font_file.name)
@@ -337,9 +407,29 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
         face += "\n    " + _font_face(latin, lfile.name, clip.captions.font_weight)
         stack += f', "{latin}"'
 
+    media = [x for x in overlays if isinstance(x[0], MediaCard)]
     behind = [x for x in overlays if isinstance(x[0], TextBehind)]
     cards = [x for x in overlays if isinstance(x[0], (LowerThird, StatPill, Hook))]
+    files: dict[str, str] = {}
+    if media:
+        by_id = {x.id: x for x in edl.assets}
+        (project / "assets" / "media").mkdir(parents=True, exist_ok=True)
+        for o, _, _ in media:
+            asset = by_id[o.asset]
+            if not asset.uri:
+                raise EDLError(f"overlay {o.id!r}: asset {o.asset!r} has no file yet (it has to be fetched or generated first)")
+            if asset.kind != "image":
+                raise EDLError(f"overlay {o.id!r}: only images can be shown for now ({o.asset!r} is a {asset.kind})")
+            suffix = Path(asset.uri).suffix.lower()
+            if suffix not in MEDIA_SUFFIXES:
+                raise EDLError(f"asset {o.asset!r}: {suffix or 'no extension'} is not a supported picture type")
+            files[o.asset] = f"assets/media/{o.asset}{suffix}"
+            if prepare:
+                shutil.copyfile(_inside(Path(asset_root) if asset_root else media_root, asset.uri), project / files[o.asset])
     scenes: list[str] = []
+    if media:
+        (project / "compositions" / "media.html").write_text(_media_scene(media, files, stack, face, w, h), "utf-8")
+        scenes.append("media")
     if behind:
         (project / "compositions" / "behind.html").write_text(_behind_scene(behind, stack, face, w, h), "utf-8")
         scenes.append("behind")
@@ -353,7 +443,7 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
 
     cutout = clip.layout.mode == "cutout_behind"
     (project / "index.html").write_text(
-        _index(duration, w, h, edl.language.primary, set(scenes), cutout), "utf-8")
+        _index(duration, w, h, edl.language.primary, set(scenes), cutout, clip.layout.punch_ins), "utf-8")
     (project / "hyperframes.json").write_text(json.dumps({
         "paths": {"blocks": "compositions", "components": "compositions/components", "assets": "assets"},
         "media": {"autoProxy": True}}, indent=2), "utf-8")
@@ -372,7 +462,7 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
             if clip.layout.cutout_uri:
                 shutil.copyfile(_inside(media_root, clip.layout.cutout_uri), dest)
             elif matte_fn is not None:
-                matte_fn(footage, dest)
+                _cached_matte(footage, dest, matte_fn, matte_cache)
             else:
                 raise EDLError("layout.mode 'cutout_behind' needs layout.cutout_uri or a matte_fn")
     return CompiledClip(project, duration, groups, family, scenes)

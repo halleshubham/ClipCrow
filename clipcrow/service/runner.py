@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Protocol
+from typing import Optional, Protocol
 
-from ..edl import EDL, EDLError
+from ..edl import EDL, EDLError, load_edl
 from ..make import Cancelled, Hooks, MakeResult
 from ..planner.llm import LLMError
 from ..planner.plan import PlanError
@@ -26,6 +28,9 @@ class Pipeline(Protocol):
 
     def run(self, job: Job, video: Path, out: Path, hooks: Hooks, say) -> MakeResult: ...
 
+    def render_clip(self, job: Job, edl: EDL, clip_id: str, out: Path, workdir: Path, media_root: Path) -> list[str]:
+        """Render one clip of ``edl`` to ``out`` (used after an edit); returns warnings for a person to read."""
+
 
 def clip_infos(edl: EDL, ready: set[str] = frozenset()) -> list[ClipInfo]:
     out = []
@@ -43,6 +48,9 @@ class JobRunner:
         self.store, self.pipeline = store, pipeline
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-job")
         self._cancel: dict[str, threading.Event] = {}
+        self._edit_lock = threading.Lock()                       # one edit at a time touches edl.json
+        self._replan: dict[tuple[str, str], str] = {}            # (job, clip) -> multi mode to re-plan framing with
+        self._gen: dict[tuple[str, str], int] = {}               # bumped by every edit; a render only finishes the latest
 
     def recover(self) -> None:
         """After a restart: queued jobs go back in the queue, interrupted ones are marked failed."""
@@ -51,6 +59,11 @@ class JobRunner:
                 self.submit(job.id)
             elif job.status == "running":
                 job.status, job.error = "failed", "The server restarted while this job was running."
+                self.store.save(job)
+            elif any(c.render in ("queued", "rendering") for c in job.clips):
+                for c in job.clips:
+                    if c.render in ("queued", "rendering"):
+                        c.render, c.render_error = "failed", "The server restarted while this clip was re-rendering. Render it again."
                 self.store.save(job)
 
     def submit(self, job_id: str) -> None:
@@ -105,7 +118,13 @@ class JobRunner:
                     c.ready = True
             store.save(job)
 
-        hooks = Hooks(stage=stage, clip_ready=clip_ready, planned=planned, cancelled=ev.is_set)
+        def clip_notes(clip_id: str, notes: list) -> None:
+            for c in job.clips:
+                if c.id == clip_id:
+                    c.notes = notes[:5]
+            store.save(job)
+
+        hooks = Hooks(stage=stage, clip_ready=clip_ready, planned=planned, clip_notes=clip_notes, cancelled=ev.is_set)
         src = store.source_path(job_id)
         try:
             if src is None:
@@ -124,3 +143,118 @@ class JobRunner:
             if s.state == "running":
                 s.state = "failed" if job.status == "failed" else "pending"
         store.save(job)
+
+    # --- editing a finished clip ------------------------------------------------------------------
+
+    def _original(self, job_id: str) -> Path:
+        return self.store.dir(job_id) / "out" / "edl.original.json"
+
+    def _write_edl(self, job_id: str, edl: EDL) -> None:
+        path = self.store.edl_path(job_id)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(edl.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
+        os.replace(tmp, path)
+
+    def _mark(self, job_id: str, clip_id: str, edl: EDL | None = None, **fields) -> None:
+        info = {c.id: c for c in clip_infos(edl)} if edl is not None else {}
+
+        def fn(job: Job) -> None:
+            for c in job.clips:
+                if c.id == clip_id:
+                    if clip_id in info:
+                        n = info[clip_id]
+                        c.title, c.hook, c.start, c.end, c.framing = n.title, n.hook, n.start, n.end, n.framing
+                    for k, v in fields.items():
+                        setattr(c, k, v)
+        self.store.update(job_id, fn)
+
+    def edit_clip(self, job_id: str, clip_id: str, edit) -> bool:
+        """Apply ``edit`` to the clip's plan and queue a re-render. Raises ValueError (a message for a person)
+        when the change is not allowed. Returns False when the edit changed nothing."""
+        from .editor import apply_edit
+        job = self.store.get(job_id)
+        if job.status != "done":
+            raise ValueError("Wait for the job to finish before editing its clips.")
+        with self._edit_lock:
+            edl = load_edl(self.store.edl_path(job_id))
+            new, replan = apply_edit(edl, clip_id, edit, source_duration=float(job.source.get("duration", 0)))
+            if new is edl:
+                return False
+            if not self._original(job_id).exists():
+                shutil.copyfile(self.store.edl_path(job_id), self._original(job_id))
+            self._write_edl(job_id, new)
+            key = (job_id, clip_id)
+            self._gen[key] = self._gen.get(key, 0) + 1
+            if replan:
+                self._replan[key] = replan
+            self._mark(job_id, clip_id, new, render="queued", render_error="", edited=True)
+        self._pool.submit(self._render_clip, job_id, clip_id)
+        return True
+
+    def reset_clip(self, job_id: str, clip_id: str) -> bool:
+        """Put one clip back to the AI's plan and re-render it."""
+        if self.store.get(job_id).status != "done":
+            raise ValueError("Wait for the job to finish before editing its clips.")
+        with self._edit_lock:
+            if not self._original(job_id).exists():
+                return False
+            orig = next((c for c in load_edl(self._original(job_id)).clips if c.id == clip_id), None)
+            if orig is None:
+                return False
+            edl = load_edl(self.store.edl_path(job_id))
+            new = edl.model_copy(update={"clips": [orig if c.id == clip_id else c for c in edl.clips]})
+            self._write_edl(job_id, new)
+            key = (job_id, clip_id)
+            self._gen[key] = self._gen.get(key, 0) + 1
+            self._replan.pop(key, None)
+            self._mark(job_id, clip_id, new, render="queued", render_error="", edited=False)
+        self._pool.submit(self._render_clip, job_id, clip_id)
+        return True
+
+    def rerender(self, job_id: str, clip_id: str) -> None:
+        """Render a clip again as it is (after a failed render)."""
+        with self._edit_lock:
+            key = (job_id, clip_id)
+            self._gen[key] = self._gen.get(key, 0) + 1
+            self._mark(job_id, clip_id, render="queued", render_error="")
+        self._pool.submit(self._render_clip, job_id, clip_id)
+
+    def _render_clip(self, job_id: str, clip_id: str) -> None:
+        key = (job_id, clip_id)
+        gen = self._gen.get(key, 0)
+        try:
+            self._mark(job_id, clip_id, render="rendering")
+            job = self.store.get(job_id)
+            video = self.store.source_path(job_id)
+            if video is None:
+                raise ValueError("the uploaded video is missing")
+            replan = self._replan.pop(key, None)
+            if replan:                                           # plan the framing afresh (slow: outside the lock)
+                from ..framing import apply_framing
+                with self._edit_lock:
+                    edl = load_edl(self.store.edl_path(job_id))
+                sub = edl.model_copy(update={"clips": [c for c in edl.clips if c.id == clip_id]})
+                planned = apply_framing(sub, str(video), multi=replan).clips[0]
+                with self._edit_lock:                            # merge into the CURRENT plan: another edit may have landed
+                    edl = load_edl(self.store.edl_path(job_id))
+                    clips = []
+                    for c in edl.clips:
+                        if c.id == clip_id:
+                            upd = {"layout": planned.layout}
+                            if planned.layout.framing == "split":
+                                upd["captions"] = c.captions.model_copy(update={"top_px": planned.captions.top_px})
+                            c = c.model_copy(update=upd)
+                        clips.append(c)
+                    self._write_edl(job_id, edl.model_copy(update={"clips": clips}))
+            with self._edit_lock:
+                edl = load_edl(self.store.edl_path(job_id))
+            out = self.store.clip_path(job_id, clip_id)
+            warnings = self.pipeline.render_clip(job, edl, clip_id, out, self.store.dir(job_id) / "out" / "work", video.parent)
+            if self._gen.get(key, 0) == gen:                     # nobody edited again while we rendered
+                self._mark(job_id, clip_id, edl, render="ready", render_error="", ready=True, notes=list(warnings or []),
+                           rev=self.store.get(job_id).clip(clip_id).rev + 1)
+        except EXPECTED as e:
+            self._mark(job_id, clip_id, render="failed", render_error=str(e)[:300])
+        except Exception as e:
+            log.exception("re-render of %s/%s failed", job_id, clip_id)
+            self._mark(job_id, clip_id, render="failed", render_error=f"Something went wrong on the server ({type(e).__name__}).")

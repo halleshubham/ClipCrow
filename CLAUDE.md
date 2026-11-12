@@ -22,6 +22,15 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
 - Licence is AGPL-3.0. Do not copy code from OpenShorts' `cloud/` directory (separate commercial licence).
 - A speaker change is a hard cut (a jump between two `reframe` keyframes), never a pan; the active speaker comes
   from mouth movement normalised per person (`reframe.normalise_activity`) with hysteresis. Keep both when changing it.
+- Layer order and push-ins: footage z1, text behind z2, cutout z3, captions z4, cards z5. A push-in scales footage,
+  `#behind` and `#cutout` with the same tween, or the text slides across the person. `compile_clip` clears stale
+  `compositions/*.html` (a re-render reuses the folder). Without a matte the clip renders without text-behind and says
+  so (`CompiledClip.warnings`, the provenance `notes`); the matte is cached by a hash of the prepared footage.
+- Explainer pictures: the model picks a link BY NUMBER or writes an image description; it never supplies an address.
+  Every link goes through `assets.urlguard.assert_public_url` (on submit, before capture, and for each browser
+  request). Assets are fetched before render into `<out>/assets` (`asset_root`), never at render time; a failed picture
+  is dropped with a note. Generated media must be `ai="generated"` so the disclosure flag turns on; keep the editor's
+  removal pruning orphan assets.
 - Marathi/Hindi copy must be Devanagari; keep tests with Devanagari fixtures.
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
@@ -32,7 +41,11 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   `innerHTML` and inline handlers. The CSP forbids inline scripts and styles and third-party requests.
 - Ids in URLs are strict hex (`jobs.JOB_ID`, `CLIP_ID`); files are resolved inside the job directory. Show a person
   only `EXPECTED` errors' messages; unexpected ones get a generic message and a server log entry.
-- A pipeline implements `check_ready()` and `run(job, video, out, hooks, say)`; progress goes through `make.Hooks`.
+- A pipeline implements `check_ready()`, `run(job, video, out, hooks, say)` and `render_clip(...)` (re-render after an
+  edit); progress goes through `make.Hooks`.
+- Clip edits are `service.editor.ClipEdit`, a closed set of fields applied by the pure `apply_edit`; never accept a raw
+  EDL or a path from the browser. The AI's `decided` list is not rewritten by a person: add a note instead.
+  All edl.json writes go through the runner's edit lock; a render finishes only the latest edit (`_gen`).
 
 ## CI
 A green pipeline closes a task, not the push: after pushing, confirm the commit's workflow is green.

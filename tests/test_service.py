@@ -28,6 +28,18 @@ class FakePipeline:
 
     def __init__(self, ready=None, gate: threading.Event | None = None, boom: Exception | None = None):
         self.ready, self.gate, self.boom = ready, gate, boom
+        self.rendered: list = []                       # (clip id, title, source_in, source_out, framing) per re-render
+        self.render_fail: Exception | None = None
+        self.render_gate: threading.Event | None = None
+
+    def render_clip(self, job, edl, clip_id, out, workdir, media_root):
+        if self.render_gate:
+            self.render_gate.wait(10)
+        if self.render_fail:
+            raise self.render_fail
+        c = next(x for x in edl.clips if x.id == clip_id)
+        self.rendered.append((clip_id, c.title, c.source_in, c.source_out, c.layout.framing))
+        out.write_bytes(b"re-rendered" * 100)
 
     def check_ready(self):
         return self.ready
@@ -77,7 +89,7 @@ def test_a_job_runs_end_to_end_and_the_clips_can_be_played_and_downloaded(tmp_pa
     assert r.status_code == 201
     job = wait(c, r.json()["id"])
     assert job["status"] == "done" and job["error"] is None
-    assert [s["state"] for s in job["stages"]] == ["done"] * 4
+    assert [s["state"] for s in job["stages"]] == ["done", "done", "skipped", "done", "done"]     # no pictures asked for
     assert job["source"]["duration"] > 240 and len(job["clips"]) == 2 and all(k["ready"] for k in job["clips"])
     k = job["clips"][0]
     assert k["title"] and k["hook"] and "cut points" in k["ai_decided"]

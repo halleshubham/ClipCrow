@@ -139,6 +139,10 @@ function newJobView() {
     fd.append('speaker_name', $('speaker').value);
     fd.append('speaker_title', $('role').value);
     fd.append('cutout', $('cutout').checked ? 'true' : '');
+    fd.append('immersive', $('immersive').checked ? 'true' : '');
+    fd.append('explainer', $('explainer').checked ? 'true' : '');
+    fd.append('links', $('links').value);
+    fd.append('ai_images', $('ai_images').checked ? 'true' : '');
     submit.disabled = true;
     progress.hidden = false;
     const xhr = new XMLHttpRequest();
@@ -179,13 +183,27 @@ function newJobView() {
     el('div', { class: 'stack', style: { marginTop: '24px' } },
       el('label', { class: 'check', for: 'cutout' }, el('input', { type: 'checkbox', id: 'cutout' }),
         el('span', {}, el('strong', { text: 'Text behind the speaker' }), el('br'),
-          el('span', { class: 'muted', text: 'Cuts the person out so a big word can sit behind them. Slower to render; best for a single face.' })))),
+          el('span', { class: 'muted', text: 'Cuts the person out so a big word can sit behind them. Slower to render; best for a single face.' }))),
+      el('label', { class: 'check', for: 'explainer' }, el('input', { type: 'checkbox', id: 'explainer' }),
+        el('span', {}, el('strong', { text: 'Explainer: show pictures' }), el('br'),
+          el('span', { class: 'muted', text: 'Puts a picture over the video where the speaker names something: a page you link below, or an AI-generated image.' }))),
+      el('div', { id: 'explainer-opts', class: 'stack', hidden: true, style: { paddingLeft: '30px' } },
+        el('div', {}, el('label', { class: 'field', for: 'links', text: 'Pages to show (one address per line, up to 6)' }),
+          el('textarea', { id: 'links', rows: '3', placeholder: 'Paste a link, one per line', autocomplete: 'off', spellcheck: 'false' }),
+          el('div', { class: 'hint', text: 'The AI chooses which of your pages fits which moment. It never invents an address. Only public web pages work.' })),
+        el('label', { class: c.ai_images ? 'check' : 'check muted', for: 'ai_images' }, el('input', { type: 'checkbox', id: 'ai_images', disabled: !c.ai_images }),
+          el('span', {}, el('strong', { text: 'Also generate images with AI' }), el('br'),
+            el('span', { class: 'muted', text: c.ai_images ? 'AI-generated pictures mean most platforms ask you to label the video as AI content.' : 'Not set up on this server.' })))),
+      el('label', { class: 'check', for: 'immersive' }, el('input', { type: 'checkbox', id: 'immersive' }),
+        el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
+          el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back. Suits a person talking to camera.' })))),
     el('label', { class: 'row small muted', for: 'rights', style: { marginTop: '24px', alignItems: 'flex-start', flexWrap: 'nowrap' } }, rights,
       el('span', { text: 'I own this video or have the rights to process it.' })),
     err,
     el('div', { class: 'row', style: { marginTop: '24px' } }, submit, status),
     progress);
   const $ = (id) => form.querySelector('#' + id);
+  $('explainer').addEventListener('change', () => { $('explainer-opts').hidden = !$('explainer').checked; });
 
   const aside = el('div', { class: 'stack grow' },
     el('section', { class: 'card' }, el('h2', { text: 'What happens next' }),
@@ -198,8 +216,8 @@ function newJobView() {
 }
 
 const STATUS_CLASS = { queued: 'queued', running: 'running', done: 'done', failed: 'failed', cancelled: 'cancelled' };
-const STAGE_LABEL = { transcribe: '1 · TRANSCRIBE', plan: '2 · PLAN', frame: '3 · FRAME', render: '4 · RENDER' };
-const STAGE_WORD = { transcribe: 'Transcribing', plan: 'Planning', frame: 'Framing clips', render: 'Rendering' };
+const STAGE_LABEL = { transcribe: '1 · TRANSCRIBE', plan: '2 · PLAN', assets: '3 · PICTURES', frame: '4 · FRAME', render: '5 · RENDER' };
+const STAGE_WORD = { transcribe: 'Transcribing', plan: 'Planning', assets: 'Making pictures', frame: 'Framing clips', render: 'Rendering' };
 const STATE_TEXT = { pending: 'Waiting', running: 'Working…', done: 'Done', skipped: 'Skipped', failed: 'Failed' };
 
 function statusText(job) {
@@ -260,40 +278,54 @@ async function jobView(jobId) {
         el('span', { style: { marginLeft: 'auto' }, text: fmt(d) })));
   }
 
+  const FRAMING_TEXT = { track: 'face-tracked crop', fit_blur: 'whole frame', cover: 'centre crop', split: 'two people stacked' };
+  const busy = (c) => c.render === 'queued' || c.render === 'rendering';
+
   function clipCard(c, i) {
+    const url = `/api/jobs/${jobId}/clips/${c.id}`;
     const player = el('div', { class: 'player' });
+    if (c.ready) {
+      player.replaceChildren(el('video', { controls: true, playsinline: true, preload: 'metadata', src: `${url}/video?v=${c.rev}`, 'aria-label': `Clip ${i + 1}: ${c.title}` }));
+    } else {
+      player.textContent = job.status === 'running' ? 'Rendering…' : 'Not rendered';
+    }
     const score = c.score == null ? null : Math.round(c.score * 100);
-    const card = el('article', { class: 'card clipcard' }, player,
+    const actions = el('div', { class: 'row' });
+    if (c.ready) actions.append(el('a', { class: 'btn dark', href: `${url}/download`, text: 'Download MP4' }));
+    if (c.ready && job.status === 'done') actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}`, text: 'Edit' }));
+    return el('article', { class: 'card clipcard', 'data-clip': c.id }, player,
       el('div', { class: 'grow stack', style: { gap: '12px', minWidth: '220px' } },
         el('div', { class: 'chips' },
           el('span', { class: 'chip plain', text: `${fmt(c.start)} – ${fmt(c.end)}` }),
           el('span', { class: 'chip plain', text: `${Math.round(c.end - c.start)} s` }),
-          el('span', { class: 'chip plain', text: { track: 'face-tracked crop', fit_blur: 'whole frame', cover: 'centre crop' }[c.framing] || c.framing })),
+          el('span', { class: 'chip plain', text: FRAMING_TEXT[c.framing] || c.framing }),
+          c.edited && el('span', { class: 'chip', text: 'edited by you' })),
         el('h2', { class: 'deva', style: { fontSize: '20px', lineHeight: '1.4', margin: 0 }, translate: 'no', text: c.title }),
         c.hook && el('div', { class: 'small muted' }, 'Hook: ', el('span', { class: 'deva', text: c.hook })),
         c.why && el('p', { class: 'small muted', style: { margin: 0 }, text: c.why }),
+        c.notes && c.notes.map((n) => el('div', { class: 'small', style: { color: 'var(--warn)' }, text: n })),
+        busy(c) && el('div', { class: 'badge running', role: 'status', text: c.render === 'queued' ? 'Re-render queued…' : 'Re-rendering…' }),
+        c.render === 'failed' && el('div', { class: 'alert', role: 'alert', style: { margin: 0 } }, el('div', { text: `Re-render failed: ${c.render_error}` }),
+          el('button', { class: 'btn', type: 'button', style: { marginTop: '8px' }, text: 'Try again', onclick: async () => {
+            try { job = await api(`/jobs/${jobId}`); await api(`${'/jobs/' + jobId}/clips/${c.id}/render`, { method: 'POST' }); job = await api(`/jobs/${jobId}`); update(); schedule(); } catch (e) { alert(e.message); }
+          } })),
         score != null && el('div', {}, el('div', { class: 'row tiny muted', style: { justifyContent: 'space-between' } }, el('span', { text: 'Clip score' }), el('span', { text: `${score} / 100` })),
           el('div', { class: 'bar-score' }, el('div', { style: { width: `${score}%` } }))),
         c.ai_decided.length > 0 && el('div', {}, el('div', { class: 'tiny muted', style: { marginBottom: '4px' }, text: 'AI decided' }),
           el('div', { class: 'chips' }, c.ai_decided.map((t) => el('span', { class: 'chip', text: t })))),
-        el('div', { class: 'row', 'data-actions': true })));
-    return { card, player, ready: false };
+        actions));
   }
 
   function renderClips() {
     clipsSection.hidden = job.clips.length === 0;
     job.clips.forEach((c, i) => {
-      let entry = cards.get(c.id);
-      if (!entry) { entry = clipCard(c, i); cards.set(c.id, entry); clipsGrid.append(entry.card); }
-      if (c.ready && !entry.ready) {
-        entry.ready = true;
-        const url = `/api/jobs/${jobId}/clips/${c.id}`;
-        entry.player.replaceChildren(el('video', { controls: true, playsinline: true, preload: 'metadata', src: `${url}/video`, 'aria-label': `Clip ${i + 1}: ${c.title}` }));
-        entry.card.querySelector('[data-actions]').replaceChildren(
-          el('a', { class: 'btn dark', href: `${url}/download`, text: 'Download MP4' }));
-      } else if (!c.ready && !entry.ready) {
-        entry.player.textContent = job.status === 'running' ? 'Rendering…' : 'Not rendered';
-      }
+      // a card is rebuilt only when something it shows has changed, so a playing video is not interrupted
+      const sig = JSON.stringify([c.ready, c.render, c.rev, c.title, c.hook, c.start, c.end, c.framing, c.edited, c.render_error, c.notes, job.status === 'done']);
+      const entry = cards.get(c.id);
+      if (entry && entry.sig === sig) return;
+      const card = clipCard(c, i);
+      if (entry) entry.card.replaceWith(card); else clipsGrid.append(card);
+      cards.set(c.id, { card, sig });
     });
   }
 
@@ -339,14 +371,17 @@ async function jobView(jobId) {
     loadUsage();
   }
 
+  const needsPolling = () => ['queued', 'running'].includes(job.status) || job.clips.some(busy)
+    || (job.status === 'done' && !usageLoaded && job.clips.length);
   async function poll() {
     if (dead) return;
-    if (['queued', 'running'].includes(job.status) || (job.status === 'done' && !usageLoaded && job.clips.length)) {
+    if (needsPolling()) {
       try { job = await api(`/jobs/${jobId}`); update(); }
       catch (e) { if (e instanceof SignInNeeded) { route(); return; } }
       if (!dead) timer = setTimeout(poll, 1500);
     }
   }
+  function schedule() { clearTimeout(timer); if (!dead) timer = setTimeout(poll, 1500); }
 
   app.replaceChildren(
     el('div', { class: 'stack' },
@@ -375,6 +410,166 @@ async function jobsView() {
   app.replaceChildren(el('h1', { text: 'Jobs' }), el('div', { style: { height: '16px' } }), body);
 }
 
+// ---- clip editor ----------------------------------------------------------------------------------
+
+async function clipEditorView(jobId, clipId) {
+  let view = await api(`/jobs/${jobId}/clips/${clipId}`);
+  let timer = null, dead = false, pick = 'start', shownRev = null;
+  const base = `/jobs/${jobId}/clips/${clipId}`;
+  const f = {};
+
+  const player = el('div', { class: 'player', style: { width: '270px' } });
+  const status = el('div', { class: 'small', role: 'status', 'aria-live': 'polite' });
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const field = (label, control, hint) => el('div', {}, el('label', { class: 'field', for: control.id, text: label }), control,
+    hint && el('div', { class: 'hint', text: hint }));
+  const textIn = (id, value, max, deva = true) => (f[id] = el('input', { id, type: 'text', maxlength: String(max), autocomplete: 'off', class: deva ? 'deva' : null, value }));
+  const choose = (id, options, value) => {
+    const sel = (f[id] = el('select', { id }, options.map(([v, label]) => el('option', { value: v, text: label }))));
+    sel.value = value;
+    return sel;
+  };
+
+  textIn('title', view.title, 120);
+  textIn('hook', view.hook, 120);
+  textIn('speaker_name', view.speaker_name, 60);
+  textIn('speaker_title', view.speaker_title, 60);
+  textIn('stat', view.stat, 40, false);
+
+  const num = (id, value) => (f[id] = el('input', { id, type: 'number', min: '0', max: String(Math.ceil(view.source_duration)), step: '0.1', value: String(value) }));
+  num('source_in', view.source_in); num('source_out', view.source_out);
+  const length = el('span', { class: 'small muted' });
+  const wordBox = el('div', { class: 'words', role: 'group', 'aria-label': 'Transcript around the clip' });
+  const wordEls = view.words.map((w) => el('button', {
+    type: 'button', class: 'word deva', translate: 'no', title: `${fmt(w.s)}`, text: w.w,
+    onclick: () => { f[pick === 'start' ? 'source_in' : 'source_out'].value = (pick === 'start' ? w.s : w.e).toFixed(2); trimChanged(); },
+  }));
+  wordBox.append(...wordEls);
+  const pickBtn = (which, label) => el('button', { type: 'button', class: 'btn', 'data-pick': which, text: label, 'aria-pressed': which === pick ? 'true' : 'false',
+    onclick: () => { pick = which; for (const b of pickRow.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.pick === pick)); } });
+  const pickRow = el('div', { class: 'row' }, pickBtn('start', 'Click a word to set the start'), pickBtn('end', 'Click a word to set the end'));
+  function trimChanged() {
+    const a = parseFloat(f.source_in.value), b = parseFloat(f.source_out.value);
+    length.textContent = Number.isFinite(a) && Number.isFinite(b) ? `${(b - a).toFixed(1)} s` : '';
+    wordEls.forEach((el_, i) => { const w = view.words[i]; el_.classList.toggle('in', w.s >= a - 0.01 && w.e <= b + 0.01); });
+  }
+  f.source_in.addEventListener('input', trimChanged); f.source_out.addEventListener('input', trimChanged);
+
+  const cap = view.captions;
+  f.cap_enabled = el('input', { id: 'cap_enabled', type: 'checkbox' }); f.cap_enabled.checked = cap.enabled;
+  choose('cap_words', [1, 2, 3, 4, 5, 6, 7, 8].map((n) => [String(n), `${n} word${n > 1 ? 's' : ''} at a time`]), String(cap.max_words));
+  choose('cap_font', view.fonts.map((x) => [x, x]), cap.font_family);
+  f.cap_color = el('input', { id: 'cap_color', type: 'color', value: cap.color });
+  f.cap_hl = el('input', { id: 'cap_hl', type: 'color', value: cap.highlight_color });
+  const capPos = el('output', { text: String(cap.top_px) });
+  f.cap_top = el('input', { id: 'cap_top', type: 'range', min: '0', max: '1800', step: '10', value: String(cap.top_px) });
+  f.cap_top.addEventListener('input', () => { capPos.textContent = f.cap_top.value; });
+
+  choose('framing', [['', `Keep (${{ track: 'face-tracked crop', fit_blur: 'whole frame', cover: 'centre crop', split: 'two people stacked' }[view.framing]})`],
+    ['auto', 'Follow the faces (plan it again)'], ['cover', 'Centre crop'], ['fit_blur', 'Whole frame over a blurred copy']], '');
+  choose('multi', [['switch', 'Cut to whoever is talking'], ['split', 'Stack two people'], ['off', 'Follow one face']], 'switch');
+  const multiField = field('When several people are on screen', f.multi);
+  const syncMulti = () => { multiField.hidden = f.framing.value !== 'auto'; };
+  f.framing.addEventListener('change', syncMulti); syncMulti();
+  f.punch = el('input', { id: 'punch', type: 'checkbox' }); f.punch.checked = view.punch_ins;
+
+  function body() {
+    const out = {};
+    const text = (key, id = key) => { if (f[id].value !== view[key]) out[key] = f[id].value; };
+    text('title'); text('hook'); text('speaker_name'); text('speaker_title'); text('stat');
+    const a = parseFloat(f.source_in.value), b = parseFloat(f.source_out.value);
+    if (Math.abs(a - view.source_in) > 0.001) out.source_in = a;
+    if (Math.abs(b - view.source_out) > 0.001) out.source_out = b;
+    const c = {};
+    if (f.cap_enabled.checked !== cap.enabled) c.enabled = f.cap_enabled.checked;
+    if (Number(f.cap_words.value) !== cap.max_words) c.max_words = Number(f.cap_words.value);
+    if (f.cap_font.value !== cap.font_family) c.font_family = f.cap_font.value;
+    if (f.cap_color.value.toLowerCase() !== cap.color.toLowerCase()) c.color = f.cap_color.value.toUpperCase();
+    if (f.cap_hl.value.toLowerCase() !== cap.highlight_color.toLowerCase()) c.highlight_color = f.cap_hl.value.toUpperCase();
+    if (Number(f.cap_top.value) !== cap.top_px) c.top_px = Number(f.cap_top.value);
+    if (Object.keys(c).length) out.captions = c;
+    if (f.punch.checked !== view.punch_ins) out.punch_ins = f.punch.checked;
+    const drop = [...app.querySelectorAll('[data-drop]')].filter((x) => x.checked).map((x) => x.dataset.drop);
+    if (drop.length) out.drop_pictures = drop;
+    if (f.framing.value) { out.framing = f.framing.value; if (f.framing.value === 'auto') out.multi = f.multi.value; }
+    return out;
+  }
+
+  function showPlayer(r) {
+    if (shownRev === r.rev && player.firstChild) return;
+    shownRev = r.rev;
+    player.replaceChildren(el('video', { controls: true, playsinline: true, preload: 'metadata', src: `/api/jobs/${jobId}/clips/${clipId}/video?v=${r.rev}`, 'aria-label': 'Preview of this clip' }));
+  }
+  function showStatus(r) {
+    if (r.render === 'queued' || r.render === 'rendering') status.textContent = 'Re-rendering with your changes… the video above updates when it is ready.';
+    else if (r.render === 'failed') status.textContent = `The re-render failed: ${r.render_error} Press Save again to retry.`;
+    else status.textContent = '';
+    saveBtn.disabled = r.render === 'queued' || r.render === 'rendering';
+    resetBtn.hidden = !view.edited;
+  }
+  const refresh = async () => {
+    view = await api(base);
+    showPlayer(view.render); showStatus(view.render);
+    return view.render;
+  };
+  async function poll() {
+    if (dead) return;
+    try {
+      const r = await refresh();
+      if (r.render === 'queued' || r.render === 'rendering') { timer = setTimeout(poll, 1500); }
+    } catch (e) { if (e instanceof SignInNeeded) { route(); return; } if (!dead) timer = setTimeout(poll, 3000); }
+  }
+
+  const saveBtn = el('button', { class: 'btn primary', type: 'button', text: 'Save and re-render', onclick: async () => {
+    err.hidden = true;
+    const b = body();
+    if (!Object.keys(b).length) { status.textContent = 'Nothing has changed.'; return; }
+    saveBtn.disabled = true;
+    try {
+      const r = await api(base, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+      status.textContent = r.changed ? 'Saved. Re-rendering…' : 'Nothing has changed.';
+      await refresh();
+      f.framing.value = ''; syncMulti();
+      view.render.render === 'ready' || (clearTimeout(timer), (timer = setTimeout(poll, 1500)));
+    } catch (e) { if (e instanceof SignInNeeded) { route(); return; } err.textContent = e.message; err.hidden = false; saveBtn.disabled = false; }
+  } });
+  const resetBtn = el('button', { class: 'btn', type: 'button', text: 'Reset to the AI plan', hidden: true, onclick: async () => {
+    if (!confirm('Throw away your edits to this clip and go back to the AI plan?')) return;
+    try { await api(`${base}/reset`, { method: 'POST' }); await route(); } catch (e) { err.textContent = e.message; err.hidden = false; }
+  } });
+
+  const group = (title, ...kids) => el('fieldset', { class: 'card group' }, el('legend', { text: title }), ...kids);
+  app.replaceChildren(el('div', { class: 'stack' },
+    el('div', { class: 'row' }, el('div', { class: 'grow' }, el('h1', { text: 'Edit clip' }),
+      el('div', { class: 'small muted', translate: 'no', text: view.title })), el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
+    el('div', { class: 'cols' },
+      el('div', { class: 'stack', style: { gap: '12px' } }, player, status),
+      el('div', { class: 'stack grow', style: { flex: '999 1 420px' } },
+        group('Words on screen', field('Title', f.title), field('Hook line (first seconds)', f.hook, 'Leave empty to remove it.'),
+          el('div', { class: 'grid2', style: { marginTop: 0 } }, field('Speaker name', f.speaker_name), field('Role', f.speaker_title)),
+          field('Stat pill', f.stat, 'A short figure like "10x". Leave empty to remove it.')),
+        group('Cut points', el('div', { class: 'grid2', style: { marginTop: 0 } }, field('Start (seconds)', f.source_in), field('End (seconds)', f.source_out)),
+          length, pickRow, wordBox),
+        group('Captions', el('label', { class: 'check', for: 'cap_enabled' }, f.cap_enabled, el('span', { text: 'Show captions' })),
+          el('div', { class: 'grid2', style: { marginTop: '12px' } }, field('Words per line', f.cap_words), field('Font', f.cap_font),
+            field('Text colour', f.cap_color), field('Highlight colour', f.cap_hl)),
+          el('div', { style: { marginTop: '12px' } }, el('label', { class: 'field', for: 'cap_top' }, 'Height on screen ', capPos, ' px from the top'), f.cap_top)),
+        view.pictures.length > 0 && group('Pictures over the video',
+          ...view.pictures.map((p) => el('label', { class: 'check', for: `drop-${p.id}` },
+            el('input', { type: 'checkbox', id: `drop-${p.id}`, 'data-drop': p.id }),
+            el('span', {}, el('strong', { translate: 'no', text: p.caption || 'Picture' }), ` at ${fmt(p.t || 0)}`, el('br'),
+              el('span', { class: 'muted', text: `${p.ai === 'generated' ? 'AI-generated' : 'Page screenshot'} · tick to remove it` }))))),
+        group('Framing', field('Picture', f.framing), multiField,
+          el('label', { class: 'check', for: 'punch' }, f.punch, el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
+            el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back.' })))),
+        err,
+        el('div', { class: 'row' }, saveBtn, resetBtn)))));
+  trimChanged();
+  showPlayer(view.render); showStatus(view.render);
+  if (view.render.render === 'queued' || view.render.render === 'rendering') timer = setTimeout(poll, 1500);
+  return { cleanup() { dead = true; clearTimeout(timer); } };
+}
+
 // ---- router -----------------------------------------------------------------------------------
 let cleanup = null;
 async function route() {
@@ -389,6 +584,7 @@ async function route() {
     let m;
     if (hash === '#/' || hash === '#' || hash === '#/new') newJobView();
     else if (hash === '#/jobs') await jobsView();
+    else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})$/))) { const v = await clipEditorView(m[1], m[2]); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})$/))) { const v = await jobView(m[1]); cleanup = v.cleanup; }
     else app.replaceChildren(el('div', { class: 'card empty', text: 'Page not found.' }));
     document.title = 'ClipCrow';

@@ -14,6 +14,7 @@ from pathlib import Path
 from ..make import Hooks, MakeResult, make
 from ..planner import PlannerOptions, ReplayLLM, load_transcript
 from .jobs import Job
+from .pipelines import render_one
 
 ROOT = Path(__file__).resolve().parents[2]
 TRANSCRIPT = ROOT / "examples" / "synthetic_talk_mr.whisper.json"
@@ -26,6 +27,9 @@ class DemoPipeline:
         if not TRANSCRIPT.is_file() or not ANSWERS.is_dir():
             return "Demo data not found: demo mode needs a source checkout of ClipCrow."
         return None
+
+    def render_clip(self, job: Job, edl, clip_id: str, out: Path, workdir: Path, media_root: Path) -> list[str]:
+        return render_one(job, edl, clip_id, out, workdir, media_root, ROOT / "vendor" / "gsap.min.js")
 
     def run(self, job: Job, video: Path, out: Path, hooks: Hooks, say) -> MakeResult:
         if job.source.get("duration", 0) < MIN_SECONDS:

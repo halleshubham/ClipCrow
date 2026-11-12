@@ -46,9 +46,31 @@ involvement).
   resolved inside the job's directory; uploads are size-capped, extension-checked and probed; errors shown to the
   browser never contain server internals; strict CSP, no third-party requests, and the UI inserts every job value as
   text (a test guards that). Put it behind TLS if it leaves localhost.
-- **Not built yet**: the clip editor (screen 4 of the mock-up), accounts, retention/cleanup, a job queue across
-  several machines, posting to social platforms.
-- Browser test: `node scripts/e2e_ui.js <video> <dir>` (Playwright, real render, ~4 min).
+- **Clip editor** (the **Edit** button on a finished clip): title, hook, speaker card, a stat, captions (words per
+  line, font, colours, height), cut points (type seconds or click words in the transcript), framing (keep / follow the
+  faces again / centre crop / blurred fit; for several people cut, stack or one face), slow push-ins. **Save and
+  re-render** re-renders only that clip, in the background, while the old video stays playable; **Reset** goes back to
+  the AI's plan. An edit is a closed set of fields (never a raw EDL), the AI's own decisions stay in the record and a
+  person's change is added as a note ("edited by a person: title"). Saving again mid-render renders the latest plan.
+- **Face-to-camera**: *Text behind the speaker* (person matte; the matte is cached per clip window so a text edit
+  re-renders in seconds, and if the matte cannot be made the clip still renders without that effect and says so) and
+  *slow push-ins* (the picture eases in as a sentence begins, then snaps back; timing is code, and the footage, the
+  text behind and the cutout scale together).
+- **Explainer mode** (`--explainer --link URL ... [--ai-images]`, or the checkbox): the model picks, per clip, up to three
+  sentences that deserve a picture and what to show: **a page you linked** (by number from your list, so it cannot
+  invent an address; captured as a screenshot) or, if you allow it, **an AI-generated image**. When and for how long is
+  code (a picture starts at its sentence, away from the hook, with room between). Pictures are made *before* rendering
+  (the render browser never touches the network); one that fails is dropped with a note, never a failed job. Links are
+  checked on submit and again for every request the page makes (public http/https only, standard ports, no credentials,
+  no private/loopback/link-local/CGNAT addresses; known limit: DNS rebinding, so also block private ranges at the
+  network edge). A generated image is a `generated` asset, so the usage record turns the **AI-disclosure recommendation**
+  on by itself, and removing it in the editor turns it off. Screenshots need `pip install 'clipcrow[assets]'` and
+  `playwright install chromium`; images use `GEMINI_API_KEY` (`CLIPCROW_IMAGE_MODEL` to change the model; written to
+  Google's documented image output but **not tried against the live API from the build environment**). AI *video* has an
+  interface (`clipcrow.assets.video`) and **no provider**: nothing asks for generated video until one is registered.
+- **Not built yet**: accounts, retention/cleanup, a job queue across several machines, posting to social platforms.
+- Browser test: `node scripts/e2e_ui.js <video> <dir>` (Playwright, real render and re-render, ~8 min;
+  `JOB_ID=<id>` re-tests the editor on a job that already exists).
 
 ## From a video (`make`)
 ```
@@ -130,15 +152,15 @@ Fonts: install `fonts-noto-core` or set `CLIPCROW_FONT_DIR`. The CLI version is 
    footage (see *Status*), a better face detector (YuNet) behind `FaceDetector`, and voice-based speaker
    identification to complement the mouth-movement signal.
 2. **Service**: FastAPI + job queue + object storage; render workers (GPU for matte/encode).
-3. **UI**: v1 built (new job, job page with live progress, clip review, AI usage); the form editor is next (see below).
-4. **Explainers**: per-beat asset router (HTML chart, AI image, news-link screenshot, AI video).
+3. **UI**: v1 built (new job, job page with live progress, clip review, AI usage) and the form editor (see above); a live preview is next (see below).
+4. **Explainers**: built for news-link screenshots and AI images (see above). Still to do: HTML charts, an AI-video provider, stock footage.
 
 ### UI
 Yes, it is in the plan. Order of build:
 - **v1 job dashboard**: upload or paste a link, choose clip count and look, watch progress, review
   clips, download. No editing.
-- **v1.5 form editor**: per clip, edit caption text, toggle/move overlays, trim in/out. Each change
-  patches the EDL and triggers a **draft render** (`--quality draft`), shown as video. No timeline.
+- **v1.5 form editor** (built): per clip, edit text, captions, framing and cut points. Each change patches the EDL and
+  re-renders that clip, shown as video. No timeline. (A draft-quality quick render is still to do.)
 - **v2 live preview**: load the compiled project in an iframe and drive its seekable timelines,
   for instant scrubbing. Only then consider a timeline editor.
 Caveat: GSAP's licence forbids use in no-code visual animation tools that compete with Webflow. An
@@ -151,7 +173,8 @@ free-form animation), or get the licence position confirmed before building v2.
   across a frame, and the full chain video → reframe → render.
 - **Not verified**: speech recognition with a real Whisper model on real Marathi/Hindi speech (the build
   environment could not download models); the planner against the live Claude API; person matte quality;
-  GPU speed; multi-speaker footage.
+  GPU speed; multi-speaker footage; the matte on real footage (only a synthetic matte is tested: the text really
+  sits behind it and the push scales both, checked on rendered pixels).
 
 ## Licences to keep in mind
 - HyperFrames: Apache-2.0. Pin the version; Chrome build changes pixels.

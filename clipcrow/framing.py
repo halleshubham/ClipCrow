@@ -20,6 +20,8 @@ def apply_framing(edl: EDL, video: str, *, detector: FaceDetector | None = None,
         layout = c.layout.model_copy(update={
             "framing": f.framing, "reframe": [Keyframe(t=t, cx=cx) for t, cx in f.keyframes],
             "split": [SplitPoint(cx=cx, cy=cy) for cx, cy in f.split]})
+        if f.framing in ("split", "fit_blur") and layout.punch_ins:   # a push-in on stacked halves or a blurred fit looks wrong
+            layout = layout.model_copy(update={"punch_ins": []})
         update = {"layout": layout}
         if f.framing == "split":                         # the captions belong on the seam between the two people
             seam = edl.render.height // 2

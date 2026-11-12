@@ -30,6 +30,7 @@ class Hooks:
     stage: Callable[[str, str, str], None] = lambda name, state, detail="": None   # state: running|done|skipped
     clip_ready: Callable[[str, Path], None] = lambda clip_id, path: None
     planned: Callable[[EDL, dict], None] = lambda edl, report: None          # clips chosen and framed
+    clip_notes: Callable[[str, list], None] = lambda clip_id, notes: None    # warnings for a person to read
     cancelled: Callable[[], bool] = lambda: False
 
     def check(self) -> None:
@@ -51,7 +52,7 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
          detector=None, render: bool = True, gsap_js: str | Path | None = None, workers: int | None = None,
          transcribe_fn: Callable | None = None, render_fn: Callable | None = None,
          say: Callable[[str], None] = lambda _m: None, hooks: Hooks | None = None,
-         multi: str = "switch") -> MakeResult:
+         multi: str = "switch", images=None, capture_fn=None) -> MakeResult:
     video, out = Path(video), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     report: dict = {}
@@ -94,6 +95,18 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
         hk.stage("plan", "done", f"{len(edl.clips)} clip(s)")
 
     hk.check()
+    pending = [a for a in edl.assets if not a.uri and a.origin in ("capture", "ai_image")]
+    if pending:
+        from .assets.fetch import fetch_assets
+        hk.stage("assets", "running", f"{len(pending)} picture(s)")
+        kw = {"capture_fn": capture_fn} if capture_fn else {}
+        edl, warns = fetch_assets(edl, out, images=images, say=say, **kw)
+        for w in warns:
+            say(w)
+        hk.stage("assets", "done", f"{sum(1 for a in edl.assets if a.uri)} of {len(pending)} picture(s) made")
+    else:
+        hk.stage("assets", "skipped", "no pictures requested")
+    hk.check()
     hk.stage("frame", "running", "")
     edl = apply_framing(edl, str(video), detector=detector, say=say, multi=multi)
     hk.stage("frame", "done", ", ".join(f"{c.id}: {c.layout.framing}" for c in edl.clips))
@@ -110,8 +123,11 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
         for i, c in enumerate(edl.clips):
             hk.check()
             say(f"rendering {c.id}")
-            mp4, _ = render_fn(edl, c.id, out / f"{c.id}.mp4", workdir=out / "work", media_root=video.parent,
-                               gsap_js=gsap_js, workers=workers)
+            mp4, compiled = render_fn(edl, c.id, out / f"{c.id}.mp4", workdir=out / "work", media_root=video.parent,
+                                      gsap_js=gsap_js, workers=workers, asset_root=out)
+            for w in getattr(compiled, "warnings", None) or []:
+                say(f"{c.id}: {w}")
+            hk.clip_notes(c.id, list(getattr(compiled, "warnings", None) or []))
             res.videos.append(Path(mp4))
             hk.clip_ready(c.id, Path(mp4))
             hk.stage("render", "running", f"{i + 1} of {len(edl.clips)}")

@@ -21,6 +21,7 @@ def provenance(edl: EDL, clip: Clip) -> dict:
     return {
         "clip": clip.id,
         "ai_decided": clip.ai.decided if clip.ai else [],
+        "notes": clip.ai.notes if clip.ai else [],         # e.g. "edited by a person: title", "text behind skipped"
         "ai_assets": {
             "generated": [a.model_dump(exclude_defaults=True) for a in generated],
             "processed": [a.model_dump(exclude_defaults=True) for a in processed],

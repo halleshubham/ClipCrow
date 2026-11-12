@@ -78,3 +78,30 @@ screen (e.g. "10x" or "₹50,000").
 def repair_suffix(language: str) -> str:
     return ("\n\nYour previous answer wrote text in the wrong script. Rewrite title, hook_text and stat text. "
             + language_instruction(language))
+
+
+def beats_prompt(sentences: list[Sentence], links: list[str], *, allow_images: bool, language: str,
+                 max_beats: int) -> str:
+    text = "\n".join(fmt_sentence(s) for s in sentences)
+    shown = "\n".join(f"[L{i}] {u[:160]}" for i, u in enumerate(links)) or "(none)"
+    kinds = '"screenshot" (show a page from the link list), ' + ('"image" (a generated picture), ' if allow_images else "") + '"none"'
+    image_rule = ("- prompt: for kind image only: one plain sentence describing the picture (a scene, object or diagram "
+                  "idea). No real people, no brands, no text in the picture, at most 200 characters.\n" if allow_images else "")
+    return f"""This clip is an explainer. Choose up to {max_beats} moments where a picture would help the viewer \
+understand what is being said, and say what to show.
+
+Each beat is one sentence id (as in [S12]) plus:
+- kind: {kinds}. Use "none" when nothing should be shown.
+- link: for kind screenshot only: the number of the link (as in [L1]) that matches what the sentence talks about. \
+Use only the links listed; never invent an address.
+{image_rule}- caption: at most 6 words naming what is shown, or empty.
+Prefer sentences that name a thing, a number or a place. Skip the first and last sentence. Fewer, better beats.
+{language_instruction(language)}
+
+<links>
+{shown}
+</links>
+
+<transcript>
+{text}
+</transcript>"""
