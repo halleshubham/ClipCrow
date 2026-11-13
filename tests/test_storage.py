@@ -13,7 +13,6 @@ pytest.importorskip("fastapi")
 boto3 = pytest.importorskip("boto3")
 pytest.importorskip("moto")
 from fastapi.testclient import TestClient
-from moto.server import ThreadedMotoServer
 
 from clipcrow.service.accounts import Accounts
 from clipcrow.service.api import create_app
@@ -25,28 +24,6 @@ from tests.test_service import FakePipeline, upload, video_bytes, wait  # noqa: 
 
 PW = "correct horse battery"
 JOB = "0123456789ab"
-
-
-@pytest.fixture(scope="module")
-def endpoint():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    server = ThreadedMotoServer(port=port, verbose=False)
-    server.start()
-    yield f"http://127.0.0.1:{port}"
-    server.stop()
-
-
-_n = [0]
-
-
-@pytest.fixture
-def storage(endpoint):
-    _n[0] += 1
-    bucket = f"bucket-{_n[0]}-{int(time.time())}"
-    boto3.client("s3", endpoint_url=endpoint, region_name="us-east-1", aws_access_key_id="k", aws_secret_access_key="s").create_bucket(Bucket=bucket)  # the app itself uses region "auto"
-    return S3Storage(bucket, endpoint=endpoint, access_key="k", secret_key="s", prefix="cc")
 
 
 def objects(st):

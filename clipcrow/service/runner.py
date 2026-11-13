@@ -15,11 +15,12 @@ from ..planner.llm import LLMError
 from ..planner.plan import PlanError
 from ..planner.transcript import TranscriptError
 from ..render import RenderError
+from .storage import StorageError
 from .jobs import ClipInfo, Job, JobStore, LeftOut
 
 log = logging.getLogger("clipcrow.service")
 # Errors whose message is written for a person (bad input, no speech, a model refusal, a failed render).
-EXPECTED = (EDLError, PlanError, TranscriptError, LLMError, RenderError, ValueError)
+EXPECTED = (EDLError, PlanError, TranscriptError, LLMError, RenderError, StorageError, ValueError)
 
 
 class Pipeline(Protocol):
@@ -49,6 +50,7 @@ class JobRunner:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-job")
         self.on_finish = None                                      # called with the job once it is done, failed or cancelled
         self.on_change = None                                      # called with a job id when its files changed (to mirror them)
+        self.storage = None                                        # object storage, for jobs whose upload went straight to it
         self._cond = threading.Condition()
         self._active = 0                                           # tasks (jobs and clip re-renders) running right now
         self._draining = False
@@ -89,6 +91,20 @@ class JobRunner:
             self.store.save(job)
             self._finished(job)
         return True
+
+    def _fetch_source(self, job: Job, say, hooks) -> None:
+        from .storage import signature
+        if self.storage is None:
+            raise ValueError("this job's video is in object storage, which is not configured on this server")
+        rel = job.source_pending
+        dest = self.store.dir(job.id) / rel
+        say("fetching your upload from storage")
+        hooks.check()
+        self.storage.get_file(job.id, rel, dest)               # StorageError is an EXPECTED error: its message is shown
+        sig = signature(dest)                                  # identical to the bucket copy, so the mirror does not upload it again
+        job.source_pending = None
+        job.remote[rel] = sig
+        self.store.save(job)
 
     def _changed(self, job_id: str) -> None:
         if self.on_change:
@@ -187,8 +203,10 @@ class JobRunner:
             store.save(job)
 
         hooks = Hooks(stage=stage, clip_ready=clip_ready, planned=planned, clip_notes=clip_notes, cancelled=ev.is_set)
-        src = store.source_path(job_id)
         try:
+            if job.source_pending:                              # a direct upload: the original is in the bucket, fetch it first
+                self._fetch_source(job, say, hooks)
+            src = store.source_path(job_id)
             if src is None:
                 raise ValueError("the uploaded video is missing")
             self.pipeline.run(job, src, store.dir(job_id) / "out", hooks, say)

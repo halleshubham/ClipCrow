@@ -202,6 +202,119 @@ async function renderBilling(box) {
   box.replaceChildren(el('section', { class: 'card stack' }, ...parts, err));
 }
 
+// ---- uploads ----------------------------------------------------------------------------------------
+
+// The ordinary way: the file goes through this server (and any proxy in front of it, with its own size limit).
+function classicUpload(file, options, show) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('rights', 'true');
+    for (const [k, v] of Object.entries(options)) fd.append(k, v);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/jobs');
+    xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) show(ev.loaded, ev.total); };
+    xhr.onload = () => {
+      let body = {};
+      try { body = JSON.parse(xhr.responseText); } catch (_) { /* not JSON */ }
+      if (xhr.status === 201) return resolve(body);
+      if (xhr.status === 401) { state.config.signed_in = false; return reject(new SignInNeeded('Sign in first.')); }
+      const d = body.detail;
+      reject(new Error(Array.isArray(d) ? d.map((x) => x.msg).join('; ') : d || 'The upload failed.'));
+    };
+    xhr.onerror = () => reject(new Error('The upload could not reach the server.'));
+    xhr.send(fd);
+  });
+}
+
+// The direct way (when the server has object storage): the browser sends the file to the bucket in parts, in parallel,
+// each retried on its own, and then tells this server it is done. The bytes never pass through this site's proxy.
+const PART_PARALLEL = 3;
+const PART_RETRIES = 3;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+class DirectUpload {
+  constructor(file, options, show) {
+    this.file = file; this.options = options; this.show = show;
+    this.cancelled = false; this.xhrs = new Set(); this.id = null;
+  }
+
+  put(url, blob, onLoaded) {
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      this.xhrs.add(x);
+      x.open('PUT', url);
+      x.upload.onprogress = (ev) => onLoaded(ev.loaded);
+      x.onload = () => {
+        this.xhrs.delete(x);
+        if (x.status >= 200 && x.status < 300) {
+          const etag = x.getResponseHeader('ETag');
+          if (etag) return resolve(etag);
+          const e = new Error('The browser could not read the storage service\'s answer. The bucket needs a CORS rule for this site: ask whoever runs the server to run "clipcrow r2-cors".');
+          e.kind = 'cors';
+          return reject(e);
+        }
+        const e = new Error(`The storage service refused part of the upload (${x.status}).`);
+        e.kind = 'status';
+        reject(e);
+      };
+      x.onerror = () => {
+        this.xhrs.delete(x);
+        const e = new Error('The upload to storage was interrupted. Check your connection and try again. If it keeps failing, the bucket may be missing its CORS rule for this site.');
+        e.kind = 'network';
+        reject(e);
+      };
+      x.onabort = () => { this.xhrs.delete(x); const e = new Error('cancelled'); e.cancelled = true; reject(e); };
+      x.send(blob);
+    });
+  }
+
+  cancel() {
+    this.cancelled = true;
+    for (const x of this.xhrs) x.abort();
+    if (this.id) api(`/uploads/${this.id}`, { method: 'DELETE' }).catch(() => { /* the server expires it anyway */ });
+  }
+
+  async run() {
+    const json = { 'Content-Type': 'application/json' };
+    const start = await api('/uploads', { method: 'POST', headers: json, body: JSON.stringify({ filename: this.file.name, size: this.file.size, rights: true }) });
+    this.id = start.id;
+    const n = start.parts.length;
+    const loaded = new Array(n).fill(0);
+    const etags = new Array(n);
+    const total = this.file.size;
+    const report = () => this.show(loaded.reduce((a, b) => a + b, 0), total);
+    let next = 0, failure = null;
+    const worker = async () => {
+      while (failure === null && !this.cancelled) {
+        const i = next++;
+        if (i >= n) return;
+        const part = start.parts[i];
+        const blob = this.file.slice(i * start.part_size, i * start.part_size + part.length);
+        for (let attempt = 0; ; attempt++) {
+          try {
+            etags[i] = await this.put(part.url, blob, (b) => { loaded[i] = b; report(); });
+            loaded[i] = part.length; report();
+            break;
+          } catch (e) {
+            loaded[i] = 0;
+            if (e.cancelled || e.kind === 'cors' || attempt >= PART_RETRIES) { failure = e; return; }
+            await sleep(1000 * 2 ** attempt);
+          }
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PART_PARALLEL, n) }, worker));
+    if (this.cancelled) { const e = new Error('cancelled'); e.cancelled = true; throw e; }
+    if (failure) {
+      api(`/uploads/${this.id}`, { method: 'DELETE' }).catch(() => { /* expires on its own */ });
+      throw failure;
+    }
+    this.show(total, total);
+    return api(`/uploads/${this.id}/complete`, { method: 'POST', headers: json, body: JSON.stringify({ parts: etags.map((etag, i) => ({ n: i + 1, etag })), options: this.options }) });
+  }
+}
+
 function newJobView() {
   const c = state.config;
   let file = null;
@@ -237,51 +350,50 @@ function newJobView() {
   const status = el('span', { class: 'small muted', 'aria-live': 'polite' });
   const rights = el('input', { type: 'checkbox', id: 'rights' });
   const submit = el('button', { class: 'btn primary', type: 'submit', text: 'Generate clips' });
+  const cancelBtn = el('button', { class: 'btn', type: 'button', text: 'Cancel upload', hidden: true });
 
-  const form = el('form', { class: 'card', novalidate: true, onsubmit: (e) => {
+  const form = el('form', { class: 'card', novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
     err.hidden = true;
-    const fail = (m) => { err.textContent = m; err.hidden = false; submit.disabled = false; progress.hidden = true; };
+    const fail = (m) => { err.textContent = m; err.hidden = false; submit.disabled = false; cancelBtn.hidden = true; progress.hidden = true; status.textContent = ''; };
     if (!file) return fail('Choose a video first.');
     if (file.size > c.max_upload_mb * 1048576) return fail(`That file is larger than the ${c.max_upload_mb} MB limit.`);
     if (!rights.checked) return fail('Confirm that you own this video or have the rights to process it.');
     const [minClip, maxClip] = $('length').value.split('-');
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('rights', 'true');
-    fd.append('language', $('language').value);
-    fd.append('clips', $('clips').value);
-    fd.append('min_clip', minClip);
-    fd.append('max_clip', maxClip);
-    fd.append('spread', $('spread').value);
-    fd.append('multi', $('multi').value);
-    fd.append('speaker_name', $('speaker').value);
-    fd.append('speaker_title', $('role').value);
-    fd.append('cutout', $('cutout').checked ? 'true' : '');
-    fd.append('immersive', $('immersive').checked ? 'true' : '');
-    fd.append('explainer', $('explainer').checked ? 'true' : '');
-    fd.append('links', $('links').value);
-    fd.append('ai_images', $('ai_images').checked ? 'true' : '');
+    const options = {
+      language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
+      multi: $('multi').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
+      cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
+      explainer: $('explainer').checked ? 'true' : '', links: $('links').value, ai_images: $('ai_images').checked ? 'true' : '',
+    };
     submit.disabled = true;
     progress.hidden = false;
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/jobs');
-    xhr.upload.onprogress = (ev) => {
-      if (!ev.lengthComputable) return;
-      const p = Math.round((ev.loaded / ev.total) * 100);
-      bar.style.width = `${p}%`;
-      status.textContent = p < 100 ? `Uploading ${p}%` : 'Starting…';
+    bar.style.width = '0%';
+    const show = (done, total) => {
+      bar.style.width = `${Math.round((done / total) * 100)}%`;
+      status.textContent = done >= total ? 'Starting…' : `Uploading ${Math.round((done / total) * 100)}% (${(done / 1048576).toFixed(0)} of ${(total / 1048576).toFixed(0)} MB)`;
     };
-    xhr.onload = () => {
-      let body = {};
-      try { body = JSON.parse(xhr.responseText); } catch (_) { /* not JSON */ }
-      if (xhr.status === 201) { location.hash = `#/jobs/${body.id}`; return; }
-      if (xhr.status === 401) { state.config.signed_in = false; route(); return; }
-      const d = body.detail;
-      fail(Array.isArray(d) ? d.map((x) => x.msg).join('; ') : d || 'The upload failed.');
-    };
-    xhr.onerror = () => fail('The upload could not reach the server.');
-    xhr.send(fd);
+    try {
+      let job;
+      if (c.direct_upload) {
+        const up = new DirectUpload(file, options, show);
+        cancelBtn.hidden = false;
+        cancelBtn.onclick = () => { up.cancel(); fail('Upload cancelled.'); };
+        try {
+          job = await up.run();
+        } catch (ex) {
+          // a file small enough for the proxy in front of this site can still go the ordinary way
+          if (ex.kind === 'network' && file.size <= 90 * 1048576 && !up.cancelled) job = await classicUpload(file, options, show);
+          else throw ex;
+        }
+      } else {
+        job = await classicUpload(file, options, show);
+      }
+      location.hash = `#/jobs/${job.id}`;
+    } catch (ex) {
+      if (ex instanceof SignInNeeded) { route(); return; }
+      if (!(ex.cancelled)) fail(ex.message || 'The upload failed.');
+    }
   } },
     el('h1', { text: 'New job' }),
     el('p', { class: 'lead', text: "Turn one long video into short vertical clips, with captions in the speaker's language." }),
@@ -319,7 +431,7 @@ function newJobView() {
     el('label', { class: 'row small muted', for: 'rights', style: { marginTop: '24px', alignItems: 'flex-start', flexWrap: 'nowrap' } }, rights,
       el('span', { text: 'I own this video or have the rights to process it.' })),
     err,
-    el('div', { class: 'row', style: { marginTop: '24px' } }, submit, status),
+    el('div', { class: 'row', style: { marginTop: '24px' } }, submit, cancelBtn, status),
     progress);
   const $ = (id) => form.querySelector('#' + id);
   $('explainer').addEventListener('change', () => { $('explainer-opts').hidden = !$('explainer').checked; });

@@ -109,6 +109,17 @@ involvement).
   copies first and aborts if that fails**; retention does the same and retries next hour. R2 specifics handled: region
   `auto`, SigV4, path-style addressing, and checksums sent only when required (newer boto3 sends CRC32 by default, which R2
   rejects). Tested against an S3-compatible server (moto), not against live R2 (no credentials in the build environment).
+- **Direct upload to R2** (on whenever object storage is configured; `CLIPCROW_DIRECT_UPLOAD=0` turns it off): the browser sends
+  the video **straight to the bucket** in 64 MB parts (3 in parallel, each retried on its own, with a cancel button), so the
+  bytes never pass through your domain and a proxy's request-size limit (Cloudflare's 100 MB) no longer applies. The server
+  hands out presigned part URLs that **sign each part's exact length** (nobody can store more than they announced), checks
+  the finished object is exactly the announced size, reads its duration from the bucket by range requests (a 4 GB upload is
+  never downloaded just to be probed), then creates the job, whose runner fetches the file before processing. Abandoned uploads
+  are aborted and removed after 24 hours; at most 3 may be open at once. **The bucket needs a CORS rule** for your site: run
+  `clipcrow r2-cors --origin https://your-site` (a token allowed to change bucket settings) or paste the rule from
+  `docs/deploy.md`. If the bucket cannot be reached from the browser, a file under 90 MB falls back to the ordinary upload;
+  if it is reachable but the rule does not expose `ETag`, the page says so. Tested with an S3-compatible server and a real
+  browser; **not tried against live R2**.
 - **Not built yet**: email verification and password reset, per-user SocioBird keys, a job queue across several machines,
   a live preview and a timeline editor.
 - Browser tests: `node scripts/e2e_ui.js <video> <dir>` (Playwright, real render and re-render, ~8 min; `JOB_ID=<id>`

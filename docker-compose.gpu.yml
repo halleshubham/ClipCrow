@@ -37,6 +37,8 @@ services:
       - CLIPCROW_R2_BACKUP_SOURCE=${CLIPCROW_R2_BACKUP_SOURCE:-}
       - CLIPCROW_R2_REDIRECT=${CLIPCROW_R2_REDIRECT:-}
       - CLIPCROW_LOCAL_CLIP_DAYS=${CLIPCROW_LOCAL_CLIP_DAYS:-}
+      - CLIPCROW_DIRECT_UPLOAD=${CLIPCROW_DIRECT_UPLOAD:-}        # 0 = send uploads through the server instead of straight to R2
+      - CLIPCROW_UPLOAD_PART_MB=${CLIPCROW_UPLOAD_PART_MB:-}      # part size for direct uploads (default 64; smaller retries faster on a bad connection)
       # --- retention without accounts (0 = keep for ever)
       - CLIPCROW_RETENTION_DAYS=${CLIPCROW_RETENTION_DAYS:-}
       - CLIPCROW_SOURCE_DAYS=${CLIPCROW_SOURCE_DAYS:-}

@@ -3,7 +3,7 @@ import pytest
 
 from clipcrow.cli import main
 
-COMMANDS = ["schema", "validate", "compile", "render", "plan", "make", "transcribe", "usage", "serve", "selftest"]
+COMMANDS = ["schema", "validate", "compile", "render", "plan", "make", "transcribe", "usage", "serve", "selftest", "r2-cors"]
 
 
 @pytest.mark.parametrize("cmd", COMMANDS)
@@ -45,3 +45,16 @@ def test_selftest_reports_each_missing_tool_and_fails(monkeypatch, capsys):
     assert main(["selftest", "--no-render"]) == 1
     out = capsys.readouterr().out
     assert "FAIL  ffmpeg: ffmpeg is not installed" in out and "FAIL  ffprobe" in out
+
+
+def test_r2_cors_needs_the_storage_settings_and_shows_or_sets_the_rule(monkeypatch, capsys, storage):
+    for k in ("R2_ACCOUNT_ID", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
+        monkeypatch.delenv(k, raising=False)
+    assert main(["r2-cors", "--show"]) != 0 and "R2_BUCKET" in capsys.readouterr().err
+    monkeypatch.setenv("R2_ENDPOINT", storage.endpoint); monkeypatch.setenv("R2_ACCESS_KEY_ID", "k")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "s"); monkeypatch.setenv("R2_BUCKET", storage.bucket)
+    assert main(["r2-cors", "--show"]) == 0 and capsys.readouterr().out.strip() == "[]"
+    assert main(["r2-cors", "--origin", "https://clips.example.com"]) == 0
+    assert "https://clips.example.com" in capsys.readouterr().out
+    assert storage.get_cors()[0]["AllowedOrigins"] == ["https://clips.example.com"]
+    assert main(["r2-cors", "--origin", "*"]) != 0                                  # a wildcard origin is refused

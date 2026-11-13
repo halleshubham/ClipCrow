@@ -111,6 +111,74 @@ class S3Storage:
         except Exception as e:                                              # botocore raises many types; all become one
             raise self._fail("upload", e) from None
 
+    # --- direct upload from the browser (S3 multipart with presigned part URLs) ------------------------
+    # The browser PUTs the file's parts straight to the bucket, so the bytes never pass through the app's own domain (and
+    # whatever proxy sits in front of it, with its request-size limit). Every part URL signs its exact Content-Length, so
+    # a person cannot use a URL to store more than the size they announced.
+
+    def create_multipart(self, job_id: str, rel: str) -> str:
+        ctype = CONTENT_TYPES.get(Path(rel).suffix.lower(), "application/octet-stream")
+        try:
+            return self.client.create_multipart_upload(Bucket=self.bucket, Key=self.key(job_id, rel), ContentType=ctype)["UploadId"]
+        except Exception as e:
+            raise self._fail("start upload", e) from None
+
+    def presign_part(self, job_id: str, rel: str, upload_id: str, number: int, length: int, *, expires: int = 3600) -> str:
+        try:
+            return self.client.generate_presigned_url(
+                "upload_part", ExpiresIn=max(60, min(expires, 6 * 3600)),
+                Params={"Bucket": self.bucket, "Key": self.key(job_id, rel), "UploadId": upload_id,
+                        "PartNumber": number, "ContentLength": length})
+        except Exception as e:
+            raise self._fail("presign part", e) from None
+
+    def complete_multipart(self, job_id: str, rel: str, upload_id: str, parts: list[tuple[int, str]]) -> None:
+        try:
+            self.client.complete_multipart_upload(
+                Bucket=self.bucket, Key=self.key(job_id, rel), UploadId=upload_id,
+                MultipartUpload={"Parts": [{"PartNumber": n, "ETag": e} for n, e in sorted(parts)]})
+        except Exception as e:
+            raise self._fail("finish upload", e) from None
+
+    def abort_multipart(self, job_id: str, rel: str, upload_id: str) -> None:
+        try:
+            self.client.abort_multipart_upload(Bucket=self.bucket, Key=self.key(job_id, rel), UploadId=upload_id)
+        except Exception as e:
+            if getattr(e, "response", {}).get("Error", {}).get("Code") in ("NoSuchUpload", "404"):
+                return                                           # already gone: that is what we wanted
+            raise self._fail("abort upload", e) from None
+
+    def size(self, job_id: str, rel: str) -> Optional[int]:
+        try:
+            return int(self.client.head_object(Bucket=self.bucket, Key=self.key(job_id, rel))["ContentLength"])
+        except Exception as e:
+            if getattr(e, "response", {}).get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+                return None
+            raise self._fail("head", e) from None
+
+    # --- the bucket's CORS rule (the browser needs it to PUT parts and to read each part's ETag) ------------
+    def cors_rule(self, origins: list[str]) -> dict:
+        return {"CORSRules": [{"AllowedOrigins": origins, "AllowedMethods": ["PUT", "GET", "HEAD"], "AllowedHeaders": ["*"],
+                               "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3600}]}
+
+    def set_cors(self, origins: list[str]) -> None:
+        for o in origins:
+            u = urlsplit(o)
+            if u.scheme not in ("https", "http") or not u.netloc or u.path not in ("", "/") or "*" in o:
+                raise ValueError(f"{o!r} is not an origin like https://app.example.com")
+        try:
+            self.client.put_bucket_cors(Bucket=self.bucket, CORSConfiguration=self.cors_rule([o.rstrip("/") for o in origins]))
+        except Exception as e:
+            raise self._fail("set CORS", e) from None
+
+    def get_cors(self) -> list[dict]:
+        try:
+            return self.client.get_bucket_cors(Bucket=self.bucket).get("CORSRules", [])
+        except Exception as e:
+            if getattr(e, "response", {}).get("Error", {}).get("Code") in ("NoSuchCORSConfiguration", "404"):
+                return []
+            raise self._fail("read CORS", e) from None
+
     def get_file(self, job_id: str, rel: str, dest: Path) -> None:
         tmp = dest.with_name(dest.name + ".part")
         try:

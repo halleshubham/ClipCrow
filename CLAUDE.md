@@ -58,6 +58,11 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   purges the bucket FIRST and aborts/retries if that fails. A clip is served from the bucket only when the local file is
   missing or (redirect mode) byte-identical (`storage.signature`). Presigned links live at most an hour; the bucket is
   never public.
+- Direct upload: the part URLs MUST sign `ContentLength` (so a URL cannot store more than announced); the finished object's size
+  must equal the announced size; the upload id IS the job id (the object lands at `jobs/<id>/source.<ext>`); options are validated
+  BEFORE the multipart upload is completed; the source is probed by presigned URL, never by a person-supplied one; abandoned
+  uploads expire after 24 h. The CSP `connect-src` gets the bucket origin only when direct upload is on. A part PUT from a
+  test must send `Content-Type: application/octet-stream` (urllib's default form type breaks the S3 test server).
 - Container: the image is built by `image.yml` and smoke-tested by `scripts/smoke_image.sh` (a real render inside it); FFmpeg,
   fonts and GSAP come from the same scripts CI uses. `DRAIN_TIMEOUT_SECONDS` + the 20 s server wait must stay below the
   compose `stop_grace_period`. A drained job is requeued, never marked failed or refunded. The HyperFrames pin in the
