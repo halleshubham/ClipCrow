@@ -49,6 +49,7 @@ class WordyPipeline(FakePipeline):
 
 def m(**kw):
     base = dict(duration=30.0, cuts=10, cuts_per_minute=20.0, median_shot_seconds=2.0, words_per_minute=150.0)
+
     return Measurements(**{**base, **kw})
 
 
@@ -302,3 +303,128 @@ def test_restart_marks_an_interrupted_measuring_as_failed(tmp_path):
     c, _ = client(tmp_path, WordyPipeline())
     (s,) = c.get("/api/styles").json()
     assert s["status"] == "failed" and "restarted" in s["error"]
+
+
+# --- phase 2: the caption look, read from frames ------------------------------------------------------------------------
+
+from clipcrow.planner.llm import FakeLLM, LLMError                                   # noqa: E402
+from clipcrow.styles_look import BANDS, CaptionLook, family_for, grab_frames, read_look, size_scale  # noqa: E402
+
+LOOK = {"present": True, "band": "middle", "size": 7.5, "words_per_line": 3, "color": "#00FF00",
+        "highlight_color": "#FF00FF", "uppercase": True, "face": "heavy sans", "note": "one word pops per beat"}
+
+
+def look_llm(answer=None, calls=None):
+    def respond(purpose, user, schema):
+        if calls is not None:
+            calls.append((purpose, user))
+        if isinstance(answer, Exception):
+            raise answer
+        return schema.model_validate(answer if answer is not None else LOOK)
+    return FakeLLM(respond)
+
+
+def test_the_model_may_only_say_bounded_things_and_bad_colours_are_dropped():
+    with pytest.raises(Exception):
+        CaptionLook(band="diagonal")
+    with pytest.raises(Exception):
+        CaptionLook(size=40)
+    with pytest.raises(Exception):
+        CaptionLook(face="comic sans")
+    with pytest.raises(Exception):
+        CaptionLook(trust_me="rm -rf")
+    c = CaptionLook(present=True, color="yellow; }</style><script>x()</script>", highlight_color="#ABCDEF").clean()
+    assert c.color is None and c.highlight_color == "#ABCDEF"
+    with pytest.raises(Exception):
+        CaptionLook(note="x" * 201)                                      # the note is bounded before clean() ever runs
+    assert CaptionLook(note="a  b\n\nc").clean().note == "a b c"
+
+
+def test_a_described_face_maps_to_a_font_we_ship_and_devanagari_keeps_its_own():
+    assert family_for("heavy sans", False) == ("Noto Sans", 700)
+    assert family_for("serif", False) == ("Noto Serif", 700)
+    assert family_for("heavy sans", True) == ("Noto Sans Devanagari", 700)
+    assert family_for("serif", True)[0] == "Noto Serif Devanagari"
+    assert family_for("whatever the model said", False)[0] == "Noto Serif Devanagari"
+
+
+def test_size_is_a_clamped_multiplier():
+    assert size_scale(5.0) == 1.0 and size_scale(None) == 1.0
+    assert size_scale(100) == 1.6 and size_scale(0.5) == 0.6 and size_scale(7.5) == 1.5
+
+
+def test_reading_the_look_sends_frames_and_returns_a_clean_answer(tmp_path):
+    p = cutting_video(tmp_path / "r.mp4")
+    calls = []
+    got = read_look(p, 20.0, look_llm(calls=calls))
+    assert got.present and got.band == "middle" and got.color == "#00FF00" and got.uppercase
+    (purpose, content), = calls
+    assert purpose == "style:captions"
+    assert sum(1 for b in content if b["type"] == "image") >= 4 and content[-1]["type"] == "text"
+    assert all(b["source"]["media_type"] == "image/jpeg" for b in content if b["type"] == "image")
+
+
+def test_grab_frames_reads_the_middle_of_the_video(tmp_path):
+    frames = grab_frames(cutting_video(tmp_path / "r.mp4"), 20.0, n=4)
+    assert len(frames) == 4 and all(f[:2] == b"\xff\xd8" for f in frames)       # JPEGs
+    assert len(set(frames)) > 1                                                 # different moments, different pictures
+
+
+def test_the_look_becomes_bounded_settings_and_the_words_seen_beat_the_speech_rate():
+    s = derive(m(words_per_minute=200, look=LOOK))
+    assert s.captions.from_reference and s.captions.top_px == BANDS["middle"]
+    assert s.captions.size_scale == 1.5 and s.captions.uppercase and s.captions.color == "#00FF00"
+    assert s.caption_max_words == 3                                             # 3 words seen, not 5 from fast speech
+    plain = derive(m(words_per_minute=200, look={"present": False}))
+    assert not plain.captions.from_reference and plain.captions.color == "#FFFFFF" and plain.caption_max_words == 5
+    half = derive(m(look={"present": True, "band": "nonsense", "color": None}))
+    assert half.captions.top_px == BANDS["lower"] and half.captions.color == "#FFFFFF"
+
+
+def test_measuring_survives_a_model_that_will_not_answer(tmp_path):
+    def boom(path, duration):
+        raise LLMError("declined")
+    r = measure(cutting_video(tmp_path / "r.mp4"), read_look=boom)
+    assert r.look is None and r.cuts == 4 and any("caption look" in n for n in r.notes)
+    assert not derive(r).captions.from_reference
+    none = measure(cutting_video(tmp_path / "n.mp4"), read_look=lambda p, d: {"present": False})
+    assert any("No captions were visible" in n for n in none.notes)
+
+
+def test_the_breakdown_is_plain_readable_text(tmp_path):
+    r = measure(cutting_video(tmp_path / "r.mp4"), count_words=lambda p: 60, read_look=lambda p, d: LOOK)
+    text = r.breakdown
+    assert "cuts" in text and "words a minute" in text and "Captions sit in the middle" in text
+    assert "one word pops per beat" in text and "<" not in text
+    assert r.view()["breakdown"] == text
+
+
+class LookPipeline(WordyPipeline):
+    look = LOOK
+
+    def reference_look(self, path, duration):
+        return read_look(path, duration, look_llm(self.look)).model_dump()
+
+
+def test_the_caption_look_reaches_the_edl(tmp_path, ref_bytes, video_bytes):
+    c, _ = client(tmp_path, LookPipeline())
+    sid = make_style(c, ref_bytes)["id"]
+    s = wait_style(c, sid)
+    assert s["settings"]["captions"]["from_reference"] and s["measured"]["look"]["band"] == "middle"
+    assert "Captions sit in the middle" in s["measured"]["breakdown"]
+    r = c.post("/api/jobs", data={"rights": "true", "style": sid, "clips": "2"}, files={"file": ("ep.mp4", video_bytes, "video/mp4")})
+    assert wait(c, r.json()["id"])["status"] == "done"
+    caps = [cl["captions"] for cl in edl_of(tmp_path, r.json()["id"])["clips"]]
+    assert caps and all(x["top_px"] == BANDS["middle"] and x["size_scale"] == 1.5 and x["color"] == "#00FF00"
+                        and x["highlight_color"] == "#FF00FF" for x in caps)
+
+
+def test_devanagari_keeps_its_font_and_never_goes_uppercase(tmp_path, ref_bytes, video_bytes):
+    c, _ = client(tmp_path, LookPipeline())           # the fake transcript is Marathi (tests/test_service.py)
+    sid = make_style(c, ref_bytes)["id"]
+    wait_style(c, sid)
+    r = c.post("/api/jobs", data={"rights": "true", "style": sid, "clips": "2"}, files={"file": ("ep.mp4", video_bytes, "video/mp4")})
+    assert wait(c, r.json()["id"])["status"] == "done"
+    for cl in edl_of(tmp_path, r.json()["id"])["clips"]:
+        assert cl["captions"]["font_family"] in ("Noto Sans Devanagari", "Noto Serif Devanagari")
+        assert cl["captions"]["uppercase"] is False

@@ -75,7 +75,12 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   scoping as the brand kit, ids strict hex ending in `\Z`), is erased with the account, at most 10 per account, one measuring at a
   time. A job COPIES the settings (`Params.style`), so editing or deleting a style never changes work already made; an explicit clip
   length from the person beats the style's. Timing stays in code: `punch.plan_punch_ins` takes `min_gap`/`max_per_clip`, its defaults
-  must stay equal to the module constants (replay tests depend on them). Caption look from frames is Phase 2 (not built).
+  must stay equal to the module constants (replay tests depend on them).
+- The caption LOOK (`styles_look.py`) is the one place a model looks at pixels: one vision call over a few sampled frames returns
+  `CaptionLook`, a closed bounded schema, and `clean()` drops any colour that is not `#RRGGBB`. A font is never taken from the model:
+  it names a look and `family_for` maps it to a family we ship, so Devanagari copy keeps its font and never goes uppercase. The
+  look is a bonus: if the model declines, the pacing numbers still stand. `_caption_size` must stay pixel-identical at
+  `size_scale == 1.0` (every clip without a style).
 - Container: the image is built by `image.yml` and smoke-tested by `scripts/smoke_image.sh` (a real render inside it); FFmpeg,
   fonts and GSAP come from the same scripts CI uses. `DRAIN_TIMEOUT_SECONDS` + the 20 s server wait must stay below the
   compose `stop_grace_period`. A drained job is requeued, never marked failed or refunded. The HyperFrames pin in the

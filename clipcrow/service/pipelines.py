@@ -23,6 +23,8 @@ def planner_options(job: Job) -> PlannerOptions:
         opts.immersive = opts.immersive or st.punch_ins
         opts.punch_min_gap = st.punch.min_gap
         opts.punch_max_per_clip = st.punch.max_per_clip
+        if st.captions.from_reference:
+            opts.caption_look = st.captions.model_dump()
     return opts
 
 
@@ -66,6 +68,13 @@ class RealPipeline:
 
     def render_clip(self, job: Job, edl, clip_id: str, out: Path, workdir: Path, media_root: Path) -> list[str]:
         return render_one(job, edl, clip_id, out, workdir, media_root, os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"))
+
+    @staticmethod
+    def reference_look(path: str, duration: float) -> dict | None:
+        """What the reference's captions look like, read by one Claude vision call. None when there are no credentials."""
+        from ..planner import AnthropicLLM
+        from ..styles_look import read_look
+        return read_look(path, duration, AnthropicLLM()).model_dump()
 
     @staticmethod
     def reference_words(path: str) -> int | None:

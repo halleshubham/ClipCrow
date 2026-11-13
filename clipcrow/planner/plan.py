@@ -60,6 +60,7 @@ class PlannerOptions:
     workers: int = 4
     caption_max_words: int = 4
     caption_pause_break: Optional[float] = None     # None: the EDL default; a style may set it
+    caption_look: Optional[dict] = None             # a style's CaptionLookSettings: top_px, size_scale, uppercase, colours, face
     punch_min_gap: Optional[float] = None           # None: punch.MIN_GAP; a style may set it
     punch_max_per_clip: Optional[int] = None
     # Spread clips across the talk: clips must be at least spread * (source length / clips) seconds apart,
@@ -250,6 +251,14 @@ def _clip_dict(n: int, c: PlannedClip, tr: Transcript, opts: PlannerOptions, lan
     }
     if opts.caption_pause_break is not None:
         d["captions"]["pause_break"] = opts.caption_pause_break
+    if opts.caption_look:
+        look = opts.caption_look
+        from ..styles_look import family_for
+        family, weight = family_for(look.get("face", "unknown"), deva)
+        d["captions"].update({"top_px": look["top_px"], "size_scale": look["size_scale"],
+                              "uppercase": bool(look["uppercase"]) and not deva,     # Devanagari has no case
+                              "color": look["color"], "highlight_color": look["highlight_color"],
+                              "font_family": family, "font_weight": weight})
     if opts.immersive:
         from ..punch import MAX_PER_CLIP, MIN_GAP, plan_punch_ins
         spans = [(s.start - c.start, s.end - c.start) for s in tr.sentences if s.start >= c.start - 0.01 and s.end <= c.end + 0.01]

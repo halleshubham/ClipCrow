@@ -173,9 +173,13 @@ def _shown(text: str) -> str:
     return text.rstrip(".,;:\u0964\u0965\u2026") or text
 
 
-def _caption_size(chars: int) -> int:
+def _caption_size(chars: int, scale: float = 1.0) -> int:
     # ~0.62 em per Devanagari/Latin glyph on average; the safe band is ~900 px wide.
-    return int(max(48, min(92, 900 / (max(chars, 1) * 0.62))))
+    base = max(48, min(92, 900 / (max(chars, 1) * 0.62)))
+    if scale == 1.0:
+        return int(base)                 # unchanged for every clip without a style: same pixels as before
+    # ``scale`` (CaptionStyle.size_scale, from a reference's own captions) nudges the fitted size, within a wider band.
+    return int(max(36, min(120, base * scale)))
 
 
 def _captions_scene(clip: Clip, groups: list[CaptionGroup], family: str, face: str,
@@ -186,7 +190,7 @@ def _captions_scene(clip: Clip, groups: list[CaptionGroup], family: str, face: s
     .grp {{ position: absolute; left: 0; right: 0; top: {st.top_px}px; text-align: center; overflow: visible;
       font-family: {family}, sans-serif; font-weight: {st.font_weight}; line-height: 1.25; color: {st.color};
       text-shadow: 0 4px 0 rgba(0,0,0,.85), 0 0 24px rgba(0,0,0,.6); }}
-    .grp .w {{ display: inline-block; margin: 0 .16em; }}
+    .grp .w {{ display: inline-block; margin: 0 .16em;{" text-transform: uppercase;" if st.uppercase else ""} }}
     .grp .hot {{ color: {st.highlight_color}; }}"""
     body, timeline = [], []
     for n, g in enumerate(groups):
@@ -195,7 +199,7 @@ def _captions_scene(clip: Clip, groups: list[CaptionGroup], family: str, face: s
             f'<span class="w{" hot" if x.index in emph else ""}" id="g{n}w{m}">{_esc(_shown(x.text))}</span>'
             for m, x in enumerate(g.words))
         body.append(f'    <div id="g{n}" class="grp clip" data-start="{_num(g.start)}" '
-                    f'data-duration="{_num(g.end - g.start)}" style="font-size:{_caption_size(chars)}px">{spans}</div>')
+                    f'data-duration="{_num(g.end - g.start)}" style="font-size:{_caption_size(chars, st.size_scale)}px">{spans}</div>')
         timeline.append([f"g{n}", round(g.start, 3), round(g.end, 3), [round(x.start, 3) for x in g.words]])
     script = f"""    const G = {json.dumps(timeline)};
     G.forEach(([id, s, e, times]) => {{

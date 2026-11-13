@@ -188,6 +188,8 @@ class CaptionStyle(_Model):
     color: HexColor = "#FFFFFF"
     highlight_color: HexColor = "#FFD54A"
     top_px: int = Field(default=1240, ge=0)              # portrait caption band, clear of the face
+    size_scale: float = Field(default=1.0, ge=0.6, le=1.6)   # multiplies the fitted size (a style may set it)
+    uppercase: bool = False                              # Latin only: Devanagari has no case
     emphasis_words: list[int] = Field(default_factory=list)  # indices into transcript.words
 
 

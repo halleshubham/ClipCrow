@@ -179,3 +179,35 @@ def test_cover_logo_and_outro_in_a_real_render(tmp_path):
     assert share(end, (255, 0, 255)) > 0.2                                             # the ending video follows the clip
     poster = cv2.imread(str(out.with_name("x.cover.png")))
     assert share(poster, (255, 0, 0)) > 0.5                                            # the saved cover image is the title card
+
+
+def test_a_style_s_caption_look_reaches_the_rendered_pixels(tmp_path):
+    """The caption colour, size and position a style carries must show up in the frame, not just in the EDL."""
+    from PIL import Image
+    base = json.loads((ROOT / "examples" / "demo.edl.json").read_text("utf-8"))
+    shots = {}
+    for name, caps in (("plain", {}),
+                       ("styled", {"top_px": 300, "size_scale": 1.6, "color": "#00FF00", "highlight_color": "#FF00FF"})):
+        d = json.loads(json.dumps(base))
+        clip = next(c for c in d["clips"] if c["id"] == "c2")
+        clip["captions"] = {**clip.get("captions", {}), "enabled": True, **caps}
+        p = tmp_path / f"{name}.edl.json"
+        p.write_text(json.dumps(d), "utf-8")
+        out, _ = render_clip(load_edl(p), "c2", tmp_path / f"{name}.mp4", workdir=tmp_path / f"w-{name}",
+                             media_root=ROOT / "examples" / "assets", gsap_js=ROOT / "vendor" / "gsap.min.js", workers=2)
+        png = tmp_path / f"{name}.png"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "1.2", "-i", str(out), "-frames:v", "1", str(png)], check=True)
+        shots[name] = Image.open(png).convert("RGB")
+
+    def greenest(img):
+        """The brightest pure-green pixel's row, and how much green there is: the styled captions are #00FF00."""
+        px = img.load()
+        rows = [(y, x) for y in range(0, img.height, 4) for x in range(0, img.width, 4)
+                if px[x, y][1] > 180 and px[x, y][0] < 110 and px[x, y][2] < 110]
+        return rows
+
+    assert not greenest(shots["plain"]), "the unstyled render already has green captions: the test proves nothing"
+    green = greenest(shots["styled"])
+    assert green, "the style's caption colour never reached the pixels"
+    top = min(y for y, _ in green)
+    assert top < shots["plain"].height * 0.45, f"styled captions should sit high in the frame, found first green at y={top}"

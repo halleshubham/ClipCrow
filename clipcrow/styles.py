@@ -40,6 +40,17 @@ class PunchRhythm(_M):
     max_per_clip: int = Field(default=6, ge=0, le=12)
 
 
+class CaptionLookSettings(_M):
+    """How the captions look. Filled from a reference's frames (phase 2) or left at ClipCrow's own defaults."""
+    from_reference: bool = False                 # false: these are our defaults, not something seen in the reference
+    top_px: int = Field(default=1240, ge=0, le=1800)
+    size_scale: float = Field(default=1.0, ge=0.6, le=1.6)
+    uppercase: bool = False
+    color: str = Field(default="#FFFFFF", pattern=r"^#[0-9a-fA-F]{6}$")
+    highlight_color: str = Field(default="#FFD54A", pattern=r"^#[0-9a-fA-F]{6}$")
+    face: str = Field(default="unknown", pattern=r"^(heavy sans|sans|serif|unknown)$")
+
+
 class StyleSettings(_M):
     """The only thing a style changes. Every field is bounded; this is what a person may edit."""
     min_clip: int = Field(default=15, ge=10, le=170)
@@ -48,6 +59,7 @@ class StyleSettings(_M):
     caption_pause_break: float = Field(default=0.15, ge=0.05, le=1.0)
     punch_ins: bool = True
     punch: PunchRhythm = Field(default_factory=PunchRhythm)
+    captions: CaptionLookSettings = Field(default_factory=CaptionLookSettings)
 
     def check(self) -> "StyleSettings":
         if self.min_clip >= self.max_clip:
@@ -65,13 +77,16 @@ class Measurements:
     median_shot_seconds: float = 0.0
     words_per_minute: Optional[float] = None      # None: speech was not measured (no recognition, or no speech)
     loudness_lufs: Optional[float] = None
+    look: Optional[dict] = None                   # what the vision pass saw (styles_look.CaptionLook), or None
+    breakdown: str = ""                           # a few lines a person can read
     notes: list[str] = field(default_factory=list)
 
     def view(self) -> dict:
         return {"duration": round(self.duration, 1), "size": f"{self.width}x{self.height}", "cuts": self.cuts,
                 "cuts_per_minute": round(self.cuts_per_minute, 1), "median_shot_seconds": round(self.median_shot_seconds, 2),
                 "words_per_minute": None if self.words_per_minute is None else round(self.words_per_minute),
-                "loudness_lufs": None if self.loudness_lufs is None else round(self.loudness_lufs, 1), "notes": self.notes}
+                "loudness_lufs": None if self.loudness_lufs is None else round(self.loudness_lufs, 1),
+                "look": self.look, "breakdown": self.breakdown, "notes": self.notes}
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -90,8 +105,19 @@ def derive(m: Measurements) -> StyleSettings:
         punch, on = PunchRhythm(min_gap=3.5, max_per_clip=2), m.cuts_per_minute >= 2
     wpm = m.words_per_minute
     words = 4 if wpm is None else (5 if wpm >= 180 else 4 if wpm >= 130 else 3)
+    caps = CaptionLookSettings()
+    look = m.look or {}
+    if look.get("present"):
+        from .styles_look import BANDS, size_scale
+        caps = CaptionLookSettings(
+            from_reference=True, top_px=BANDS.get(look.get("band") or "lower", BANDS["lower"]),
+            size_scale=size_scale(look.get("size")), uppercase=bool(look.get("uppercase")),
+            color=look.get("color") or "#FFFFFF", highlight_color=look.get("highlight_color") or "#FFD54A",
+            face=look.get("face") or "unknown")
+        if look.get("words_per_line"):
+            words = max(1, min(8, int(look["words_per_line"])))      # what is on screen beats a guess from speech rate
     return StyleSettings(min_clip=lo, max_clip=hi, caption_max_words=words, caption_pause_break=0.15,
-                         punch_ins=on, punch=punch).check()
+                         punch_ins=on, punch=punch, captions=caps).check()
 
 
 # --- measuring (FFmpeg) ---------------------------------------------------------------------------------------------
@@ -127,8 +153,10 @@ def loudness(path) -> Optional[float]:
     return float(found[-1]) if found else None
 
 
-def measure(path, *, count_words: Optional[Callable[[str], Optional[int]]] = None) -> Measurements:
-    """Measure a reference. ``count_words(path)`` returns the number of spoken words, or None when it cannot."""
+def measure(path, *, count_words: Optional[Callable[[str], Optional[int]]] = None,
+            read_look: Optional[Callable[[str, float], Optional[dict]]] = None) -> Measurements:
+    """Measure a reference. ``count_words(path)`` returns the number of spoken words, or None when it cannot.
+    ``read_look(path, duration)`` returns what the captions look like (a ``styles_look.CaptionLook`` dict), or None."""
     info = probe(path)
     dur = info["duration"]
     if dur < MIN_REFERENCE_SECONDS:
@@ -152,4 +180,41 @@ def measure(path, *, count_words: Optional[Callable[[str], Optional[int]]] = Non
             m.words_per_minute = n / (dur / 60.0)
     else:
         m.notes.append("The reference has no sound, so only the picture was measured.")
+    if read_look is not None:
+        try:
+            m.look = read_look(str(path), dur)
+        except Exception:                         # the look is a bonus: pacing must survive a model that will not answer
+            m.notes.append("The caption look could not be read, so ClipCrow's own caption style is used.")
+        if m.look is not None and not m.look.get("present"):
+            m.notes.append("No captions were visible in the frames checked, so ClipCrow's own caption style is used.")
+    m.breakdown = describe(m)
     return m
+
+
+def describe(m: Measurements) -> str:
+    """A few plain lines about the reference, for a person to read. Plain text: the UI inserts it as text."""
+    lines = [f"{m.duration:.0f} seconds, {m.width}x{m.height}.",
+             f"{m.cuts} cuts, about {m.cuts_per_minute:.0f} a minute; a typical shot lasts {m.median_shot_seconds:.1f} s."]
+    lines.append("Cut hard and often." if m.cuts_per_minute >= 20 else
+                 "Cut at a steady pace." if m.cuts_per_minute >= 8 else "Cut rarely: long, calm shots.")
+    if m.words_per_minute:
+        lines.append(f"The speaker says about {m.words_per_minute:.0f} words a minute"
+                     f"{' (fast)' if m.words_per_minute >= 180 else ' (measured)' if m.words_per_minute >= 130 else ' (slow)'}.")
+    if m.loudness_lufs is not None:
+        lines.append(f"Loudness {m.loudness_lufs:.1f} LUFS.")
+    look = m.look or {}
+    if look.get("present"):
+        where = {"upper": "near the top", "middle": "in the middle", "lower": "low in the frame"}.get(look.get("band"), "")
+        bits = [f"Captions sit {where}".strip()]
+        if look.get("words_per_line"):
+            bits.append(f"about {look['words_per_line']} words at a time")
+        if look.get("size"):
+            bits.append(f"a line is about {look['size']:.0f}% of the frame height")
+        if look.get("uppercase"):
+            bits.append("written in capitals")
+        if look.get("face") and look["face"] != "unknown":
+            bits.append(f"the lettering looks {look['face']}")
+        lines.append(", ".join(bits) + ".")
+        if look.get("note"):
+            lines.append(look["note"])
+    return "\n".join(lines)

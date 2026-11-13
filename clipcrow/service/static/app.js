@@ -412,7 +412,7 @@ async function newJobView() {
         el('div', { class: 'hint', text: 'Leave empty for about one per two minutes of video.' })),
       select('length', 'Clip length', [['15-60', '15–60 seconds'], ['30-90', '30–90 seconds']]),
       select('style', 'Style from a reference', [['', 'None'], ...styles.map((x) => [x.id, x.name])],
-        styles.length ? 'Uses the pacing measured from that reference: clip length, caption group size and how often the picture pushes in.'
+        styles.length ? 'Uses what was measured in that reference: clip length, caption size, colour and position, and how often the picture pushes in.'
           : 'Measure a reference video on the Styles page, then pick it here.'),
       select('spread', 'Spread across the video', [['0.5', 'Balanced (recommended)'], ['0', 'Off: best clips first'], ['0.8', 'Wide']],
         'Keeps clips from being slices of one section.'),
@@ -1035,6 +1035,11 @@ async function stylesView() {
       gap: num(`${s.id}-gap`, 'Rest between push-ins (s)', st.punch.min_gap, 0.5, 8, 0.5),
       per: num(`${s.id}-per`, 'Push-ins per clip, at most', st.punch.max_per_clip, 0, 12, 1),
       on: el('input', { type: 'checkbox', id: `${s.id}-on`, checked: st.punch_ins }),
+      top: num(`${s.id}-top`, 'Caption height from the top (px of 1920)', st.captions.top_px, 0, 1800, 10),
+      scale: num(`${s.id}-scale`, 'Caption size', st.captions.size_scale, 0.6, 1.6, 0.05, '1 is ClipCrow\u2019s own size.'),
+      color: el('input', { type: 'color', id: `${s.id}-color`, value: st.captions.color }),
+      hot: el('input', { type: 'color', id: `${s.id}-hot`, value: st.captions.highlight_color }),
+      caps: el('input', { type: 'checkbox', id: `${s.id}-caps`, checked: st.captions.uppercase }),
     };
     const saved = el('span', { class: 'small', role: 'status', 'aria-live': 'polite' });
     const save = el('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: async () => {
@@ -1042,18 +1047,26 @@ async function stylesView() {
       const body = { name: f.name.value, settings: {
         min_clip: Number(f.min.input.value), max_clip: Number(f.max.input.value), caption_max_words: Number(f.words.input.value),
         caption_pause_break: Number(f.pause.input.value), punch_ins: f.on.checked,
-        punch: { min_gap: Number(f.gap.input.value), max_per_clip: Number(f.per.input.value) } } };
+        punch: { min_gap: Number(f.gap.input.value), max_per_clip: Number(f.per.input.value) },
+        captions: { from_reference: st.captions.from_reference, top_px: Number(f.top.input.value), size_scale: Number(f.scale.input.value),
+          uppercase: f.caps.checked, color: f.color.value.toUpperCase(), highlight_color: f.hot.value.toUpperCase(), face: st.captions.face } } };
       try { await api(`/styles/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); saved.textContent = 'Saved. New jobs use this.'; } catch (e) { fail(e); }
     } });
     const facts = [`${m.duration} s long`, `${m.cuts} cuts (${m.cuts_per_minute} a minute)`, `typical shot ${m.median_shot_seconds} s`,
       m.words_per_minute == null ? 'speech not measured' : `${m.words_per_minute} words a minute`];
+    const colorField = (label, input) => el('div', { class: 'row' }, el('label', { class: 'field', for: input.id, text: label }), input);
     return el('section', { class: 'card stack' }, head,
       el('p', { class: 'small muted', text: `Measured: ${facts.join(' · ')}.` }),
+      m.breakdown ? el('details', {}, el('summary', { class: 'small', text: 'What this reference does' }),
+        el('p', { class: 'small', style: { whiteSpace: 'pre-line' }, text: m.breakdown })) : null,
       (m.notes || []).map((n) => el('p', { class: 'small muted', text: n })),
       el('div', { class: 'grid2', style: { marginTop: 0 } },
         el('div', {}, el('label', { class: 'field', for: f.name.id, text: 'Name' }), f.name),
-        f.min.node, f.max.node, f.words.node, f.pause.node, f.gap.node, f.per.node),
+        f.min.node, f.max.node, f.words.node, f.pause.node, f.gap.node, f.per.node, f.top.node, f.scale.node),
       el('label', { class: 'check', for: f.on.id }, f.on, el('span', {}, el('strong', { text: 'Push the picture in on new sentences' }))),
+      el('div', { class: 'row' }, colorField('Caption colour', f.color), colorField('Highlighted word', f.hot),
+        el('label', { class: 'check', for: f.caps.id }, f.caps, el('span', { text: 'CAPITALS (Latin text only)' }))),
+      el('p', { class: 'small muted', text: st.captions.from_reference ? 'The caption look was read from the reference’s own frames.' : 'No captions were seen in the reference, so these are ClipCrow’s own caption settings.' }),
       el('div', { class: 'row' }, save, del, saved));
   }
 

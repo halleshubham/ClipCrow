@@ -849,7 +849,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     def analyse_reference(owner: str, style_id: str, tmp: tempfile.TemporaryDirectory, path: Path) -> None:
         try:
-            m = measure(path, count_words=getattr(pipeline, "reference_words", None))
+            m = measure(path, count_words=getattr(pipeline, "reference_words", None),
+                        read_look=getattr(pipeline, "reference_look", None))
             styles.finish(owner, style_id, m.view(), derive(m))
         except StyleError as e:
             styles.fail(owner, style_id, str(e))

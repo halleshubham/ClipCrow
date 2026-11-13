@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Callable, Protocol, Type, TypeVar
+from typing import Callable, Protocol, Type, TypeVar, Union
 
 from pydantic import BaseModel
 
@@ -21,8 +21,11 @@ class LLMError(RuntimeError):
     pass
 
 
+Content = Union[str, list]      # a list is Anthropic content blocks (the style reader sends images)
+
+
 class LLM(Protocol):
-    def generate(self, system: str, user: str, schema: Type[T], *, purpose: str = "") -> T: ...
+    def generate(self, system: str, user: Content, schema: Type[T], *, purpose: str = "") -> T: ...
 
     def usage(self) -> list[CallUsage]:
         """Every call made so far, with tokens as billed."""
@@ -87,7 +90,7 @@ class FakeLLM:
 
     def __init__(self, respond: Callable):
         self.respond = respond
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, Content]] = []
         self._lock = threading.Lock()
 
     def usage(self):
