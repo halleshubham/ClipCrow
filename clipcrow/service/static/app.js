@@ -319,6 +319,8 @@ async function newJobView() {
   const c = state.config;
   let brand = { logo: false, outro: false, settings: {} };
   try { brand = await api('/brand'); } catch (e) { if (e instanceof SignInNeeded) throw e; }
+  let styles = [];
+  try { styles = (await api('/styles')).filter((x) => x.status === 'ready'); } catch (e) { if (e instanceof SignInNeeded) throw e; }
   let file = null;
   const fileName = el('div', { class: 'small muted', text: `MP4, MOV, MKV or WebM, up to ${c.max_upload_mb} MB` });
   const fileTitle = el('div', { style: { fontWeight: '600' }, text: 'Drop a video here, or choose a file' });
@@ -361,8 +363,9 @@ async function newJobView() {
     if (!file) return fail('Choose a video first.');
     if (file.size > c.max_upload_mb * 1048576) return fail(`That file is larger than the ${c.max_upload_mb} MB limit.`);
     if (!rights.checked) return fail('Confirm that you own this video or have the rights to process it.');
-    const [minClip, maxClip] = $('length').value.split('-');
+    const [minClip, maxClip] = $('style').value ? ['', ''] : $('length').value.split('-');   // a style sets the clip length
     const options = {
+      style: $('style').value,
       language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
       multi: $('multi').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
@@ -408,6 +411,9 @@ async function newJobView() {
         el('input', { id: 'clips', type: 'number', min: '1', max: '20', placeholder: 'auto' }),
         el('div', { class: 'hint', text: 'Leave empty for about one per two minutes of video.' })),
       select('length', 'Clip length', [['15-60', '15–60 seconds'], ['30-90', '30–90 seconds']]),
+      select('style', 'Style from a reference', [['', 'None'], ...styles.map((x) => [x.id, x.name])],
+        styles.length ? 'Uses the pacing measured from that reference: clip length, caption group size and how often the picture pushes in.'
+          : 'Measure a reference video on the Styles page, then pick it here.'),
       select('spread', 'Spread across the video', [['0.5', 'Balanced (recommended)'], ['0', 'Off: best clips first'], ['0.8', 'Wide']],
         'Keeps clips from being slices of one section.'),
       select('multi', 'Several people on screen', [['switch', 'Cut to whoever is talking (recommended)'], ['split', 'Stack two people'], ['off', 'Follow one face']],
@@ -447,6 +453,7 @@ async function newJobView() {
     progress);
   const $ = (id) => form.querySelector('#' + id);
   $('explainer').addEventListener('change', () => { $('explainer-opts').hidden = !$('explainer').checked; });
+  $('style').addEventListener('change', () => { $('length').disabled = !!$('style').value; });      // the style sets the clip length
 
   const aside = el('div', { class: 'stack grow' },
     el('section', { class: 'card' }, el('h2', { text: 'What happens next' }),
@@ -978,6 +985,106 @@ async function shareView(jobId, clipId) {
   return { cleanup() { dead = true; clearTimeout(timer); } };
 }
 
+// ---- styles: measure a reference video once, apply its pacing to your own clips ------------------------------------
+
+async function stylesView() {
+  let list = await api('/styles');
+  let dead = false, timer = null;
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const note = el('div', { class: 'small', role: 'status', 'aria-live': 'polite' });
+  const fail = (e) => { if (e instanceof SignInNeeded) { route(); return; } err.textContent = e.message; err.hidden = false; };
+
+  const fileIn = el('input', { type: 'file', id: 'style_file', accept: 'video/*,.mkv,.m4v' });
+  const nameIn = el('input', { id: 'style_name', type: 'text', maxlength: '60', autocomplete: 'off', placeholder: 'e.g. Fast podcast reel' });
+  const rights = el('input', { type: 'checkbox', id: 'style_rights' });
+  const measureBtn = el('button', { class: 'btn primary', type: 'button', text: 'Measure this reference', onclick: async () => {
+    err.hidden = true;
+    if (!fileIn.files[0]) return fail(new Error('Choose a reference video first.'));
+    if (!rights.checked) return fail(new Error('Confirm that you may use this video as a reference.'));
+    const fd = new FormData();
+    fd.append('file', fileIn.files[0]);
+    fd.append('name', nameIn.value);
+    fd.append('rights', 'true');
+    measureBtn.disabled = true;
+    note.textContent = 'Uploading…';
+    try { await api('/styles', { method: 'POST', body: fd }); list = await api('/styles'); draw(); } catch (e) { fail(e); } finally { measureBtn.disabled = false; note.textContent = ''; }
+  } });
+
+  const num = (id, label, value, min, max, step, hint) => {
+    const input = el('input', { id, type: 'number', min, max, step, value });
+    return { input, node: el('div', {}, el('label', { class: 'field', for: id, text: label }), input, hint && el('div', { class: 'hint', text: hint })) };
+  };
+
+  function card(s) {
+    const m = s.measured || {};
+    const head = el('div', { class: 'row' }, el('h2', { class: 'grow', translate: 'no', text: s.name }),
+      el('span', { class: 'small muted', text: s.status === 'ready' ? 'Ready' : s.status === 'analyzing' ? 'Measuring…' : 'Could not be measured' }));
+    const del = el('button', { class: 'btn', type: 'button', text: 'Delete', onclick: async () => {
+      if (!confirm('Delete this style? Jobs already made keep their copy.')) return;
+      try { await api(`/styles/${s.id}`, { method: 'DELETE' }); list = await api('/styles'); draw(); } catch (e) { fail(e); }
+    } });
+    if (s.status === 'analyzing') return el('section', { class: 'card stack' }, head, el('p', { class: 'small muted', text: 'Measuring cuts, speech and loudness. This takes about a minute.' }));
+    if (s.status === 'failed') return el('section', { class: 'card stack' }, head, el('p', { class: 'small', translate: 'no', text: s.error }), el('div', {}, del));
+    const st = s.settings;
+    const f = {
+      name: el('input', { id: `${s.id}-name`, type: 'text', maxlength: '60', value: s.name, autocomplete: 'off' }),
+      min: num(`${s.id}-min`, 'Shortest clip (s)', st.min_clip, 10, 170, 1),
+      max: num(`${s.id}-max`, 'Longest clip (s)', st.max_clip, 15, 180, 1),
+      words: num(`${s.id}-words`, 'Words per caption', st.caption_max_words, 1, 8, 1, 'Fast speech reads better in longer groups.'),
+      pause: num(`${s.id}-pause`, 'Caption pause (s)', st.caption_pause_break, 0.05, 1, 0.05, 'A silence this long starts a new caption.'),
+      gap: num(`${s.id}-gap`, 'Rest between push-ins (s)', st.punch.min_gap, 0.5, 8, 0.5),
+      per: num(`${s.id}-per`, 'Push-ins per clip, at most', st.punch.max_per_clip, 0, 12, 1),
+      on: el('input', { type: 'checkbox', id: `${s.id}-on`, checked: st.punch_ins }),
+    };
+    const saved = el('span', { class: 'small', role: 'status', 'aria-live': 'polite' });
+    const save = el('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: async () => {
+      err.hidden = true; saved.textContent = '';
+      const body = { name: f.name.value, settings: {
+        min_clip: Number(f.min.input.value), max_clip: Number(f.max.input.value), caption_max_words: Number(f.words.input.value),
+        caption_pause_break: Number(f.pause.input.value), punch_ins: f.on.checked,
+        punch: { min_gap: Number(f.gap.input.value), max_per_clip: Number(f.per.input.value) } } };
+      try { await api(`/styles/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); saved.textContent = 'Saved. New jobs use this.'; } catch (e) { fail(e); }
+    } });
+    const facts = [`${m.duration} s long`, `${m.cuts} cuts (${m.cuts_per_minute} a minute)`, `typical shot ${m.median_shot_seconds} s`,
+      m.words_per_minute == null ? 'speech not measured' : `${m.words_per_minute} words a minute`];
+    return el('section', { class: 'card stack' }, head,
+      el('p', { class: 'small muted', text: `Measured: ${facts.join(' · ')}.` }),
+      (m.notes || []).map((n) => el('p', { class: 'small muted', text: n })),
+      el('div', { class: 'grid2', style: { marginTop: 0 } },
+        el('div', {}, el('label', { class: 'field', for: f.name.id, text: 'Name' }), f.name),
+        f.min.node, f.max.node, f.words.node, f.pause.node, f.gap.node, f.per.node),
+      el('label', { class: 'check', for: f.on.id }, f.on, el('span', {}, el('strong', { text: 'Push the picture in on new sentences' }))),
+      el('div', { class: 'row' }, save, del, saved));
+  }
+
+  function draw() {
+    app.replaceChildren(el('div', { class: 'stack' },
+      el('h1', { text: 'Styles' }),
+      el('p', { class: 'lead', text: 'Upload a video whose pacing you like. ClipCrow measures how fast it cuts and how fast the speaker talks, and your own clips follow that rhythm. The reference itself is deleted once it has been measured.' }),
+      el('section', { class: 'card stack' }, el('h2', { text: 'New style' }),
+        el('div', {}, el('label', { class: 'field', for: 'style_file', text: 'Reference video (5 s to 3 minutes, up to 200 MB)' }), fileIn),
+        el('div', {}, el('label', { class: 'field', for: 'style_name', text: 'Name' }), nameIn),
+        el('label', { class: 'check', for: 'style_rights' }, rights, el('span', { text: 'I own this video or may use it as a reference.' })),
+        el('div', { class: 'row' }, measureBtn, note)),
+      err,
+      list.length ? list.map(card) : el('div', { class: 'card empty', text: 'No styles yet.' })));
+    clearTimeout(timer);
+    if (!dead && list.some((x) => x.status === 'analyzing')) timer = setTimeout(poll, 2000);
+  }
+
+  async function poll() {
+    if (dead) return;
+    try {
+      const next = await api('/styles');
+      const key = (l) => l.map((x) => `${x.id}:${x.status}`).join(',');
+      if (key(next) !== key(list)) { list = next; draw(); } else timer = setTimeout(poll, 2000);
+    } catch (e) { if (e instanceof SignInNeeded) { route(); return; } if (!dead) timer = setTimeout(poll, 4000); }
+  }
+
+  draw();
+  return { cleanup() { dead = true; clearTimeout(timer); } };
+}
+
 // ---- router -----------------------------------------------------------------------------------
 let cleanup = null;
 async function route() {
@@ -985,7 +1092,7 @@ async function route() {
   const hash = location.hash || '#/';
   renderAcct();
   document.querySelectorAll('nav a').forEach((a) => {
-    const on = (a.dataset.nav === 'new' && (hash === '#/' || hash === '#' || hash === '#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs')) || (a.dataset.nav === 'brand' && hash === '#/brand');
+    const on = (a.dataset.nav === 'new' && (hash === '#/' || hash === '#' || hash === '#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs')) || (a.dataset.nav === 'brand' && hash === '#/brand') || (a.dataset.nav === 'styles' && hash === '#/styles');
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   try {
@@ -993,6 +1100,7 @@ async function route() {
     let m;
     if (hash === '#/' || hash === '#' || hash === '#/new') await newJobView();
     else if (hash === '#/brand') await brandView();
+    else if (hash === '#/styles') { const v = await stylesView(); cleanup = v.cleanup; }
     else if (hash === '#/jobs') await jobsView();
     else if (hash === '#/account') await accountView();
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})\/share$/))) { const v = await shareView(m[1], m[2]); cleanup = v.cleanup; }

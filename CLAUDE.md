@@ -69,6 +69,13 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   BEFORE the multipart upload is completed; the source is probed by presigned URL, never by a person-supplied one; abandoned
   uploads expire after 24 h. The CSP `connect-src` gets the bucket origin only when direct upload is on. A part PUT from a
   test must send `Content-Type: application/octet-stream` (urllib's default form type breaks the S3 test server).
+- Styles (`clipcrow/styles.py`, `service/style_store.py`): a reference video is MEASURED, never interpreted by a model; `derive` turns the
+  numbers into `StyleSettings`, a closed set of bounded fields, and that is all a style may change (clip length, caption group size
+  and pause, push-in rhythm). The reference is measured in a temp folder and deleted. A style belongs to an account (same owner
+  scoping as the brand kit, ids strict hex ending in `\Z`), is erased with the account, at most 10 per account, one measuring at a
+  time. A job COPIES the settings (`Params.style`), so editing or deleting a style never changes work already made; an explicit clip
+  length from the person beats the style's. Timing stays in code: `punch.plan_punch_ins` takes `min_gap`/`max_per_clip`, its defaults
+  must stay equal to the module constants (replay tests depend on them). Caption look from frames is Phase 2 (not built).
 - Container: the image is built by `image.yml` and smoke-tested by `scripts/smoke_image.sh` (a real render inside it); FFmpeg,
   fonts and GSAP come from the same scripts CI uses. `DRAIN_TIMEOUT_SECONDS` + the 20 s server wait must stay below the
   compose `stop_grace_period`. A drained job is requeued, never marked failed or refunded. The HyperFrames pin in the

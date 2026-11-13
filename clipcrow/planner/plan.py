@@ -59,6 +59,9 @@ class PlannerOptions:
     score_batch: int = 6
     workers: int = 4
     caption_max_words: int = 4
+    caption_pause_break: Optional[float] = None     # None: the EDL default; a style may set it
+    punch_min_gap: Optional[float] = None           # None: punch.MIN_GAP; a style may set it
+    punch_max_per_clip: Optional[int] = None
     # Spread clips across the talk: clips must be at least spread * (source length / clips) seconds apart,
     # relaxed only when there are not enough distant candidates. 0 = plain best-first.
     spread: float = 0.5
@@ -245,10 +248,14 @@ def _clip_dict(n: int, c: PlannedClip, tr: Transcript, opts: PlannerOptions, lan
                      "font_family": DEFAULT_DEVANAGARI if deva else "Noto Sans"},
         "overlays": [],
     }
+    if opts.caption_pause_break is not None:
+        d["captions"]["pause_break"] = opts.caption_pause_break
     if opts.immersive:
-        from ..punch import plan_punch_ins
+        from ..punch import MAX_PER_CLIP, MIN_GAP, plan_punch_ins
         spans = [(s.start - c.start, s.end - c.start) for s in tr.sentences if s.start >= c.start - 0.01 and s.end <= c.end + 0.01]
-        d["layout"]["punch_ins"] = plan_punch_ins(spans, c.duration)
+        d["layout"]["punch_ins"] = plan_punch_ins(
+            spans, c.duration, min_gap=MIN_GAP if opts.punch_min_gap is None else opts.punch_min_gap,
+            max_per_clip=MAX_PER_CLIP if opts.punch_max_per_clip is None else opts.punch_max_per_clip)
     ov = d["overlays"]
     hook_end = 0.0
     if c.hook:

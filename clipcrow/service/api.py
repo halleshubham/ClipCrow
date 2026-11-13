@@ -45,6 +45,8 @@ from .retention import Sweeper, env_days, expires_at
 from .storage import Mirror, S3Storage, StorageError, signature
 from .uploads import OPEN_LIMIT, Upload, UploadStore
 from .runner import JobRunner, Pipeline
+from .style_store import StyleStore
+from ..styles import MAX_REFERENCE_BYTES, StyleError, StyleSettings, derive, measure
 
 STATIC = Path(__file__).parent / "static"
 COOKIE = "clipcrow_token"
@@ -105,6 +107,11 @@ class CompleteUpload(BaseModel):
     options: dict[str, Union[str, int, float, bool, None]] = Field(default_factory=dict)
 
 
+class StylePatch(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=60)
+    settings: Optional[StyleSettings] = None
+
+
 class PublishBody(BaseModel):
     channels: list[str]
     caption: str = ""
@@ -151,6 +158,10 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     runner.storage = storage
     brands = BrandStore(data_dir)
     runner.brands = brands
+    styles = StyleStore(data_dir)
+    style_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-style")
+    for _owner, _rec in styles.stale_analyzing():           # a restart interrupted these: nothing is measuring them now
+        styles.fail(_owner, _rec.id, "The server restarted while this was being measured. Upload the reference again.")
     if start_runner:
         runner.recover()
     @asynccontextmanager
@@ -340,6 +351,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 purge_remote(j.id, "Your files could not be removed from storage just now, so the account was not deleted. Try again in a minute.")
                 store.delete(j.id)
         brands.delete_all(user.id)
+        styles.delete_all(user.id)
         accounts.delete(user.id)
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(SESSION_COOKIE)
@@ -537,6 +549,18 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
         if params.min_clip >= params.max_clip:
             raise HTTPException(422, "The shortest clip must be shorter than the longest.")
+        sid = str(o.get("style") or "").strip()
+        if sid:
+            try:
+                rec = styles.get(owner, sid)
+            except KeyError:
+                raise HTTPException(422, "That style does not exist any more. Choose another or none.")
+            if rec.status != "ready":
+                raise HTTPException(422, "That style is not ready yet.")
+            st = rec.settings.model_copy(deep=True)
+            if not (_opt_int(o.get("min_clip")) or _opt_int(o.get("max_clip"))):      # an explicit clip length from the person wins
+                params.min_clip, params.max_clip = st.min_clip, st.max_clip
+            params.style, params.style_name = st, rec.name
         if params.logo and brands.logo_path(owner) is None:
             raise HTTPException(422, "Upload a logo on the Brand page first, or turn the logo off.")
         if params.outro and brands.outro_path(owner) is None:
@@ -688,7 +712,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          multi: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
                          explainer: Optional[str] = Form(None), links: Optional[str] = Form(None),
                          ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
-                         logo: Optional[str] = Form(None), outro: Optional[str] = Form(None)) -> dict:
+                         logo: Optional[str] = Form(None), outro: Optional[str] = Form(None),
+                         style: Optional[str] = Form(None)) -> dict:
         if rights.lower() not in ("1", "true", "on", "yes"):
             raise HTTPException(400, "Confirm that you own this video or have the rights to process it.")
         declared = int(request.headers.get("content-length") or 0)
@@ -696,7 +721,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
                                    speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi,
-                                   immersive=immersive, explainer=explainer, links=links, ai_images=ai_images, cover=cover, logo=logo, outro=outro),
+                                   immersive=immersive, explainer=explainer, links=links, ai_images=ai_images, cover=cover, logo=logo, outro=outro,
+                                   style=style),
                               brand_owner(request))
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in VIDEO_SUFFIXES:
@@ -809,6 +835,79 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(404, "This clip has no cover image.")
         stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(job.name).stem).strip("._") or "clip"
         return FileResponse(path, media_type="image/png", filename=f"{stem[:60]}-{clip_id}-cover.png" if download else None)
+
+    # --- styles: measure a reference video once, apply what it shows to your own clips ----------------------------------
+    def style_view(rec) -> dict:
+        return {"id": rec.id, "name": rec.name, "status": rec.status, "error": rec.error, "created_at": rec.created_at,
+                "measured": rec.measured, "settings": rec.settings.model_dump()}
+
+    def style_or_404(style_id: str, request: Request):
+        try:
+            return styles.get(brand_owner(request), style_id)
+        except KeyError:
+            raise HTTPException(404, "No such style.")
+
+    def analyse_reference(owner: str, style_id: str, tmp: tempfile.TemporaryDirectory, path: Path) -> None:
+        try:
+            m = measure(path, count_words=getattr(pipeline, "reference_words", None))
+            styles.finish(owner, style_id, m.view(), derive(m))
+        except StyleError as e:
+            styles.fail(owner, style_id, str(e))
+        except Exception:                                 # unexpected: a generic message for the person, the details in the log
+            logging.getLogger("clipcrow").exception("measuring a style reference failed")
+            styles.fail(owner, style_id, "The reference could not be measured. Try another video.")
+        finally:
+            tmp.cleanup()                                 # the reference video is never kept
+
+    @app.get("/api/styles", dependencies=[Depends(authed)])
+    def styles_list(request: Request) -> list[dict]:
+        return [style_view(r) for r in styles.list(brand_owner(request))]
+
+    @app.post("/api/styles", dependencies=[Depends(authed)], status_code=202)
+    async def style_create(request: Request, file: UploadFile = File(...), name: str = Form(""), rights: str = Form("")) -> dict:
+        if not truthy(rights):
+            raise HTTPException(400, "Confirm that you may use this video as a reference.")
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in VIDEO_SUFFIXES:
+            raise HTTPException(400, "Upload an MP4, MOV, MKV, WebM or M4V video.")
+        owner = brand_owner(request)
+        try:
+            rec = styles.create(owner, name or Path(file.filename or "Style").stem)
+        except StyleError as e:
+            raise HTTPException(409, str(e))
+        tmp = tempfile.TemporaryDirectory(dir=data_dir)
+        dest = Path(tmp.name) / f"reference{suffix}"
+        try:
+            size = 0
+            with dest.open("wb") as f:
+                while chunk := await file.read(1 << 20):
+                    size += len(chunk)
+                    if size > MAX_REFERENCE_BYTES:
+                        raise HTTPException(413, f"A reference can be at most {MAX_REFERENCE_BYTES // (1024 * 1024)} MB.")
+                    f.write(chunk)
+        except BaseException:
+            tmp.cleanup()
+            styles.delete(owner, rec.id)
+            raise
+        style_pool.submit(analyse_reference, owner, rec.id, tmp, dest)
+        return style_view(rec)
+
+    @app.get("/api/styles/{style_id}", dependencies=[Depends(authed)])
+    def style_get(style_id: str, request: Request) -> dict:
+        return style_view(style_or_404(style_id, request))
+
+    @app.put("/api/styles/{style_id}", dependencies=[Depends(authed)])
+    def style_put(style_id: str, body: StylePatch, request: Request) -> dict:
+        style_or_404(style_id, request)
+        try:
+            return style_view(styles.update(brand_owner(request), style_id, name=body.name, settings=body.settings))
+        except StyleError as e:
+            raise HTTPException(422, str(e))
+
+    @app.delete("/api/styles/{style_id}", dependencies=[Depends(authed)], status_code=204)
+    def style_delete(style_id: str, request: Request) -> None:
+        style_or_404(style_id, request)
+        styles.delete(brand_owner(request), style_id)
 
     # --- the brand kit: logo, ending video, how the cover and logo look ----------------------------------------
     @app.get("/api/brand", dependencies=[Depends(authed)])

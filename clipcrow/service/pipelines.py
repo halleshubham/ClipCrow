@@ -12,10 +12,18 @@ from .jobs import Job
 
 def planner_options(job: Job) -> PlannerOptions:
     p = job.params
-    return PlannerOptions(job_id=job.id, min_clip=p.min_clip, max_clip=p.max_clip, target_clips=p.clips,
+    opts = PlannerOptions(job_id=job.id, min_clip=p.min_clip, max_clip=p.max_clip, target_clips=p.clips,
                           spread=p.spread, cutout=p.cutout, immersive=p.immersive, explainer=p.explainer,
                           links=tuple(p.links), ai_images=p.ai_images, speaker_name=p.speaker_name or None,
                           speaker_title=p.speaker_title)
+    st = p.style
+    if st is not None:                    # clip length was already settled when the job was made (see api.build_params)
+        opts.caption_max_words = st.caption_max_words
+        opts.caption_pause_break = st.caption_pause_break
+        opts.immersive = opts.immersive or st.punch_ins
+        opts.punch_min_gap = st.punch.min_gap
+        opts.punch_max_per_clip = st.punch.max_per_clip
+    return opts
 
 
 def render_one(job: Job, edl, clip_id: str, out: Path, workdir: Path, media_root: Path, gsap_js) -> list[str]:
@@ -58,6 +66,14 @@ class RealPipeline:
 
     def render_clip(self, job: Job, edl, clip_id: str, out: Path, workdir: Path, media_root: Path) -> list[str]:
         return render_one(job, edl, clip_id, out, workdir, media_root, os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"))
+
+    @staticmethod
+    def reference_words(path: str) -> int | None:
+        """Spoken words in a style reference (for the speech rate), or None when recognition is not installed."""
+        if importlib.util.find_spec("faster_whisper") is None:
+            return None
+        from ..asr import transcribe
+        return len(transcribe(path).words)
 
     def run(self, job: Job, video: Path, out: Path, hooks: Hooks, say) -> MakeResult:
         from ..planner import AnthropicLLM

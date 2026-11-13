@@ -13,15 +13,17 @@ SCALES = (1.12, 1.18)     # alternate, so it does not feel mechanical
 END_MARK = re.compile(r"[.?!।॥…]$")
 
 
-def plan_punch_ins(spans: list[tuple[float, float]], duration: float) -> list[dict]:
-    """``spans``: (start, end) of each sentence in clip time. Returns PunchIn dicts."""
+def plan_punch_ins(spans: list[tuple[float, float]], duration: float, *,
+                   min_gap: float = MIN_GAP, max_per_clip: int = MAX_PER_CLIP) -> list[dict]:
+    """``spans``: (start, end) of each sentence in clip time. Returns PunchIn dicts.
+    ``min_gap`` and ``max_per_clip`` come from a style (``styles.PunchRhythm``); the defaults are the constants above."""
     out: list[dict] = []
-    busy_until = HOOK_CLEAR - MIN_GAP
+    busy_until = HOOK_CLEAR - min_gap
     for start, end in spans:
-        if len(out) >= MAX_PER_CLIP:
+        if len(out) >= max_per_clip:
             break
         t = max(start, 0.0)
-        if t < busy_until + MIN_GAP or t > duration - TAIL_CLEAR:
+        if t < busy_until + min_gap or t > duration - TAIL_CLEAR:
             continue
         length = min(MAX_LEN, end - t, duration - t - 0.3)
         if length < MIN_LEN:

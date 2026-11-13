@@ -20,6 +20,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..styles import StyleSettings
+
 JOB_ID = re.compile(r"^[a-f0-9]{12}\Z")          # \Z, not $: "$" also matches before a trailing newline
 CLIP_ID = re.compile(r"^c\d{1,3}\Z")
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
@@ -48,6 +50,8 @@ class Params(_M):
     cover: bool = False                     # a bold title for the first ~250 ms (and a cover PNG)
     logo: bool = False                      # the account's logo in a corner
     outro: bool = False                     # the account's ending video after each clip
+    style: Optional[StyleSettings] = None   # a COPY of a saved style's settings (editing the style later changes nothing here)
+    style_name: str = Field(default="", max_length=60)
 
 
 class Stage(_M):
