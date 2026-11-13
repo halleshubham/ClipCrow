@@ -21,12 +21,12 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from ..assets.urlguard import UnsafeURL, assert_public_url
 from ..costs import estimate_cost, estimate_total
@@ -40,6 +40,7 @@ from .plans import Catalog, load_catalog
 from .publish import PublishError, SocioBird, caption_html, settings_for, validate_when
 from .retention import Sweeper, env_days, expires_at
 from .storage import Mirror, S3Storage, StorageError, signature
+from .uploads import OPEN_LIMIT, Upload, UploadStore
 from .runner import JobRunner, Pipeline
 
 STATIC = Path(__file__).parent / "static"
@@ -72,6 +73,26 @@ class PackChoice(BaseModel):
     pack: str
 
 
+PART_SIZE = 64 * 1024 * 1024        # every part but the last; S3/R2 need equal parts of at least 5 MiB
+ETAG = re.compile(r'^"?[0-9a-fA-F]{32}"?\Z')
+
+
+class StartUpload(BaseModel):
+    filename: str = Field(max_length=300)
+    size: int = Field(gt=0)
+    rights: bool = False
+
+
+class PartIn(BaseModel):
+    n: int = Field(ge=1, le=10000)
+    etag: str = Field(max_length=100)
+
+
+class CompleteUpload(BaseModel):
+    parts: list[PartIn] = Field(max_length=10000)
+    options: dict[str, Union[str, int, float, bool, None]] = Field(default_factory=dict)
+
+
 class PublishBody(BaseModel):
     channels: list[str]
     caption: str = ""
@@ -82,11 +103,11 @@ class PublishBody(BaseModel):
     ai_confirmed: bool = False
 
 
-def _opt_int(v: Optional[str]) -> Optional[int]:
+def _opt_int(v) -> Optional[int]:
     return int(v) if v not in (None, "") else None
 
 
-def _opt_float(v: Optional[str], default: float) -> float:
+def _opt_float(v, default: float) -> float:
     return float(v) if v not in (None, "") else default
 
 
@@ -111,6 +132,11 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         runner.on_change = mirror.submit
     # presigned downloads and playback come from the bucket's address: allow exactly that origin for media, nothing else
     csp = CSP.replace("media-src 'self'", f"media-src 'self' {storage.origin}") if storage else CSP
+    direct = bool(storage) and os.environ.get("CLIPCROW_DIRECT_UPLOAD", "1") != "0"
+    if direct:                                              # the browser PUTs file parts straight to the bucket
+        csp = csp.replace("connect-src 'self'", f"connect-src 'self' {storage.origin}")
+    uploads = UploadStore(data_dir) if direct else None
+    runner.storage = storage
     if start_runner:
         runner.recover()
     @asynccontextmanager
@@ -184,7 +210,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return env_days()
 
     if start_runner and (accounts or any(env_days()) or storage):
-        app.state.sweeper = Sweeper(store, days_for, storage=storage, mirror=mirror, local_clip_days=local_clip_days)
+        app.state.sweeper = Sweeper(store, days_for, storage=storage, mirror=mirror, local_clip_days=local_clip_days,
+                                    extra=[lambda: expire_uploads()] if direct else [])          # resolved when it runs: defined further down
         app.state.sweeper.start()
 
     def purge_remote(job_id: str, message: str = "The stored copies could not be removed just now, so nothing was deleted. Try again in a minute.") -> None:
@@ -212,7 +239,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         except HTTPException:
             signed_in = False
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
-                "signup": bool(accounts) and allow_signup, "email": email, "billing": bool(accounts and razorpay), "publishing": bool(sociobird) and (not accounts or sociobird_shared),
+                "signup": bool(accounts) and allow_signup, "email": email, "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(sociobird) and (not accounts or sociobird_shared),
                 "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready(),
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False))}
 
@@ -461,6 +488,171 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return {"status": apply_event(event, event_id[:100], accounts, catalog)}
 
     # --- jobs -----------------------------------------------------------------------------
+    def truthy(v) -> bool:
+        return v is True or str(v).lower() in ("1", "true", "on", "yes")
+
+    def build_params(o: dict) -> Params:
+        """The job options, from a form or from JSON (strings or typed values), checked once for both upload paths."""
+        link_list = [x.strip() for x in str(o.get("links") or "").splitlines() if x.strip()]
+        want_images = truthy(o.get("ai_images"))
+        if len(link_list) > 6:
+            raise HTTPException(422, "Use at most 6 links.")
+        for u in link_list:
+            try:
+                assert_public_url(u)
+            except UnsafeURL as e:
+                raise HTTPException(422, f"Link {link_list.index(u) + 1}: {e}")
+        if want_images and not getattr(pipeline, "can_generate_images", False):
+            raise HTTPException(422, "AI image generation is not set up on this server.")
+        try:
+            params = Params(language=o.get("language") or None, clips=_opt_int(o.get("clips")),
+                            min_clip=_opt_int(o.get("min_clip")) or 15, max_clip=_opt_int(o.get("max_clip")) or 60,
+                            spread=_opt_float(o.get("spread"), 0.5), speaker_name=str(o.get("speaker_name") or "").strip() or None,
+                            speaker_title=str(o.get("speaker_title") or "").strip(), cutout=truthy(o.get("cutout")),
+                            immersive=truthy(o.get("immersive")), explainer=truthy(o.get("explainer")), links=link_list,
+                            ai_images=want_images, multi=o.get("multi") or "switch")
+        except (ValidationError, ValueError, TypeError) as e:
+            raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
+        if params.min_clip >= params.max_clip:
+            raise HTTPException(422, "The shortest clip must be shorter than the longest.")
+        return params
+
+    # --- direct uploads: the browser sends the file to the bucket, not through this server --------------------------------
+    def need_direct() -> S3Storage:
+        if not direct:
+            raise HTTPException(404, "Direct uploads are not turned on.")
+        return storage
+
+    def upload_or_404(upload_id: str, request: Request) -> Upload:
+        try:
+            rec = uploads.get(upload_id)
+        except KeyError:
+            raise HTTPException(404, "No such upload.")
+        user = getattr(request.state, "user", None)
+        if accounts and (user is None or rec.owner != user.id):
+            raise HTTPException(404, "No such upload.")
+        return rec
+
+    def abandon(rec: Upload, *, finished: bool) -> None:
+        """Throw an upload away: abort the multipart upload, or delete the object if it was already put together."""
+        try:
+            if finished:
+                storage.delete(rec.id, rec.rel)
+            else:
+                storage.abort_multipart(rec.id, rec.rel, rec.s3_upload_id)
+        except StorageError:
+            log = logging.getLogger("clipcrow.service")
+            log.warning("upload %s could not be removed from storage; the expiry sweep will retry", rec.id)
+            return                                           # keep the record so the sweep tries again
+        uploads.delete(rec.id)
+
+    def expire_uploads() -> None:
+        for rec in uploads.expired():
+            try:
+                storage.abort_multipart(rec.id, rec.rel, rec.s3_upload_id)
+            except StorageError:
+                continue
+            try:
+                storage.delete(rec.id, rec.rel)
+            except StorageError:
+                continue
+            uploads.delete(rec.id)
+
+    app.state.uploads, app.state.expire_uploads = uploads, expire_uploads
+
+    @app.post("/api/uploads", dependencies=[Depends(authed)], status_code=201)
+    def start_upload(body: StartUpload, request: Request) -> dict:
+        sb = need_direct()
+        if not body.rights:
+            raise HTTPException(400, "Confirm that you own this video or have the rights to process it.")
+        suffix = Path(body.filename).suffix.lower()
+        if suffix not in VIDEO_SUFFIXES:
+            raise HTTPException(400, "Upload an MP4, MOV, MKV, WebM or M4V video.")
+        if body.size > limit:
+            raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
+        problem = pipeline.check_ready()
+        if problem:
+            raise HTTPException(503, problem)
+        user = request.state.user
+        owner = user.id if accounts else None
+        if uploads.open_for(owner) >= OPEN_LIMIT:
+            raise HTTPException(429, "You have unfinished uploads. Let them finish or cancel them first.")
+        count = -(-body.size // PART_SIZE)
+        part_size = PART_SIZE if count > 1 else body.size
+        uid = uploads.new_id()
+        rel = f"source{suffix}"
+        try:
+            s3id = sb.create_multipart(uid, rel)
+        except StorageError as e:
+            raise HTTPException(502, str(e))
+        rec = Upload(id=uid, owner=owner, filename=Path(body.filename).name[:200], suffix=suffix, size=body.size,
+                     part_size=part_size, parts=count, s3_upload_id=s3id, created_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"))
+        uploads.save(rec)
+        try:
+            parts = []
+            for n in range(1, count + 1):
+                length = part_size if n < count else body.size - part_size * (count - 1)
+                parts.append({"n": n, "length": length, "url": sb.presign_part(uid, rel, s3id, n, length)})
+        except StorageError as e:
+            abandon(rec, finished=False)
+            raise HTTPException(502, str(e))
+        return {"id": uid, "part_size": part_size, "parts": parts, "expires_in": 3600}
+
+    @app.delete("/api/uploads/{upload_id}", dependencies=[Depends(authed)], status_code=204)
+    def cancel_upload(upload_id: str, request: Request) -> None:
+        need_direct()
+        abandon(upload_or_404(upload_id, request), finished=False)
+
+    @app.post("/api/uploads/{upload_id}/complete", dependencies=[Depends(authed)], status_code=201)
+    async def complete_upload(upload_id: str, body: CompleteUpload, request: Request) -> dict:
+        sb = need_direct()
+        rec = upload_or_404(upload_id, request)
+        user = request.state.user
+        params = build_params(body.options)                    # a bad option must not cost the person their upload: check first
+        if sorted(p.n for p in body.parts) != list(range(1, rec.parts + 1)):
+            raise HTTPException(422, "Some parts of the upload are missing.")
+        if any(not ETAG.match(p.etag) for p in body.parts):
+            raise HTTPException(422, "The storage service did not confirm every part.")
+        try:
+            await asyncio.to_thread(sb.complete_multipart, rec.id, rec.rel, rec.s3_upload_id, [(p.n, p.etag) for p in body.parts])
+        except StorageError:
+            abandon(rec, finished=False)
+            raise HTTPException(422, "The upload did not finish properly. Start it again.")
+        try:
+            size = await asyncio.to_thread(sb.size, rec.id, rec.rel)
+        except StorageError as e:
+            raise HTTPException(502, str(e))
+        if size != rec.size:
+            abandon(rec, finished=True)
+            raise HTTPException(422, "The uploaded file is not the size that was announced. Start it again.")
+        try:
+            info = await asyncio.to_thread(probe_source, sb.presign_get(rec.id, rec.rel, expires=900), remote=True)
+        except (ValueError, StorageError, OSError):
+            abandon(rec, finished=True)
+            raise HTTPException(400, "That file could not be read as a video.")
+        if info.duration < params.min_clip + 5:
+            abandon(rec, finished=True)
+            raise HTTPException(400, f"This video is {info.duration:.0f} s long; clips of at least {params.min_clip} s need a longer video.")
+        job = store.create(rec.filename, params, demo=demo, job_id=rec.id)
+        job.source = {"duration": info.duration, "width": info.width, "height": info.height}
+        job.source_pending = rec.rel
+        job.remote[rec.rel] = f"remote:{rec.size}"              # in the bucket already; retention removes it with the job
+        if accounts:
+            job.owner = user.id
+            minutes = max(1, math.ceil(info.duration / 60))
+            plan = effective_plan(user)
+            if accounts.reserve(user.id, job.id, minutes, plan.monthly_minutes) is None:
+                store.delete(job.id)
+                abandon(rec, finished=True)
+                have = max(plan.monthly_minutes - accounts.used_this_month(user.id), 0) + accounts.get(user.id).credits
+                raise HTTPException(402, f"This video is {minutes} min long and you have {have:.0f} min left on the {plan.name} plan this "
+                                         f"month. Upgrade, buy minutes, or wait for the month to reset.")
+            job.reserved_minutes = minutes
+        store.save(job)
+        uploads.delete(rec.id)
+        runner.submit(job.id)
+        return view(store.get(job.id))
+
     @app.post("/api/jobs", dependencies=[Depends(authed)], status_code=201)
     async def create_job(request: Request, file: UploadFile = File(...), rights: str = Form(""),
                          language: Optional[str] = Form(None), clips: Optional[str] = Form(None),
@@ -475,31 +667,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         declared = int(request.headers.get("content-length") or 0)
         if declared > limit + 1_000_000:
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
-        link_list = [x.strip() for x in (links or "").splitlines() if x.strip()]
-        want_images = str(ai_images).lower() in ("1", "true", "on", "yes")
-        if len(link_list) > 6:
-            raise HTTPException(422, "Use at most 6 links.")
-        for u in link_list:
-            try:
-                assert_public_url(u)
-            except UnsafeURL as e:
-                raise HTTPException(422, f"Link {link_list.index(u) + 1}: {e}")
-        if want_images and not getattr(pipeline, "can_generate_images", False):
-            raise HTTPException(422, "AI image generation is not set up on this server.")
-        try:
-            params = Params(language=language or None, clips=_opt_int(clips), min_clip=_opt_int(min_clip) or 15,
-                            max_clip=_opt_int(max_clip) or 60, spread=_opt_float(spread, 0.5),
-                            speaker_name=(speaker_name or "").strip() or None,
-                            speaker_title=(speaker_title or "").strip(),
-                            cutout=str(cutout).lower() in ("1", "true", "on", "yes"),
-                            immersive=str(immersive).lower() in ("1", "true", "on", "yes"),
-                            explainer=str(explainer).lower() in ("1", "true", "on", "yes"), links=link_list,
-                            ai_images=want_images,
-                            multi=multi or "switch")
-        except (ValidationError, ValueError) as e:
-            raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
-        if params.min_clip >= params.max_clip:
-            raise HTTPException(422, "The shortest clip must be shorter than the longest.")
+        params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
+                                   speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi,
+                                   immersive=immersive, explainer=explainer, links=links, ai_images=ai_images))
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in VIDEO_SUFFIXES:
             raise HTTPException(400, "Upload an MP4, MOV, MKV, WebM or M4V video.")

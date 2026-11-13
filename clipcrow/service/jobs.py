@@ -94,6 +94,7 @@ class Job(_M):
     owner: Optional[str] = None             # the user id when accounts are on; None in single-user mode
     reserved_minutes: float = 0             # source minutes taken from the owner's allowance for this job
     source_removed: bool = False            # the uploaded original was deleted by retention
+    source_pending: Optional[str] = None    # the original is in the bucket (a direct upload) and has not been fetched yet
     remote: dict[str, str] = Field(default_factory=dict)   # relative name -> signature of the copy in object storage
 
     def clip(self, clip_id: str) -> ClipInfo:
@@ -122,8 +123,10 @@ class JobStore:
             raise KeyError(job_id)
         return self.root / job_id
 
-    def create(self, name: str, params: Params, *, demo: bool = False) -> Job:
-        job = Job(id=uuid.uuid4().hex[:12], name=name[:200], created_at=now(), params=params, demo=demo)
+    def create(self, name: str, params: Params, *, demo: bool = False, job_id: Optional[str] = None) -> Job:
+        if job_id is not None and not JOB_ID.match(job_id):
+            raise ValueError("bad job id")
+        job = Job(id=job_id or uuid.uuid4().hex[:12], name=name[:200], created_at=now(), params=params, demo=demo)
         (self.root / job.id / "out").mkdir(parents=True)
         self.save(job)
         return job

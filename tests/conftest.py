@@ -52,3 +52,37 @@ def fonts_available():
         fonts.resolve_font("Noto Serif", 700)
     except fonts.FontNotFound:
         pytest.skip("Noto Serif Devanagari / Noto Serif are not installed (fonts-noto-core)")
+
+
+# --- an S3-compatible server on localhost (moto) for the storage and direct-upload tests ------------------------------
+
+@pytest.fixture(scope="module")
+def endpoint():
+    import socket
+    import time
+    pytest.importorskip("boto3")
+    pytest.importorskip("moto")
+    from moto.server import ThreadedMotoServer
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = ThreadedMotoServer(port=port, verbose=False)
+    server.start()
+    yield f"http://127.0.0.1:{port}"
+    server.stop()
+
+
+_n = [0]
+
+
+@pytest.fixture
+def storage(endpoint):
+    import time
+    import boto3
+    from clipcrow.service.storage import S3Storage
+    _n[0] += 1
+    bucket = f"bucket-{_n[0]}-{int(time.time())}"
+    boto3.client("s3", endpoint_url=endpoint, region_name="us-east-1", aws_access_key_id="k", aws_secret_access_key="s").create_bucket(Bucket=bucket)  # the app itself uses region "auto"
+    return S3Storage(bucket, endpoint=endpoint, access_key="k", secret_key="s", prefix="cc")
+
+

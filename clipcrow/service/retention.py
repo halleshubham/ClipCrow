@@ -78,9 +78,11 @@ def expires_at(job: Job, retention_days: int) -> Optional[str]:
 class Sweeper:
     """Runs ``sweep`` now and then in a background thread."""
 
-    def __init__(self, store: JobStore, days_for, every_s: float = 3600, *, storage=None, mirror=None, local_clip_days: int = 0):
+    def __init__(self, store: JobStore, days_for, every_s: float = 3600, *, storage=None, mirror=None, local_clip_days: int = 0,
+                 extra=()):
         self.store, self.days_for, self.every_s = store, days_for, every_s
         self.storage, self.mirror, self.local_clip_days = storage, mirror, local_clip_days
+        self.extra = list(extra)                               # other periodic chores (e.g. expiring abandoned uploads)
         self._stop = threading.Event()
         self._t = threading.Thread(target=self._loop, name="clipcrow-retention", daemon=True)
 
@@ -93,6 +95,8 @@ class Sweeper:
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
+                for chore in self.extra:
+                    chore()
                 if self.mirror:
                     self.mirror.reconcile()                       # anything not in the bucket yet (or changed) goes up
                 r = sweep(self.store, self.days_for, storage=self.storage, local_clip_days=self.local_clip_days)
