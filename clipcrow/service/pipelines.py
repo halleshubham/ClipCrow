@@ -78,9 +78,15 @@ class RealPipeline:
         llm = AnthropicLLM(client=anthropic.Anthropic(timeout=60.0, max_retries=1))      # a stuck call must not hold the queue
         return read_look(path, duration, llm).model_dump()
 
+    hub = None                                                   # a WorkerHub, set by create_app when CLIPCROW_WORKER_TOKEN is on
+
     def run(self, job: Job, video: Path, out: Path, hooks: Hooks, say) -> MakeResult:
         from ..planner import AnthropicLLM
+        transcribe_fn = None
+        if self.hub is not None and self.hub.online():           # a GPU worker is out there: let it listen, fall back if it cannot
+            from .workers import RemoteTranscriber
+            transcribe_fn = RemoteTranscriber(self.hub, video.parent, check=hooks.check)
         return make(video, out, language=job.params.language, llm=AnthropicLLM(), opts=planner_options(job),
-                    hooks=hooks, say=say, multi=job.params.multi,
+                    hooks=hooks, say=say, multi=job.params.multi, transcribe_fn=transcribe_fn,
                     images=self._images() if job.params.ai_images else None,
                     gsap_js=os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"))

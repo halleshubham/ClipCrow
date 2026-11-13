@@ -52,6 +52,9 @@ services:
       - SOCIOBIRD_API_KEY=${SOCIOBIRD_API_KEY:-}
       - CLIPCROW_SOCIOBIRD_SHARED=${CLIPCROW_SOCIOBIRD_SHARED:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # --- a GPU worker on another machine (your own PC) does the speech recognition: see docs/deploy.md. Empty = off.
+      - CLIPCROW_WORKER_TOKEN=${CLIPCROW_WORKER_TOKEN:-}
+      - CLIPCROW_WORKER_PICKUP_SECONDS=${CLIPCROW_WORKER_PICKUP_SECONDS:-120}
       # --- shutdown: how long a deploy waits for the running job before putting it back in the queue
       - DRAIN_TIMEOUT_SECONDS=${DRAIN_TIMEOUT_SECONDS:-45}
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility

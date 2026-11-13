@@ -66,7 +66,33 @@ with `S3Storage.set_cors(["http://127.0.0.1:8767"])`, run `clipcrow serve --demo
 `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` and `CLIPCROW_UPLOAD_PART_MB=5`, then
 `node scripts/e2e_direct_upload.js <video over 3.5 min> <dir> direct` (also `fallback` and `expose`).
 
-## 4. Things that will bite you
+## 4. A GPU worker on your own machine (optional)
+
+Speech recognition is the slowest step on a CPU-only server (a long Marathi video can take longer than the video). If you have a
+machine with an NVIDIA GPU (8 GB is enough for `large-v3`), it can do that step for the server. The worker only makes outgoing HTTPS
+requests, so the machine opens no port and needs no tunnel.
+
+1. **Make a secret** (at least 16 characters): `openssl rand -hex 32`. Set it as `CLIPCROW_WORKER_TOKEN` in Coolify and redeploy. Leave it
+   empty and the feature does not exist (the routes answer 404).
+2. **On the GPU machine** (Linux, NVIDIA driver 535 or newer). The easiest way is the same image the server runs, so the versions match:
+   ```bash
+   export CLIPCROW_WORKER_TOKEN=...   # the same secret; it is read from the environment, never from the command line
+   docker run --rm --gpus all --no-healthcheck -e CLIPCROW_WORKER_TOKEN -v clipcrow-models:/models \
+     ghcr.io/halleshubham/clipcrow:latest clipcrow worker --server https://<your domain> --name home-gpu
+   ```
+   (needs `nvidia-container-toolkit`; check with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`).
+   Without Docker: `pip install 'clipcrow[asr]' 'av<19' nvidia-cublas-cu12 'nvidia-cudnn-cu12==9.*'`, put those two libraries' folders on
+   `LD_LIBRARY_PATH`, then run `clipcrow worker --server ...`. The first run downloads the model (about 3 GB).
+3. **How it behaves.** The server checks whether a worker has asked for work in the last minute. If one has, a job's audio (about 0.3 MB a
+   minute) is queued for it; if it does not pick the task up within `CLIPCROW_WORKER_PICKUP_SECONDS` (default 120), or stops sending
+   heartbeats, or reports an error, the server transcribes by itself as before. If no worker is online the server does not wait at all.
+   So switching the PC off is always safe, and the job log says which one did the work. `/api/config` shows `gpu_worker.online`.
+4. **Privacy.** Audio goes only to a worker that holds the lease on that task, and only your machine. If other people use your server,
+   their audio would be processed on that machine: only run a worker you control, and say so in your terms.
+
+Rendering stays on the server for now.
+
+## 5. Things that will bite you
 
 - **Cloudflare in front of the domain:** the orange-cloud proxy limits request bodies (100 MB on the free plan). With R2 configured,
   uploads go **straight from the browser to the bucket** and never touch your domain, so the limit does not apply to them: set the

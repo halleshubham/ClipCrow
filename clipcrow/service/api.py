@@ -44,6 +44,7 @@ from .publish import PublishError, SocioBird, caption_html, settings_for, valida
 from .retention import Sweeper, env_days, expires_at
 from .storage import Mirror, S3Storage, StorageError, signature
 from .uploads import OPEN_LIMIT, Upload, UploadStore
+from .workers import HeartbeatIn, PollIn, ResultIn, TASK_ID, WorkerHub
 from .runner import JobRunner, Pipeline
 from .style_store import StyleStore
 from ..styles import MAX_REFERENCE_BYTES, StyleError, StyleSettings, derive, measure
@@ -134,7 +135,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                demo: bool = False, start_runner: bool = True, accounts: Accounts | None = None,
                catalog: Catalog | None = None, allow_signup: bool = True, razorpay: Razorpay | None = None,
                sociobird: SocioBird | None = None, sociobird_shared: bool = False, storage: S3Storage | None = None,
-               storage_redirect: bool = False, backup_source: bool = False, local_clip_days: int = 0) -> FastAPI:
+               storage_redirect: bool = False, backup_source: bool = False, local_clip_days: int = 0,
+               worker_token: str | None = None, worker_pickup_seconds: float = 120.0, worker_lease_seconds: float = 90.0) -> FastAPI:
     """``accounts``: multi-user mode (sign-up, per-user jobs, minutes metered against the plan). Without it the app is
     single-user, optionally behind ``token``."""
     store = JobStore(data_dir)
@@ -159,6 +161,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     brands = BrandStore(data_dir)
     runner.brands = brands
     styles = StyleStore(data_dir)
+    hub = WorkerHub(worker_token, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds) if worker_token else None
+    if hub is not None:
+        pipeline.hub = hub                                  # RealPipeline sends speech recognition to a worker when one is online
     style_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-style")
     for _owner, _rec in styles.stale_analyzing():           # a restart interrupted these: nothing is measuring them now
         styles.fail(_owner, _rec.id, "The server restarted while this was being measured. Upload the reference again.")
@@ -268,7 +273,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
                 "signup": bool(accounts) and allow_signup, "email": email, "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(sociobird) and (not accounts or sociobird_shared),
                 "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready(),
-                "ai_images": bool(getattr(pipeline, "can_generate_images", False))}
+                "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
+                "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online())}}
 
     @app.post("/api/login")
     def login(body: Login, request: Request) -> JSONResponse:
@@ -909,6 +915,46 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     def style_delete(style_id: str, request: Request) -> None:
         style_or_404(style_id, request)
         styles.delete(brand_owner(request), style_id)
+
+    # --- GPU workers: a machine the operator owns pulls speech-recognition tasks (see service/workers.py) ----------------------
+    def worker_auth(request: Request) -> None:
+        if hub is None:
+            raise HTTPException(404, "Not found.")
+        header = request.headers.get("authorization", "")
+        if not header.lower().startswith("bearer ") or not hub.check_token(header[7:].strip()):
+            raise HTTPException(401, "That worker token is not right.")
+
+    def task_id_or_404(task_id: str) -> str:
+        if not re.fullmatch(TASK_ID, task_id):
+            raise HTTPException(404, "No such task.")
+        return task_id
+
+    @app.post("/api/worker/poll", dependencies=[Depends(worker_auth)])
+    async def worker_poll(body: PollIn) -> dict:
+        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model)
+        if task is None:
+            return {"task": None}
+        return {"task": {"id": task.id, "kind": "transcribe", "language": task.language, "lease_seconds": hub.lease_seconds}}
+
+    @app.get("/api/worker/tasks/{task_id}/audio", dependencies=[Depends(worker_auth)])
+    def worker_audio(task_id: str, worker: str):
+        path = hub.audio_for(task_id_or_404(task_id), worker)
+        if path is None or not path.is_file():
+            raise HTTPException(404, "No such task.")
+        return FileResponse(path, media_type="audio/mp4")
+
+    @app.post("/api/worker/tasks/{task_id}/heartbeat", dependencies=[Depends(worker_auth)])
+    def worker_heartbeat(task_id: str, body: HeartbeatIn) -> dict:
+        return {"ok": hub.heartbeat(task_id_or_404(task_id), body.worker)}
+
+    @app.post("/api/worker/tasks/{task_id}/result", dependencies=[Depends(worker_auth)])
+    def worker_result(task_id: str, body: ResultIn) -> dict:
+        task_id_or_404(task_id)
+        if body.error:
+            return {"ok": hub.finish(task_id, body.worker, error=body.error)}
+        if not body.words:
+            return {"ok": hub.finish(task_id, body.worker, error="the worker found no speech")}
+        return {"ok": hub.finish(task_id, body.worker, result={"language": body.language, "words": [w.model_dump() for w in body.words]})}
 
     # --- the brand kit: logo, ending video, how the cover and logo look ----------------------------------------
     @app.get("/api/brand", dependencies=[Depends(authed)])

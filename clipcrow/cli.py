@@ -52,6 +52,11 @@ def main(argv: list[str] | None = None) -> int:
     rc = sub.add_parser("r2-cors", help="set (or show) the bucket's CORS rule that lets browsers upload straight to R2")
     rc.add_argument("--origin", action="append", default=[], help="the site's address, e.g. https://clips.example.com (repeat for several)")
     rc.add_argument("--show", action="store_true", help="print the current rule instead of changing it")
+    wk = sub.add_parser("worker", help="run speech recognition for a ClipCrow server on this machine (e.g. one with an NVIDIA GPU); "
+                                       "needs CLIPCROW_WORKER_TOKEN in the environment")
+    wk.add_argument("--server", required=True, help="the server's address, e.g. https://clipcrow.example.com")
+    wk.add_argument("--name", default=os.environ.get("HOSTNAME", "worker")[:40] or "worker", help="a name shown on the server")
+    wk.add_argument("--model", default="large-v3", help="faster-whisper model (large-v3 needs about 4-5 GB of GPU memory)")
     st = sub.add_parser("selftest", help="can this machine render? checks the tools and renders a tiny Devanagari clip")
     st.add_argument("--no-render", action="store_true", help="check the tools only")
     u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
@@ -110,7 +115,9 @@ def main(argv: list[str] | None = None) -> int:
                              storage=storage, storage_redirect=os.environ.get("CLIPCROW_R2_REDIRECT") == "1",
                              backup_source=os.environ.get("CLIPCROW_R2_BACKUP_SOURCE") == "1",
                              local_clip_days=int(os.environ.get("CLIPCROW_LOCAL_CLIP_DAYS", "0") or 0),
-                             sociobird_shared=os.environ.get("CLIPCROW_SOCIOBIRD_SHARED") == "1")
+                             sociobird_shared=os.environ.get("CLIPCROW_SOCIOBIRD_SHARED") == "1",
+                             worker_token=os.environ.get("CLIPCROW_WORKER_TOKEN") or None,
+                             worker_pickup_seconds=float(os.environ.get("CLIPCROW_WORKER_PICKUP_SECONDS", "120") or 120))
             uvicorn.run(app, host=a.host, port=a.port, log_level="info", timeout_graceful_shutdown=20)
             return 0
         if a.cmd == "r2-cors":
@@ -126,6 +133,9 @@ def main(argv: list[str] | None = None) -> int:
             storage.set_cors(a.origin)
             print(f"CORS rule set on {storage.bucket} for: {', '.join(a.origin)}")
             return 0
+        if a.cmd == "worker":
+            from .worker import main as worker_main
+            return worker_main(a.server, a.name, a.model)
         if a.cmd == "selftest":
             from .selftest import run as selftest
             return 0 if selftest(skip_render=a.no_render) else 1

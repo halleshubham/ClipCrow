@@ -86,6 +86,12 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   compose `stop_grace_period`. A drained job is requeued, never marked failed or refunded. A job a hard kill left `running` is queued again ONCE by `recover()` (`Job.attempts`), then failed with its step marked failed, so a job that takes the server down cannot loop; keep that cap. The HyperFrames pin in the
   Dockerfile must equal `render.HYPERFRAMES_VERSION` (the build checks). HyperFrames' contrast audit is a warning, not a
   reason to fail a render (`render.check_warnings`).
+- GPU worker (`service/workers.py`, `clipcrow/worker.py`): a machine the operator owns PULLS speech-recognition tasks over HTTPS (no inbound
+  port). One shared secret `CLIPCROW_WORKER_TOKEN` (>= 16 chars, constant-time compare, a different secret from any login; unset = the routes
+  404). Everything a worker sends is untrusted: bounded by `ResultIn`, then `parse_transcript`; a worker can only ever cost time, because
+  the job falls back to the server's own recognition when none is online, none picks the task up in `CLIPCROW_WORKER_PICKUP_SECONDS`, the
+  lease lapses (heartbeats), or it reports an error. Audio is served only to the worker holding the lease; the copy is deleted afterwards.
+  The worker reads its token from the environment, never argv. Task ids are 32 hex, checked with `re.fullmatch`.
 - Clip edits are `service.editor.ClipEdit`, a closed set of fields applied by the pure `apply_edit`; never accept a raw
   EDL or a path from the browser. The AI's `decided` list is not rewritten by a person: add a note instead.
   All edl.json writes go through the runner's edit lock; a render finishes only the latest edit (`_gen`).
