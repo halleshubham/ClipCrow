@@ -375,3 +375,13 @@ def test_the_app_drains_when_it_shuts_down(tmp_path, video_bytes, monkeypatch):
             time.sleep(0.02)
     assert app.state.store.get(jid).status == "queued"
     gate.set()
+
+
+def test_ui_files_are_revalidated_so_a_deploy_never_leaves_old_javascript(tmp_path):
+    c, _ = client(tmp_path)
+    for path in ("/", "/app.js", "/style.css"):
+        r = c.get(path)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-cache", path
+        assert r.headers.get("etag")
+    assert c.get("/app.js", headers={"If-None-Match": c.get("/app.js").headers["etag"]}).status_code == 304
+    assert c.get("/api/config").headers["cache-control"] == "no-store"

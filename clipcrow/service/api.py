@@ -176,6 +176,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         resp.headers["Referrer-Policy"] = "no-referrer"
         if request.url.path.startswith("/api"):
             resp.headers["Cache-Control"] = "no-store"
+        elif "Cache-Control" not in resp.headers:      # the UI files: always revalidate (ETag), or a deploy leaves old JS in browsers
+            resp.headers["Cache-Control"] = "no-cache"
         return resp
 
     def effective_plan(user: User):
