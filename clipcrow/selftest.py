@@ -49,8 +49,29 @@ def checks() -> list[tuple[str, Callable[[], str]]]:
         if not p.is_file():
             raise RuntimeError(f"{p} is missing (scripts/fetch_gsap.sh)")
         return str(p)
+    def speech():
+        """Really decode audio the way a transcription does (faster-whisper's decoder, i.e. PyAV): an import check is not enough,
+        a PyAV that is too new imports fine and then fails on every file."""
+        try:
+            from faster_whisper.audio import decode_audio
+            import importlib.metadata as md
+        except ImportError:
+            raise RuntimeError("faster-whisper is not installed (pip install 'clipcrow[asr]')") from None
+        with tempfile.TemporaryDirectory() as d:
+            wav = Path(d) / "tone.wav"
+            subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=2", str(wav)], check=True, timeout=30)
+            samples = len(decode_audio(str(wav), sampling_rate=16000))
+        if samples < 16000:
+            raise RuntimeError(f"decoded only {samples} samples from a 2 s tone")
+        return f"faster-whisper {md.version('faster-whisper')}, av {md.version('av')}: decoded {samples / 16000:.0f} s of audio"
+
+    def gpu():
+        from .asr import _cuda_devices
+        n = _cuda_devices()
+        return (f"{n} CUDA device(s) visible to CTranslate2: Whisper will use the GPU" if n
+                else "no CUDA device visible to CTranslate2: Whisper will use the CPU (fine for testing, slow for long videos)")
     return [("ffmpeg", tool("ffmpeg")), ("ffprobe", tool("ffprobe")), ("hyperframes", hyperframes), ("chrome", chrome),
-            ("fonts", font_files), ("gsap", gsap)]
+            ("fonts", font_files), ("gsap", gsap), ("speech", speech), ("gpu", gpu)]
 
 
 def render_check() -> str:

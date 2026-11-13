@@ -10,7 +10,9 @@ dependencies = ["pydantic>=2.6"]
 dev = ["pytest>=8", "moto[server]>=5"]      # moto: an S3-compatible server for the storage tests
 llm = ["anthropic>=1.0"]
 examples = ["pillow", "numpy"]
-asr = ["faster-whisper>=1.0", "av>=11,<19"]   # PyAV 19 dropped av.open(metadata_errors=), which faster-whisper still passes
+# av < 19: PyAV 19 dropped av.open(metadata_errors=...), which faster-whisper (1.2.1, the newest) still passes: every transcription
+# fails with "open() got an unexpected keyword argument 'metadata_errors'". Lift the bound when faster-whisper stops passing it.
+asr = ["faster-whisper>=1.0", "av>=12.3,<19"]
 vision = ["opencv-python-headless>=4.8,<5", "numpy"]
 service = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
 storage = ["boto3>=1.36"]              # Cloudflare R2 / S3 (boto3 >= 1.36 so the checksum setting R2 needs exists)

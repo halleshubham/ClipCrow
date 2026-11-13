@@ -19,6 +19,8 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CLIPCROW_MODEL=${CLIPCROW_MODEL:-}
       - CLIPCROW_INDIC_MODEL=${CLIPCROW_INDIC_MODEL:-}      # e.g. large-v3 for Marathi/Hindi
+      - CLIPCROW_WHISPER_DEVICE=${CLIPCROW_WHISPER_DEVICE:-}  # empty = auto: the GPU when one is visible, else the CPU
+      - HF_TOKEN=${HF_TOKEN:-}                              # optional: faster, rate-limit-free model downloads from Hugging Face
       # --- object storage (Cloudflare R2 or any S3-compatible store); leave empty to keep everything on the /data volume
       - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
       - R2_ENDPOINT=${R2_ENDPOINT:-}

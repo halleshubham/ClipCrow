@@ -4,7 +4,8 @@
     transcribe("talk.mp4", language="mr")       # pin the language
 
 Env: CLIPCROW_WHISPER_MODEL (default "small"), CLIPCROW_INDIC_MODEL (a larger model used only for
-Indic audio, e.g. "large-v3"), CLIPCROW_WHISPER_DEVICE ("cpu"/"cuda"), CLIPCROW_WHISPER_COMPUTE.
+Indic audio, e.g. "large-v3"), CLIPCROW_WHISPER_DEVICE ("auto" by default: the GPU when CTranslate2 can see one, else "cpu";
+or force "cpu"/"cuda"), CLIPCROW_WHISPER_COMPUTE ("auto": float16 on a GPU, int8 on a CPU).
 """
 from __future__ import annotations
 
@@ -25,8 +26,26 @@ LOOP_RUN = 3          # the same segment this many times in a row is a Whisper r
 class AsrConfig:
     model: str = field(default_factory=lambda: os.environ.get("CLIPCROW_WHISPER_MODEL", "small"))
     indic_model: str | None = field(default_factory=lambda: os.environ.get("CLIPCROW_INDIC_MODEL") or None)
-    device: str = field(default_factory=lambda: os.environ.get("CLIPCROW_WHISPER_DEVICE", "cpu"))
-    compute_type: str = field(default_factory=lambda: os.environ.get("CLIPCROW_WHISPER_COMPUTE", "int8"))
+    device: str = field(default_factory=lambda: os.environ.get("CLIPCROW_WHISPER_DEVICE") or "auto")
+    compute_type: str = field(default_factory=lambda: os.environ.get("CLIPCROW_WHISPER_COMPUTE") or "auto")
+
+
+def _cuda_devices() -> int:
+    try:
+        import ctranslate2
+        return int(ctranslate2.get_cuda_device_count())
+    except Exception:                                  # no CUDA build, no driver, no GPU: all mean "use the CPU"
+        return 0
+
+
+def resolve_device(device: str, compute_type: str, cuda_devices: Callable[[], int] = _cuda_devices) -> tuple[str, str]:
+    """``("auto", "auto")`` becomes ``("cuda", "float16")`` when a GPU is visible and ``("cpu", "int8")`` when not. A forced
+    ``cuda`` is kept (and fails loudly if there is no GPU, which is what an operator who forced it wants to know)."""
+    if device == "auto":
+        device = "cuda" if cuda_devices() > 0 else "cpu"
+    if compute_type == "auto":
+        compute_type = "float16" if device == "cuda" else "int8"
+    return device, compute_type
 
 
 _models: dict[tuple, object] = {}
@@ -34,11 +53,12 @@ _lock = threading.Lock()
 
 
 def _load(cfg: AsrConfig, size: str):
-    key = (size, cfg.device, cfg.compute_type)
+    device, compute = resolve_device(cfg.device, cfg.compute_type)
+    key = (size, device, compute)
     with _lock:
         if key not in _models:
             from faster_whisper import WhisperModel   # lazy: unit tests and the planner need no model
-            _models[key] = WhisperModel(size, device=cfg.device, compute_type=cfg.compute_type)
+            _models[key] = WhisperModel(size, device=device, compute_type=compute)
         return _models[key]
 
 

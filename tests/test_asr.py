@@ -123,3 +123,52 @@ def test_transcribe_command_writes_a_transcript_the_planner_can_load(tmp_path, m
     assert main(["transcribe", "x.mp4", "--out", str(out)]) == 0
     tr = load_transcript(out)
     assert tr.language == "mr" and len(tr.words) == 2
+
+
+# --- device selection: use the GPU when there is one -------------------------------------------------------------------------
+
+def test_auto_picks_the_gpu_when_one_is_visible_and_the_cpu_when_not():
+    assert asr.resolve_device("auto", "auto", lambda: 1) == ("cuda", "float16")
+    assert asr.resolve_device("auto", "auto", lambda: 2) == ("cuda", "float16")
+    assert asr.resolve_device("auto", "auto", lambda: 0) == ("cpu", "int8")
+
+
+def test_a_forced_device_and_compute_type_are_respected():
+    assert asr.resolve_device("cpu", "auto", lambda: 1) == ("cpu", "int8")             # forced to the CPU although a GPU exists
+    assert asr.resolve_device("cuda", "auto", lambda: 0) == ("cuda", "float16")        # forced: it fails loudly if there is no GPU
+    assert asr.resolve_device("cuda", "int8_float16", lambda: 1) == ("cuda", "int8_float16")
+    assert asr.resolve_device("auto", "float32", lambda: 0) == ("cpu", "float32")
+
+
+def test_a_machine_without_ctranslate2_or_a_gpu_just_uses_the_cpu(monkeypatch):
+    monkeypatch.setitem(__import__("sys").modules, "ctranslate2", None)               # import fails
+    assert asr._cuda_devices() == 0
+
+
+def test_the_default_config_is_auto_and_an_empty_env_value_means_auto(monkeypatch):
+    monkeypatch.delenv("CLIPCROW_WHISPER_DEVICE", raising=False)
+    monkeypatch.delenv("CLIPCROW_WHISPER_COMPUTE", raising=False)
+    assert (asr.AsrConfig().device, asr.AsrConfig().compute_type) == ("auto", "auto")
+    monkeypatch.setenv("CLIPCROW_WHISPER_DEVICE", "")                                  # compose passes empty strings for unset variables
+    monkeypatch.setenv("CLIPCROW_WHISPER_COMPUTE", "")
+    assert (asr.AsrConfig().device, asr.AsrConfig().compute_type) == ("auto", "auto")
+    monkeypatch.setenv("CLIPCROW_WHISPER_DEVICE", "cpu")
+    assert asr.AsrConfig().device == "cpu"
+
+
+def test_faster_whisper_can_really_decode_audio(tmp_path):
+    """An import is not enough: PyAV 19 imports fine and then fails on every file (it dropped metadata_errors)."""
+    import subprocess
+    pytest = __import__("pytest")
+    pytest.importorskip("faster_whisper")
+    from faster_whisper.audio import decode_audio
+    wav = tmp_path / "tone.wav"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=2", str(wav)], check=True)
+    assert len(decode_audio(str(wav), sampling_rate=16000)) == 32000
+
+
+def test_the_pyproject_keeps_pyav_below_the_version_that_broke_faster_whisper():
+    import tomllib
+    from pathlib import Path
+    deps = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text())["project"]["optional-dependencies"]["asr"]
+    assert any(d.replace(" ", "").startswith("av") and "<19" in d.replace(" ", "") for d in deps), deps
