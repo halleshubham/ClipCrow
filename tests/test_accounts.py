@@ -270,18 +270,18 @@ def test_old_originals_go_first_then_the_whole_job(tmp_path, video_bytes):
     jid = wait(c, upload(c, video_bytes).json()["id"])["id"]
     store = app.state.store
     days_for = lambda job: (7, 3)  # noqa: E731
-    assert sweep(store, days_for) == {"jobs": 0, "sources": 0}
+    assert sweep(store, days_for) == {"jobs": 0, "sources": 0, "evicted": 0}
     age(app, jid, 4)
-    assert sweep(store, days_for) == {"jobs": 0, "sources": 1}
+    assert sweep(store, days_for) == {"jobs": 0, "sources": 1, "evicted": 0}
     job = c.get(f"/api/jobs/{jid}").json()
     assert job["source_removed"] is True and store.source_path(jid) is None and job["expires_at"]
     cid = job["clips"][0]["id"]
     assert c.get(f"/api/jobs/{jid}/clips/{cid}/video").status_code == 200       # still watchable and downloadable
     r = c.put(f"/api/jobs/{jid}/clips/{cid}", json={"title": "new"})
     assert r.status_code == 409 and "can no longer be edited" in r.json()["detail"]
-    assert sweep(store, days_for) == {"jobs": 0, "sources": 0}                  # the original is only removed once
+    assert sweep(store, days_for) == {"jobs": 0, "sources": 0, "evicted": 0}                  # the original is only removed once
     age(app, jid, 8)
-    assert sweep(store, days_for) == {"jobs": 1, "sources": 0}
+    assert sweep(store, days_for) == {"jobs": 1, "sources": 0, "evicted": 0}
     assert c.get(f"/api/jobs/{jid}").status_code == 404
 
 
@@ -291,10 +291,10 @@ def test_a_running_job_is_never_swept_and_zero_means_keep(tmp_path, video_bytes)
     signup(c)
     jid = upload(c, video_bytes).json()["id"]
     age(app, jid, 400)
-    assert sweep(app.state.store, lambda j: (1, 1)) == {"jobs": 0, "sources": 0}
+    assert sweep(app.state.store, lambda j: (1, 1)) == {"jobs": 0, "sources": 0, "evicted": 0}
     gate.set()
     wait(c, jid)
-    assert sweep(app.state.store, lambda j: (0, 0)) == {"jobs": 0, "sources": 0}
+    assert sweep(app.state.store, lambda j: (0, 0)) == {"jobs": 0, "sources": 0, "evicted": 0}
     assert app.state.store.get(jid)
 
 

@@ -48,6 +48,7 @@ class JobRunner:
         self.store, self.pipeline = store, pipeline
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-job")
         self.on_finish = None                                      # called with the job once it is done, failed or cancelled
+        self.on_change = None                                      # called with a job id when its files changed (to mirror them)
         self._cancel: dict[str, threading.Event] = {}
         self._edit_lock = threading.Lock()                       # one edit at a time touches edl.json
         self._replan: dict[tuple[str, str], str] = {}            # (job, clip) -> multi mode to re-plan framing with
@@ -85,7 +86,16 @@ class JobRunner:
             self._finished(job)
         return True
 
+    def _changed(self, job_id: str) -> None:
+        if self.on_change:
+            try:
+                self.on_change(job_id)
+            except Exception:
+                log.exception("on_change failed for %s", job_id)
+
     def _finished(self, job: Job) -> None:
+        if job.status == "done":
+            self._changed(job.id)
         if self.on_finish:
             try:
                 self.on_finish(job)
@@ -199,6 +209,7 @@ class JobRunner:
             if replan:
                 self._replan[key] = replan
             self._mark(job_id, clip_id, new, render="queued", render_error="", edited=True)
+        self._changed(job_id)
         self._pool.submit(self._render_clip, job_id, clip_id)
         return True
 
@@ -219,6 +230,7 @@ class JobRunner:
             self._gen[key] = self._gen.get(key, 0) + 1
             self._replan.pop(key, None)
             self._mark(job_id, clip_id, new, render="queued", render_error="", edited=False)
+        self._changed(job_id)
         self._pool.submit(self._render_clip, job_id, clip_id)
         return True
 
@@ -264,6 +276,7 @@ class JobRunner:
             if self._gen.get(key, 0) == gen:                     # nobody edited again while we rendered
                 self._mark(job_id, clip_id, edl, render="ready", render_error="", ready=True, notes=list(warnings or []),
                            rev=self.store.get(job_id).clip(clip_id).rev + 1)
+                self._changed(job_id)
         except EXPECTED as e:
             self._mark(job_id, clip_id, render="failed", render_error=str(e)[:300])
         except Exception as e:

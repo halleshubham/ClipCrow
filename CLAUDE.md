@@ -53,6 +53,11 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   job state. Retention never touches queued/running jobs.
 - Posting: captions are escaped plain text; only checked platforms are allowed; with accounts on it needs
   `CLIPCROW_SOCIOBIRD_SHARED=1` because the key is the operator's. AI-generated media needs the person's confirmation.
+- Object storage: keys come only from a validated job id and the allow-list `storage.REL`, never from user text. ID
+  patterns end in `\Z`, not `$` (`$` also matches before a trailing newline). Deleting a job/account or expiring one
+  purges the bucket FIRST and aborts/retries if that fails. A clip is served from the bucket only when the local file is
+  missing or (redirect mode) byte-identical (`storage.signature`). Presigned links live at most an hour; the bucket is
+  never public.
 - Clip edits are `service.editor.ClipEdit`, a closed set of fields applied by the pure `apply_edit`; never accept a raw
   EDL or a path from the browser. The AI's `decided` list is not rewritten by a person: add a note instead.
   All edl.json writes go through the runner's edit lock; a render finishes only the latest edit (`_gen`).

@@ -92,9 +92,16 @@ def main(argv: list[str] | None = None) -> int:
             if a.host not in ("127.0.0.1", "::1", "localhost") and not token and not accounts and not a.insecure:
                 raise ValueError(f"refusing to listen on {a.host} without a login: set CLIPCROW_TOKEN "
                                  f"(or pass --insecure on a network you trust)")
+            from .service.storage import S3Storage
+            storage = S3Storage.from_env()
+            if storage:
+                print(f"object storage: bucket {storage.bucket} at {storage.host}", file=sys.stderr)
             app = create_app(a.data, DemoPipeline() if a.demo else RealPipeline(), token=token,
                              max_upload_mb=a.max_upload_mb, demo=a.demo, accounts=accounts, allow_signup=not a.no_signup,
                              razorpay=Razorpay.from_env() if accounts else None, sociobird=SocioBird.from_env(),
+                             storage=storage, storage_redirect=os.environ.get("CLIPCROW_R2_REDIRECT") == "1",
+                             backup_source=os.environ.get("CLIPCROW_R2_BACKUP_SOURCE") == "1",
+                             local_clip_days=int(os.environ.get("CLIPCROW_LOCAL_CLIP_DAYS", "0") or 0),
                              sociobird_shared=os.environ.get("CLIPCROW_SOCIOBIRD_SHARED") == "1")
             uvicorn.run(app, host=a.host, port=a.port, log_level="info")
             return 0

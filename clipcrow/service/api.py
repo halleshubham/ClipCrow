@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
@@ -37,6 +37,7 @@ from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Catalog, load_catalog
 from .publish import PublishError, SocioBird, caption_html, settings_for, validate_when
 from .retention import Sweeper, env_days, expires_at
+from .storage import Mirror, S3Storage, StorageError, signature
 from .runner import JobRunner, Pipeline
 
 STATIC = Path(__file__).parent / "static"
@@ -90,7 +91,8 @@ def _opt_float(v: Optional[str], default: float) -> float:
 def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = None, max_upload_mb: int = 4096,
                demo: bool = False, start_runner: bool = True, accounts: Accounts | None = None,
                catalog: Catalog | None = None, allow_signup: bool = True, razorpay: Razorpay | None = None,
-               sociobird: SocioBird | None = None, sociobird_shared: bool = False) -> FastAPI:
+               sociobird: SocioBird | None = None, sociobird_shared: bool = False, storage: S3Storage | None = None,
+               storage_redirect: bool = False, backup_source: bool = False, local_clip_days: int = 0) -> FastAPI:
     """``accounts``: multi-user mode (sign-up, per-user jobs, minutes metered against the plan). Without it the app is
     single-user, optionally behind ``token``."""
     store = JobStore(data_dir)
@@ -102,16 +104,22 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if accounts and job.owner and job.reserved_minutes and job.status in ("failed", "cancelled"):
             accounts.refund(job.owner, job.id)
     runner.on_finish = finish
+    mirror = Mirror(storage, store, backup_source=backup_source) if storage else None
+    if mirror:
+        runner.on_change = mirror.submit
+    # presigned downloads and playback come from the bucket's address: allow exactly that origin for media, nothing else
+    csp = CSP.replace("media-src 'self'", f"media-src 'self' {storage.origin}") if storage else CSP
     if start_runner:
         runner.recover()
     app = FastAPI(title="ClipCrow", docs_url=None, redoc_url=None)
     app.state.store, app.state.runner, app.state.accounts, app.state.catalog = store, runner, accounts, catalog
+    app.state.mirror, app.state.mirror_source = mirror, backup_source
     limit = max_upload_mb * 1024 * 1024
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         resp = await call_next(request)
-        resp.headers["Content-Security-Policy"] = CSP
+        resp.headers["Content-Security-Policy"] = csp
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "no-referrer"
         if request.url.path.startswith("/api"):
@@ -163,9 +171,17 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 return (0, 0)
         return env_days()
 
-    if start_runner and (accounts or any(env_days())):
-        app.state.sweeper = Sweeper(store, days_for)
+    if start_runner and (accounts or any(env_days()) or storage):
+        app.state.sweeper = Sweeper(store, days_for, storage=storage, mirror=mirror, local_clip_days=local_clip_days)
         app.state.sweeper.start()
+
+    def purge_remote(job_id: str, message: str = "The stored copies could not be removed just now, so nothing was deleted. Try again in a minute.") -> None:
+        """Remove a job's copies from the bucket FIRST; if that fails nothing local is deleted either."""
+        if storage:
+            try:
+                storage.delete_job(job_id)
+            except StorageError:
+                raise HTTPException(502, message)
 
     def view(job: Job) -> dict:
         d = job.model_dump()
@@ -266,6 +282,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                                          "Try again in a minute.")
         for j in store.list():
             if j.owner == user.id:
+                purge_remote(j.id, "Your files could not be removed from storage just now, so the account was not deleted. Try again in a minute.")
                 store.delete(j.id)
         accounts.delete(user.id)
         resp = JSONResponse({"ok": True})
@@ -301,6 +318,13 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if info is None or job.status != "done":
             raise HTTPException(404, "No such clip.")
         path = store.clip_path(job_id, clip_id)
+        if not path.is_file() and storage and job.remote.get(f"out/{clip_id}.mp4"):       # evicted from local disk: fetch it back
+            try:
+                storage.get_file(job_id, f"out/{clip_id}.mp4", path)
+                sig = signature(path)
+                store.update(job_id, lambda j: j.remote.__setitem__(f"out/{clip_id}.mp4", sig))
+            except StorageError:
+                raise HTTPException(502, "The clip could not be fetched from storage just now. Try again in a minute.")
         if not path.is_file() or info.render in ("queued", "rendering"):
             raise HTTPException(409, "This clip is not ready yet.")
         from ..provenance import provenance
@@ -530,27 +554,39 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         job = job_or_404(job_id, request)
         if job.status in ("queued", "running"):
             raise HTTPException(409, "Cancel the job before deleting it.")
+        purge_remote(job_id)
         store.delete(job_id)
 
-    def clip_file(job_id: str, clip_id: str, request: Request) -> Path:
-        job_or_404(job_id, request)
+    def clip_response(job_id: str, clip_id: str, request: Request, *, download: bool):
+        job = job_or_404(job_id, request)
         try:
             path = store.clip_path(job_id, clip_id)
         except KeyError:
             raise HTTPException(404, "No such clip.")
-        if not path.is_file():
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(job.name).stem).strip("._") or "clip"
+        name = f"{stem[:60]}-{clip_id}.mp4"
+        rel = f"out/{clip_id}.mp4"
+        local = path.is_file()
+        remote_sig = job.remote.get(rel)
+        # From the bucket when the local file is gone, or (if asked) whenever the bucket copy is the same file.
+        if storage and remote_sig and (not local or (storage_redirect and signature(path) == remote_sig)):
+            try:
+                url = storage.presign_get(job_id, rel, expires=600, filename=name if download else None)
+                return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
+            except StorageError:
+                if not local:
+                    raise HTTPException(502, "The clip could not be fetched from storage just now. Try again in a minute.")
+        if not local:
             raise HTTPException(404, "This clip is not ready yet.")
-        return path
+        return FileResponse(path, media_type="video/mp4", filename=name if download else None)
 
     @app.get("/api/jobs/{job_id}/clips/{clip_id}/video", dependencies=[Depends(authed)])
-    def clip_video(job_id: str, clip_id: str, request: Request) -> FileResponse:
-        return FileResponse(clip_file(job_id, clip_id, request), media_type="video/mp4")
+    def clip_video(job_id: str, clip_id: str, request: Request):
+        return clip_response(job_id, clip_id, request, download=False)
 
     @app.get("/api/jobs/{job_id}/clips/{clip_id}/download", dependencies=[Depends(authed)])
-    def clip_download(job_id: str, clip_id: str, request: Request) -> FileResponse:
-        job = job_or_404(job_id, request)
-        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(job.name).stem).strip("._") or "clip"
-        return FileResponse(clip_file(job_id, clip_id, request), media_type="video/mp4", filename=f"{stem[:60]}-{clip_id}.mp4")
+    def clip_download(job_id: str, clip_id: str, request: Request):
+        return clip_response(job_id, clip_id, request, download=True)
 
     # --- editing one clip ---------------------------------------------------------------------
     def editable(job_id: str, clip_id: str, request: Request) -> Job:

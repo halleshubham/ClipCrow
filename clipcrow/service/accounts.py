@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,24}$")
+EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,24}\Z")
 MIN_PASSWORD = 10
 SESSION_DAYS = 30
 _SCRYPT = dict(n=2 ** 14, r=8, p=1, dklen=32)

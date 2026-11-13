@@ -22,7 +22,7 @@ jobs:
       - name: ffmpeg and Noto fonts
         timeout-minutes: 8
         run: scripts/ci_system_deps.sh
-      - run: pip install -e '.[dev,llm,vision,service]'
+      - run: pip install -e '.[dev,llm,vision,service,storage]'
       - run: pytest -q
 
   render:
@@ -42,7 +42,7 @@ jobs:
       - name: ffmpeg and Noto fonts
         timeout-minutes: 8
         run: scripts/ci_system_deps.sh
-      - run: pip install -e '.[dev,llm,examples,vision,service]'
+      - run: pip install -e '.[dev,llm,examples,vision,service,storage]'
       - run: scripts/fetch_gsap.sh
       - run: python examples/gen_assets.py
       - run: pytest -q -m render

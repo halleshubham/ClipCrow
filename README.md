@@ -91,6 +91,18 @@ involvement).
   scheduling supported, per-channel results. The key is the **operator's** workspace, so with accounts on, posting is off
   unless `CLIPCROW_SOCIOBIRD_SHARED=1` (everyone who can sign in may post to those channels); per-user keys are future work.
   The request shapes follow the Postiz-style public API SocioBird's tools mirror; **not tried against the live service**.
+- **Object storage (Cloudflare R2 or any S3-compatible store)**: `pip install 'clipcrow[storage]'` and set `R2_ACCOUNT_ID`
+  (or `R2_ENDPOINT`, e.g. the EU jurisdiction), `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, optional `R2_PREFIX`.
+  Local disk stays the working copy (rendering needs local files); finished jobs are **mirrored to the bucket in the
+  background** (clips, their AI-usage sidecars, the plan, the transcript; the original too with
+  `CLIPCROW_R2_BACKUP_SOURCE=1`) and re-mirrored when a clip is re-rendered or edited. A clip whose local file is gone is
+  served by a **presigned URL valid for 10 minutes** (the bucket stays private; ownership is checked first; the CSP allows
+  only the bucket's origin for media), with `CLIPCROW_R2_REDIRECT=1` all playback and downloads go to the bucket while the
+  copy is identical (a clip re-rendered locally is never served stale). `CLIPCROW_LOCAL_CLIP_DAYS=N` frees disk by removing
+  a local clip after N days once an identical copy is in the bucket. Deleting a job or an account **removes the bucket
+  copies first and aborts if that fails**; retention does the same and retries next hour. R2 specifics handled: region
+  `auto`, SigV4, path-style addressing, and checksums sent only when required (newer boto3 sends CRC32 by default, which R2
+  rejects). Tested against an S3-compatible server (moto), not against live R2 (no credentials in the build environment).
 - **Not built yet**: email verification and password reset, per-user SocioBird keys, a job queue across several machines,
   a live preview and a timeline editor.
 - Browser tests: `node scripts/e2e_ui.js <video> <dir>` (Playwright, real render and re-render, ~8 min; `JOB_ID=<id>`

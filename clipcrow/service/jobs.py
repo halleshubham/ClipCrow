@@ -20,8 +20,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-JOB_ID = re.compile(r"^[a-f0-9]{12}$")
-CLIP_ID = re.compile(r"^c\d{1,3}$")
+JOB_ID = re.compile(r"^[a-f0-9]{12}\Z")          # \Z, not $: "$" also matches before a trailing newline
+CLIP_ID = re.compile(r"^c\d{1,3}\Z")
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 STAGE_NAMES = ("transcribe", "plan", "assets", "frame", "render")
 LOG_LIMIT = 400
@@ -94,6 +94,7 @@ class Job(_M):
     owner: Optional[str] = None             # the user id when accounts are on; None in single-user mode
     reserved_minutes: float = 0             # source minutes taken from the owner's allowance for this job
     source_removed: bool = False            # the uploaded original was deleted by retention
+    remote: dict[str, str] = Field(default_factory=dict)   # relative name -> signature of the copy in object storage
 
     def clip(self, clip_id: str) -> ClipInfo:
         return next(c for c in self.clips if c.id == clip_id)

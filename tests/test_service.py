@@ -305,3 +305,12 @@ def test_usage_calls_are_in_a_stable_order(tmp_path, video_bytes):
     assert purposes[0] == "score"
     details = [int(p.split(":")[1]) for p in purposes[1:]]
     assert details == sorted(details)
+
+
+@pytest.mark.parametrize("path", ["/api/jobs/0123456789ab%0A", "/api/jobs/0123456789ab%0A/clips/c1/video", "/api/jobs/0123456789ab/clips/c1%0A/video"])
+def test_ids_with_a_trailing_newline_are_not_ids(tmp_path, path):
+    """``$`` in a regex also matches before a final newline: the id patterns must not."""
+    from clipcrow.service.jobs import CLIP_ID, JOB_ID
+    assert not JOB_ID.match("0123456789ab\n") and not CLIP_ID.match("c1\n")
+    c, _ = client(tmp_path)
+    assert c.get(path).status_code == 404
