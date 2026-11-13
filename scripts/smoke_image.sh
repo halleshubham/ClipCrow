@@ -36,12 +36,17 @@ c = json.load(open("/tmp/config.json"))
 assert c["needs_login"] is True and c["signed_in"] is False, c
 assert c["ready"] is None, f"the server says it cannot run jobs: {c['ready']}"
 PY
-page="$(curl -fsS http://127.0.0.1:18000/)"
-grep -q "ClipCrow" <<<"$page"
-code="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/api/jobs)"
-[ "$code" = "401" ]                                                            # the API needs the login
-docker exec "$cid" curl -fsS http://127.0.0.1:8000/api/config >/dev/null          # what the container's own health check runs
+fail() { echo "SMOKE FAIL: $*"; docker logs "$cid" 2>&1 | tail -20; exit 1; }
+page="$(curl -sS -w '\n%{http_code}' http://127.0.0.1:18000/ || true)"
+echo "GET / -> HTTP $(tail -n1 <<<"$page"), $(wc -c <<<"$page") bytes"
+grep -q "ClipCrow" <<<"$page" || fail "the UI page does not mention ClipCrow: $(head -c 300 <<<"$page")"
+code="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/api/jobs || true)"
+echo "GET /api/jobs without a login -> HTTP $code"
+[ "$code" = "401" ] || fail "the API answered $code without a login (wanted 401)"
+docker exec "$cid" curl -fsS http://127.0.0.1:8000/api/config >/dev/null || fail "the container's own health check command failed"
 docker stop -t 60 "$cid" >/dev/null
-[ "$(docker inspect -f '{{.State.ExitCode}}' "$cid")" = "0" ]
+exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$cid")"
+echo "exit code after SIGTERM: $exit_code"
+[ "$exit_code" = "0" ] || fail "it did not stop cleanly on SIGTERM (exit code $exit_code)"
 docker logs "$cid" 2>&1 | tail -5
 echo; echo "image smoke test passed"
