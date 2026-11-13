@@ -27,7 +27,7 @@ from typing import Callable, Optional
 
 from . import fonts
 from .captions import CaptionGroup, clip_words, group_words
-from .edl import EDL, Clip, EDLError, Hook, LowerThird, MediaCard, StatPill, TextBehind
+from .edl import EDL, Clip, Cover, EDLError, Hook, Logo, LowerThird, MediaCard, StatPill, TextBehind
 
 GSAP_HINT = "run scripts/fetch_gsap.sh, or pass gsap_js=<path to gsap.min.js>"
 
@@ -287,6 +287,48 @@ def _media_scene(items, files: dict[str, str], stack: str, face: str, w: int, h:
     return _scene("media", w, h, css, "\n".join(body), "\n".join(script))
 
 
+def cover_font_size(text: str) -> int:
+    """The cover's type size from the text length alone (deterministic, so a re-render never reflows)."""
+    n = len(text.strip())
+    for limit, size in ((14, 190), (28, 150), (44, 120), (64, 100)):
+        if n <= limit:
+            return size
+    return 86
+
+
+def _cover_scene(cv: Cover, stack: str, face: str, w: int, h: int) -> str:
+    """The title card for the first ``duration_ms``: solid from the very first frame (no fade-in), so a platform that
+    takes frame 0 as the poster gets the title."""
+    words = cv.text.split()
+    head, last = (" ".join(words[:-1]), words[-1]) if len(words) > 1 else ("", cv.text.strip())
+    shade = "rgba(0,0,0,.58)" if cv.background == "frame" else cv.bg_color
+    html_text = (f'{_esc(head)} ' if head else "") + f'<span class="ac">{_esc(last)}</span>'
+    css = f"""    {face}
+    .cv {{ position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+      padding: 0 90px; background: {shade}; }}
+    .cv .t {{ font-family: {stack}, sans-serif; font-weight: 700; font-size: {cover_font_size(cv.text)}px; line-height: 1.18;
+      color: {cv.color}; text-shadow: 0 6px 28px rgba(0,0,0,.6); }}
+    .cv .ac {{ color: {cv.accent}; }}"""
+    body = (f'    <div id="cover" class="cv clip" data-start="0" data-duration="{_num(cv.duration_ms / 1000)}">'
+            f'<div class="t">{html_text}</div></div>')
+    return _scene("cover", w, h, css, body, '    tl.set("#cover", { opacity: 1 }, 0);')
+
+
+_LOGO_TOP_SAFE, _LOGO_BOTTOM_SAFE = 250, 380    # clear of the platform status bar / the hook, and of the reel's own buttons
+
+
+def _logo_scene(lg: Logo, src: str, start: float, dur: float, w: int, h: int) -> str:
+    width = round(w * lg.size_pct / 100)
+    v = f"top:{_LOGO_TOP_SAFE + lg.margin_px}px" if lg.position[0] == "t" else f"bottom:{_LOGO_BOTTOM_SAFE + lg.margin_px}px"
+    side = f"left:{lg.margin_px}px" if lg.position[1] == "l" else f"right:{lg.margin_px}px"
+    css = f"""    #logo {{ position: absolute; {v}; {side}; width: {width}px; }}
+    #logo img {{ display: block; width: 100%; height: auto; opacity: 0; }}"""
+    body = (f'    <div id="logo" class="clip" data-start="{_num(start)}" data-duration="{_num(dur)}">'
+            f'<img id="logo-img" src="{src}" alt=""></div>')
+    script = f'    tl.to("#logo-img", {{ opacity: {_num(lg.opacity)}, duration: 0.2, ease: "power1.out" }}, {_num(start)});'
+    return _scene("logo", w, h, css, body, script)
+
+
 def _index(duration: float, w: int, h: int, lang: str, scenes: set[str], cutout: bool, punch=()) -> str:
     def host(name, z, track, kind):
         return (f'      <div id="{name}" data-composition-id="{name}" data-composition-src="compositions/{name}.html" '
@@ -307,6 +349,10 @@ def _index(duration: float, w: int, h: int, lang: str, scenes: set[str], cutout:
         parts.append(host("captions", 5, 3, "captions"))
     if "cards" in scenes:
         parts.append(host("cards", 6, 4, "graphics"))
+    if "logo" in scenes:
+        parts.append(host("logo", 7, 6, "graphics"))
+    if "cover" in scenes:                       # on top of everything: the first frames are the poster
+        parts.append(host("cover", 9, 7, "graphics"))
     pushes = ""
     if punch:
         # The footage, the text behind the speaker and the cutout must move together or the text would slide
@@ -392,7 +438,11 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
                          pause_break=clip.captions.pause_break) if clip.captions.enabled else []
     overlays = _overlay_times(edl, clip)
 
+    cover = clip.cover if clip.cover and clip.cover.enabled else None
+    logo = clip.logo if clip.logo and clip.logo.enabled else None
     texts = [x.text for g in groups for x in g.words]
+    if cover:
+        texts.append(cover.text)
     for o, _, _ in overlays:
         texts += [getattr(o, a) for a in ("text", "title", "subtitle", "caption") if hasattr(o, a)]
     family = fonts.effective_family(clip.captions.font_family, texts)
@@ -440,6 +490,23 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
     if cards:
         (project / "compositions" / "cards.html").write_text(_cards_scene(cards, stack, face, w, h), "utf-8")
         scenes.append("cards")
+    if logo:
+        asset = next((a for a in edl.assets if a.id == logo.asset), None)
+        if asset is None or not asset.uri:
+            raise EDLError(f"clip {clip.id!r}: the logo asset {logo.asset!r} has no file")
+        suffix = Path(asset.uri).suffix.lower()
+        if suffix not in MEDIA_SUFFIXES:
+            raise EDLError(f"asset {logo.asset!r}: {suffix or 'no extension'} is not a supported logo type")
+        (project / "assets" / "brand").mkdir(parents=True, exist_ok=True)
+        rel = f"assets/brand/logo{suffix}"
+        if prepare:
+            shutil.copyfile(_inside(Path(asset_root) if asset_root else media_root, asset.uri), project / rel)
+        t0 = min(cover.duration_ms / 1000, duration) if cover else 0.0
+        (project / "compositions" / "logo.html").write_text(_logo_scene(logo, rel, t0, duration - t0, w, h), "utf-8")
+        scenes.append("logo")
+    if cover:
+        (project / "compositions" / "cover.html").write_text(_cover_scene(cover, stack, face, w, h), "utf-8")
+        scenes.append("cover")
 
     cutout = clip.layout.mode == "cutout_behind"
     (project / "index.html").write_text(

@@ -248,6 +248,38 @@ class MediaCard(_OverlayBase):
 Overlay = Annotated[Union[TextBehind, LowerThird, StatPill, Hook, MediaCard], Field(discriminator="kind")]
 
 
+class Cover(_Model):
+    """A bold title shown for the first few hundred milliseconds, so that the frame a platform (or a person) picks as
+    the poster of the video carries the title. It sits on top of the footage and does not move the timeline."""
+    text: str = Field(max_length=80)
+    enabled: bool = True
+    duration_ms: int = Field(default=250, ge=100, le=1500)
+    background: Literal["frame", "color"] = "frame"     # frame: the footage, darkened; color: a solid colour
+    color: HexColor = "#FFFFFF"                         # the title
+    accent: HexColor = "#FFD54A"                        # the last line is drawn in this
+    bg_color: HexColor = "#111111"
+
+
+LogoPosition = Literal["tl", "tr", "bl", "br"]
+
+
+class Logo(_Model):
+    """The brand's logo (an image Asset of this EDL) in a corner, from the end of the cover to the end of the clip."""
+    asset: SafeId
+    enabled: bool = True
+    position: LogoPosition = "tr"
+    size_pct: int = Field(default=18, ge=5, le=40)      # width as a percentage of the frame width
+    opacity: float = Field(default=0.9, ge=0.1, le=1.0)
+    margin_px: int = Field(default=60, ge=0, le=300)
+
+
+class Outro(_Model):
+    """A branding video (a video Asset of this EDL) appended after the clip. Done after the render, with FFmpeg."""
+    asset: SafeId
+    enabled: bool = True
+    max_seconds: float = Field(default=6.0, gt=0, le=30)
+
+
 class Clip(_Model):
     id: SafeId
     source_in: float = Field(ge=0)
@@ -256,6 +288,9 @@ class Clip(_Model):
     layout: Layout = Field(default_factory=Layout)
     captions: CaptionStyle = Field(default_factory=CaptionStyle)
     overlays: list[Overlay] = Field(default_factory=list)
+    cover: Optional[Cover] = None
+    logo: Optional[Logo] = None
+    outro: Optional[Outro] = None
     ai: Optional[ClipAI] = None
 
     @property
@@ -275,6 +310,8 @@ class Clip(_Model):
             raise ValueError(f"clip {self.id!r}: overlay ids must be unique")
         if self.layout.mode != "cutout_behind" and any(o.kind == "text_behind" for o in self.overlays):
             raise ValueError(f"clip {self.id!r}: text_behind overlays need layout.mode 'cutout_behind'")
+        if self.cover and self.cover.duration_ms / 1000 > self.duration / 2:
+            raise ValueError(f"clip {self.id!r}: the cover must be shorter than half the clip")
         return self
 
 
@@ -314,6 +351,10 @@ class EDL(_Model):
                 if o.kind == "media" and kinds.get(o.asset) not in ("image", "video"):
                     raise ValueError(f"clip {c.id!r}: media overlay {o.id!r} needs an image or video asset, "
                                      f"{o.asset!r} is {kinds.get(o.asset, 'not in the EDL')}")
+            for what, ref, want in (("logo", c.logo, "image"), ("outro", c.outro, "video")):
+                if ref is not None and kinds.get(ref.asset) != want:
+                    raise ValueError(f"clip {c.id!r}: the {what} needs a {want} asset, "
+                                     f"{ref.asset!r} is {kinds.get(ref.asset, 'not in the EDL')}")
         return self
 
 

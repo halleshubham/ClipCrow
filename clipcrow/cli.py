@@ -33,6 +33,9 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--ai-images", action="store_true", help="let the explainer ask for AI-generated images (GEMINI_API_KEY; "
                     "marks the clip as AI-generated media)")
     mk.add_argument("--spread", type=float, default=0.5, help="spread clips across the talk (0 = off)")
+    mk.add_argument("--cover", action="store_true", help="a bold title (the hook, else the title) for the first ~250 ms, and a cN.cover.png")
+    mk.add_argument("--logo", metavar="IMAGE", help="a logo (png/jpg/webp) in a corner of every clip")
+    mk.add_argument("--outro", metavar="VIDEO", help="a branding video appended after every clip (first 6 s)")
     mk.add_argument("--multi", choices=["switch", "split", "off"], default="switch",
                     help="two or more people on screen: cut to whoever talks, stack two, or follow one face")
     mk.add_argument("--speaker-name"); mk.add_argument("--speaker-title", default="")
@@ -151,10 +154,13 @@ def main(argv: list[str] | None = None) -> int:
                                   spread=a.spread,
                                   speaker_name=a.speaker_name, speaker_title=a.speaker_title)
             need_llm = not a.edl
+            from .branding import BrandingChoice, BrandKit
+            kit = BrandKit(logo=Path(a.logo) if a.logo else None, outro=Path(a.outro) if a.outro else None)
+            choice = BrandingChoice(cover=a.cover, logo=bool(a.logo), outro=bool(a.outro))
             res = make(a.video, a.out, language=a.language, transcript_path=a.transcript, edl_path=a.edl, opts=opts,
                        llm=AnthropicLLM(a.model) if need_llm else None,
                        score_llm=AnthropicLLM(a.score_model) if need_llm and a.score_model else None,
-                       render=not a.no_render, gsap_js=a.gsap, workers=a.workers, multi=a.multi, images=images,
+                       render=not a.no_render, gsap_js=a.gsap, workers=a.workers, multi=a.multi, images=images, brand=kit, choice=choice,
                        say=lambda m: print(f"  {m}", file=sys.stderr))
             print(f"{len(res.edl.clips)} clip(s) -> {a.out}" + (f"; rendered {len(res.videos)}" if res.videos else ""))
             return 0

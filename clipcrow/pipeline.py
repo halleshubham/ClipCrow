@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import matte, render
+from . import branding, matte, render
 from .provenance import write_sidecar
 from .compile import CompiledClip, compile_clip
 from .edl import EDL, EDLError
@@ -60,5 +60,28 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
         compiled.warnings.extend(w for w in render.check_warnings(report) if w not in compiled.warnings)
     out = render.render(project, output, quality=edl.render.quality, workers=workers,
                         browser_path=os.environ.get("CLIPCROW_BROWSER"))
+    out = Path(out)
+    if clip.outro and clip.outro.enabled:
+        asset = next(a for a in edl.assets if a.id == clip.outro.asset)
+        if not asset.uri:
+            raise EDLError(f"clip {clip.id!r}: the ending video {asset.id!r} has no file")
+        from .compile import _inside
+        tail = _inside(Path(asset_root) if asset_root else Path(media_root), asset.uri)
+        joined = out.with_name(out.stem + ".joined.mp4")
+        try:
+            branding.append_outro(out, tail, joined, width=edl.render.width, height=edl.render.height, fps=edl.render.fps,
+                                  max_seconds=clip.outro.max_seconds)
+            joined.replace(out)
+        except branding.BrandError as e:        # the clip itself is fine: deliver it without the ending and say so
+            joined.unlink(missing_ok=True)
+            compiled.warnings.append(f"the ending video was skipped: {e}")
+    cover = out.with_name(out.stem + ".cover.png")
+    if clip.cover and clip.cover.enabled:
+        try:
+            branding.extract_cover(out, cover)
+        except branding.BrandError as e:
+            compiled.warnings.append(f"the cover image was not saved: {e}")
+    else:
+        cover.unlink(missing_ok=True)
     write_sidecar(edl, clip, out)
     return out, compiled

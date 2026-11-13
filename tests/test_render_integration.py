@@ -137,3 +137,45 @@ def test_an_explainer_picture_shows_only_in_its_window_and_covers_the_frame(tmp_
         return ((r > 170) & (b > 170) & (g < 90)).mean()
     assert magenta(before) < 0.001 and magenta(after) < 0.001                       # not before it starts, not after it ends
     assert magenta(during) > 0.95                                                   # a full-frame cutaway covers everything
+
+
+def test_cover_logo_and_outro_in_a_real_render(tmp_path):
+    """Frame 0 carries the title; the logo shows after the cover, in its corner; the ending video follows the clip."""
+    import cv2
+    import numpy as np
+    from clipcrow import branding
+    from clipcrow.edl import EDL
+    src, _ = _synthetic_scene(tmp_path)
+    out_dir = tmp_path / "out"
+    (out_dir / "brand").mkdir(parents=True)
+    cv2.imwrite(str(out_dir / "brand" / "logo.png"), np.full((200, 400, 3), (0, 220, 0), np.uint8))          # a green block
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=0xFF00FF:s=640x360:r=30:d=3",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_dir / "brand" / "outro.mp4")], check=True)
+    edl = EDL.model_validate({
+        "job_id": "t", "source": {"uri": "src.mp4", "duration": 4, "width": 1080, "height": 1920, "fps": 30},
+        "language": {"primary": "mr", "script": "Deva"}, "transcript": [{"w": "ज्ञान", "s": 0.5, "e": 1.0}],
+        "assets": [{"id": "brand-logo", "kind": "image", "origin": "upload", "uri": "brand/logo.png"},
+                   {"id": "brand-outro", "kind": "video", "origin": "upload", "uri": "brand/outro.mp4"}],
+        "clips": [{"id": "c1", "source_in": 0, "source_out": 3.0, "captions": {"enabled": False},
+                   "cover": {"text": "ज्ञान शक्ती आहे", "duration_ms": 400, "background": "color", "bg_color": "#FF0000",
+                             "color": "#FFFFFF", "accent": "#FFFFFF"},
+                   "logo": {"asset": "brand-logo", "position": "tl", "size_pct": 20, "opacity": 1.0},
+                   "outro": {"asset": "brand-outro", "max_seconds": 2.0}}]})
+    out, compiled = render_clip(edl, "c1", tmp_path / "x.mp4", workdir=tmp_path / "w", media_root=tmp_path,
+                                gsap_js=ROOT / "vendor" / "gsap.min.js", workers=2, asset_root=out_dir)
+    assert not [w for w in compiled.warnings if "skipped" in w or "not saved" in w], compiled.warnings
+    info = branding.probe_media(out)
+    assert abs(info["duration"] - 5.0) < 0.15 and info["has_audio"] and (info["width"], info["height"]) == (1080, 1920)
+
+    def share(f, rgb, tol=40):
+        r, g, b = (f[..., i].astype(int) for i in (2, 1, 0))
+        return ((abs(r - rgb[0]) < tol) & (abs(g - rgb[1]) < tol) & (abs(b - rgb[2]) < tol)).mean()
+    first, during, after, end = (_frame(out, t) for t in (0.0, 0.2, 1.0, 4.3))
+    assert share(first, (255, 0, 0)) > 0.5 and share(during, (255, 0, 0)) > 0.5       # solid cover colour from frame 0
+    assert share(after, (255, 0, 0)) < 0.01                                            # gone after 400 ms
+    corner = after[250 + 60:250 + 60 + 100, 60:60 + 216]
+    assert share(corner, (0, 220, 0)) > 0.8, "the logo is not in the top-left corner"
+    assert share(after[1500:], (0, 220, 0)) < 0.001                                    # and only there
+    assert share(end, (255, 0, 255)) > 0.2                                             # the ending video follows the clip
+    poster = cv2.imread(str(out.with_name("x.cover.png")))
+    assert share(poster, (255, 0, 0)) > 0.5                                            # the saved cover image is the title card

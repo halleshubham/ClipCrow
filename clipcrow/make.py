@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from .branding import BrandingChoice, BrandKit, apply_brand
 from .edl import EDL, load_edl
 from .framing import apply_framing
 from .planner import PlannerOptions, load_transcript, plan_edl
@@ -52,7 +53,8 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
          detector=None, render: bool = True, gsap_js: str | Path | None = None, workers: int | None = None,
          transcribe_fn: Callable | None = None, render_fn: Callable | None = None,
          say: Callable[[str], None] = lambda _m: None, hooks: Hooks | None = None,
-         multi: str = "switch", images=None, capture_fn=None) -> MakeResult:
+         multi: str = "switch", images=None, capture_fn=None,
+         brand: BrandKit | None = None, choice: BrandingChoice | None = None) -> MakeResult:
     video, out = Path(video), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     report: dict = {}
@@ -110,6 +112,8 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
     hk.stage("frame", "running", "")
     edl = apply_framing(edl, str(video), detector=detector, say=say, multi=multi)
     hk.stage("frame", "done", ", ".join(f"{c.id}: {c.layout.framing}" for c in edl.clips))
+    if choice is not None and choice.any():
+        edl = apply_brand(edl, brand or BrandKit(), choice, out)
     hk.planned(edl, report)
     (out / "edl.json").write_text(edl.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
     if report:
