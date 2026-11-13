@@ -7,6 +7,3 @@ node_modules/
 /vendor/
 *.egg-info/
 examples/assets/
-
-# reference videos studied with the watch skill: never commit others' footage
-references/

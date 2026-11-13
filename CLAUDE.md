@@ -78,10 +78,5 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   EDL or a path from the browser. The AI's `decided` list is not rewritten by a person: add a note instead.
   All edl.json writes go through the runner's edit lock; a render finishes only the latest edit (`_gen`).
 
-## Development skills
-- `.claude/skills/watch/` studies a reference video and maps what it does to ClipCrow's levers; findings go to `docs/style/`,
-  raw footage to the git-ignored `references/`. It is a developer tool: not in the image, not reachable by users. It only
-  proposes; changing `clipcrow/` is a separate reviewed change.
-
 ## CI
 A green pipeline closes a task, not the push: after pushing, confirm the commit's workflow is green.
