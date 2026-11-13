@@ -43,15 +43,21 @@ def make(tmp_path, storage, pipeline=None, **kw):
 OPTIONS = {"min_clip": 20, "max_clip": 60, "clips": 2}
 
 
+def put(url: str, chunk: bytes) -> str:
+    """One part, the way a browser sends a Blob slice: no form-encoding content type (urllib would add one, and the S3 test
+    server then reads the body as form fields and loses the part number from the URL)."""
+    req = urllib.request.Request(url, data=chunk, method="PUT", headers={"Content-Type": "application/octet-stream"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.headers["ETag"]
+
+
 def put_parts(start: dict, data: bytes) -> list[dict]:
     """What the browser does: PUT each slice to its presigned URL and keep the ETag the bucket answers with."""
     parts, offset = [], 0
     for p in start["parts"]:
         chunk = data[offset:offset + p["length"]]
         assert len(chunk) == p["length"]
-        req = urllib.request.Request(p["url"], data=chunk, method="PUT")
-        with urllib.request.urlopen(req) as r:
-            parts.append({"n": p["n"], "etag": r.headers["ETag"]})
+        parts.append({"n": p["n"], "etag": put(p["url"], chunk)})
         offset += p["length"]
     assert offset == len(data)
     return parts
@@ -178,8 +184,7 @@ def test_a_file_that_is_not_the_announced_size_is_thrown_away(tmp_path, storage,
     r = c.post("/api/uploads", json={"filename": "a.mp4", "size": 1000, "rights": True})
     uid = r.json()["id"]
     # the signed length is 1000, but a client that ignores it (moto does not check signatures) puts the real file
-    req = urllib.request.Request(r.json()["parts"][0]["url"], data=video_bytes, method="PUT")
-    etag = urllib.request.urlopen(req).headers["ETag"]
+    etag = put(r.json()["parts"][0]["url"], video_bytes)
     res = finish(c, uid, [{"n": 1, "etag": etag}])
     assert res.status_code == 422 and "size" in res.json()["detail"]
     assert storage.has(uid, "source.mp4") is False and app.state.uploads.list() == []   # the object and the record are gone
@@ -216,12 +221,13 @@ def test_something_that_is_not_a_video_is_refused_and_removed(tmp_path, storage)
     assert storage.has(r.json()["id"], "source.mp4") is False and app.state.uploads.list() == []
 
 
-def test_a_video_too_short_for_the_clips_is_refused_and_removed(tmp_path, storage, video_bytes):
+def test_a_video_too_short_for_the_clips_is_refused_and_removed(tmp_path, storage, big_video, monkeypatch):
+    monkeypatch.setattr(api_mod, "PART_SIZE", 5 * MB)
     c, app = make(tmp_path, storage)
-    r = start(c, video_bytes)
-    res = finish(c, r.json()["id"], put_parts(r.json(), video_bytes), {"min_clip": 120, "max_clip": 180})
+    r = start(c, big_video, "short.mp4")                                          # 12 s long
+    res = finish(c, r.json()["id"], put_parts(r.json(), big_video), {"min_clip": 15, "max_clip": 60})   # a 15 s clip needs 20 s
     assert res.status_code == 400 and "need a longer video" in res.json()["detail"]
-    assert storage.has(r.json()["id"], "source.mp4") is False
+    assert storage.has(r.json()["id"], "source.mp4") is False and app.state.uploads.list() == []
 
 
 def test_completing_twice_is_not_possible(tmp_path, storage, video_bytes):
@@ -279,8 +285,6 @@ def test_a_missing_object_at_run_time_fails_the_job_with_a_plain_message_and_ref
     r = start(c, video_bytes)
     uid = r.json()["id"]
     parts = put_parts(r.json(), video_bytes)
-    gate = {"stop": True}
-    storage.client.delete_object(Bucket=storage.bucket, Key=storage.key(uid, "source.mp4")) if False else None
     real = storage.get_file
 
     def gone(job_id, rel, dest):

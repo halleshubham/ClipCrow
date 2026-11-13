@@ -46,6 +46,9 @@ def main(argv: list[str] | None = None) -> int:
     sv.add_argument("--insecure", action="store_true", help="allow a non-local address without CLIPCROW_TOKEN")
     sv.add_argument("--accounts", action="store_true", default=os.environ.get("CLIPCROW_ACCOUNTS") == "1", help="multi-user: sign-up, per-user jobs, minutes metered against a plan, retention")
     sv.add_argument("--no-signup", action="store_true", default=os.environ.get("CLIPCROW_SIGNUP") == "0", help="with --accounts: do not let new people register")
+    rc = sub.add_parser("r2-cors", help="set (or show) the bucket's CORS rule that lets browsers upload straight to R2")
+    rc.add_argument("--origin", action="append", default=[], help="the site's address, e.g. https://clips.example.com (repeat for several)")
+    rc.add_argument("--show", action="store_true", help="print the current rule instead of changing it")
     st = sub.add_parser("selftest", help="can this machine render? checks the tools and renders a tiny Devanagari clip")
     st.add_argument("--no-render", action="store_true", help="check the tools only")
     u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
@@ -106,6 +109,19 @@ def main(argv: list[str] | None = None) -> int:
                              local_clip_days=int(os.environ.get("CLIPCROW_LOCAL_CLIP_DAYS", "0") or 0),
                              sociobird_shared=os.environ.get("CLIPCROW_SOCIOBIRD_SHARED") == "1")
             uvicorn.run(app, host=a.host, port=a.port, log_level="info", timeout_graceful_shutdown=20)
+            return 0
+        if a.cmd == "r2-cors":
+            from .service.storage import S3Storage
+            storage = S3Storage.from_env()
+            if storage is None:
+                raise ValueError("set R2_ACCOUNT_ID (or R2_ENDPOINT), R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET first")
+            if a.show or not a.origin:
+                print(json.dumps(storage.get_cors(), indent=2) or "[]")
+                if not a.show:
+                    print("(pass --origin https://your-site to set the rule; the token needs permission to change bucket settings)", file=sys.stderr)
+                return 0
+            storage.set_cors(a.origin)
+            print(f"CORS rule set on {storage.bucket} for: {', '.join(a.origin)}")
             return 0
         if a.cmd == "selftest":
             from .selftest import run as selftest

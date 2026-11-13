@@ -48,13 +48,30 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
 3. Finished jobs are mirrored to the bucket in the background. Useful knobs: `CLIPCROW_R2_REDIRECT=1` (playback and downloads
    come straight from R2, which offloads your server's bandwidth), `CLIPCROW_LOCAL_CLIP_DAYS=3` (free local disk once an identical
    copy is in R2), `CLIPCROW_R2_BACKUP_SOURCE=1` (also keep the uploaded original there).
-4. R2 holds job outputs, **not the database**: back up the `/data` volume (it contains `clipcrow.db` with accounts and the minutes
+4. **CORS (needed for direct uploads).** Browsers upload to the bucket's address, so the bucket must allow your site. Run, with a token
+   that may change bucket settings (the Object Read & Write token above cannot):
+   `clipcrow r2-cors --origin https://<your domain>` (add `--show` to see the current rule). Or in the Cloudflare dashboard, bucket
+   > Settings > CORS policy, paste:
+   `[{"AllowedOrigins": ["https://<your domain>"], "AllowedMethods": ["PUT", "GET", "HEAD"], "AllowedHeaders": ["*"], "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3600}]`.
+   `ExposeHeaders: ETag` is essential: the browser needs each part's ETag to finish the upload. Uploads then show as parts in the
+   job page's progress bar; `CLIPCROW_UPLOAD_PART_MB` changes the part size (default 64) and `CLIPCROW_DIRECT_UPLOAD=0` turns direct
+   upload off.
+5. R2 holds job outputs, **not the database**: back up the `/data` volume (it contains `clipcrow.db` with accounts and the minutes
    ledger).
+
+### Testing direct uploads without Cloudflare
+
+An S3-compatible server on localhost is enough: `pip install 'moto[server]'`, start `ThreadedMotoServer`, create a bucket, set its CORS
+with `S3Storage.set_cors(["http://127.0.0.1:8767"])`, run `clipcrow serve --demo` with `R2_ENDPOINT=http://127.0.0.1:<port>`,
+`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` and `CLIPCROW_UPLOAD_PART_MB=5`, then
+`node scripts/e2e_direct_upload.js <video over 3.5 min> <dir> direct` (also `fallback` and `expose`).
 
 ## 4. Things that will bite you
 
-- **Cloudflare in front of the domain:** the orange-cloud proxy limits request bodies (100 MB on the free plan), so large uploads
-  fail. Use a DNS-only record for this host, or a plan with a higher limit. (Uploading straight to R2 is future work.)
+- **Cloudflare in front of the domain:** the orange-cloud proxy limits request bodies (100 MB on the free plan). With R2 configured,
+  uploads go **straight from the browser to the bucket** and never touch your domain, so the limit does not apply to them: set the
+  bucket's CORS rule (section 3). Without R2, large uploads do pass through the proxy and fail above the limit: use a DNS-only
+  (grey cloud) record for this host, or a plan with a higher limit.
 - **One instance only.** SQLite, the in-process queue and local disk mean you cannot run two copies or scale out.
 - **Deploys:** on stop the app waits up to `DRAIN_TIMEOUT_SECONDS` (45) for the running job, then puts it back in the queue; it starts
   again by itself after the restart, with its minutes still reserved. Keep Coolify's stop grace period above 65 s (the compose files

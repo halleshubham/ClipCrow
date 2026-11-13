@@ -73,7 +73,16 @@ class PackChoice(BaseModel):
     pack: str
 
 
-PART_SIZE = 64 * 1024 * 1024        # every part but the last; S3/R2 need equal parts of at least 5 MiB
+def _part_size() -> int:
+    """Every part but the last has this size (S3/R2: equal parts of at least 5 MiB, at most 10 000 parts). Smaller parts retry
+    faster on a bad connection; ``CLIPCROW_UPLOAD_PART_MB`` changes it (default 64)."""
+    try:
+        return max(5, int(os.environ.get("CLIPCROW_UPLOAD_PART_MB") or 64)) * 1024 * 1024
+    except ValueError:
+        return 64 * 1024 * 1024
+
+
+PART_SIZE = _part_size()
 ETAG = re.compile(r'^"?[0-9a-fA-F]{32}"?\Z')
 
 
