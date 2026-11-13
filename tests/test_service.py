@@ -255,19 +255,47 @@ def test_a_running_job_cannot_be_deleted_a_finished_one_can(tmp_path, video_byte
     assert c.get(f"/api/jobs/{jid}").status_code == 404 and not (app.state.store.root / jid).exists()
 
 
-def test_after_a_restart_interrupted_jobs_fail_and_queued_jobs_run(tmp_path, video_bytes):
+def test_after_a_restart_a_queued_job_runs_and_an_interrupted_one_is_tried_once_more(tmp_path, video_bytes):
     c, app = client(tmp_path, start_runner=False)
     store = app.state.store
     from clipcrow.service.jobs import Params
-    running = store.create("a.mp4", Params())
-    running.status = "running"
-    store.save(running)
+    interrupted = store.create("a.mp4", Params())
+    (store.dir(interrupted.id) / "source.mp4").write_bytes(video_bytes)
+    interrupted.status = "running"
+    interrupted.stage("transcribe").state = "running"
+    store.save(interrupted)
     queued = store.create("b.mp4", Params())
     (store.dir(queued.id) / "source.mp4").write_bytes(video_bytes)
     c2, _ = client(tmp_path)                                                           # restart: recover() runs
-    assert c2.get(f"/api/jobs/{running.id}").json()["status"] == "failed"
-    assert "restarted" in c2.get(f"/api/jobs/{running.id}").json()["error"]
+    again = wait(c2, interrupted.id)
+    assert again["status"] == "done" and any("starts again by itself" in line for line in again["log"])
     assert wait(c2, queued.id)["status"] == "done"
+
+
+def test_a_job_interrupted_twice_fails_and_its_stage_does_not_still_say_working(tmp_path, video_bytes):
+    c, app = client(tmp_path, start_runner=False)
+    store = app.state.store
+    from clipcrow.service.jobs import Params
+    job = store.create("a.mp4", Params())
+    (store.dir(job.id) / "source.mp4").write_bytes(video_bytes)
+    job.status, job.attempts = "running", 1                                            # it was already tried again once
+    job.stage("transcribe").state = "running"
+    store.save(job)
+    c2, _ = client(tmp_path)
+    j = c2.get(f"/api/jobs/{job.id}").json()
+    assert j["status"] == "failed" and "restarted" in j["error"]
+    assert j["stages"][0]["state"] == "failed" and all(s["state"] != "running" for s in j["stages"])
+
+
+def test_an_interrupted_job_with_no_video_left_fails_instead_of_looping(tmp_path):
+    c, app = client(tmp_path, start_runner=False)
+    store = app.state.store
+    from clipcrow.service.jobs import Params
+    job = store.create("gone.mp4", Params())
+    job.status = "running"
+    store.save(job)                                                                    # no source file on disk
+    c2, _ = client(tmp_path)
+    assert c2.get(f"/api/jobs/{job.id}").json()["status"] == "failed"
 
 
 def test_responses_carry_a_strict_content_security_policy(tmp_path):

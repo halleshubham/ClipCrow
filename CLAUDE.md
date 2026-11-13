@@ -83,7 +83,7 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   `size_scale == 1.0` (every clip without a style).
 - Container: the image is built by `image.yml` and smoke-tested by `scripts/smoke_image.sh` (a real render inside it); FFmpeg,
   fonts and GSAP come from the same scripts CI uses. `DRAIN_TIMEOUT_SECONDS` + the 20 s server wait must stay below the
-  compose `stop_grace_period`. A drained job is requeued, never marked failed or refunded. The HyperFrames pin in the
+  compose `stop_grace_period`. A drained job is requeued, never marked failed or refunded. A job a hard kill left `running` is queued again ONCE by `recover()` (`Job.attempts`), then failed with its step marked failed, so a job that takes the server down cannot loop; keep that cap. The HyperFrames pin in the
   Dockerfile must equal `render.HYPERFRAMES_VERSION` (the build checks). HyperFrames' contrast audit is a warning, not a
   reason to fail a render (`render.check_warnings`).
 - Clip edits are `service.editor.ClipEdit`, a closed set of fields applied by the pure `apply_edit`; never accept a raw

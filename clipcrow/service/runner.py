@@ -63,12 +63,27 @@ class JobRunner:
         self._gen: dict[tuple[str, str], int] = {}               # bumped by every edit; a render only finishes the latest
 
     def recover(self) -> None:
-        """After a restart: queued jobs go back in the queue, interrupted ones are marked failed."""
+        """After a restart: queued jobs go back in the queue. A job a restart interrupted is queued AGAIN once (a long
+        transcription cannot always be stopped in time for a deploy, and losing it would waste the person's wait); a job that
+        was already interrupted once is marked failed, so one that keeps taking the server down cannot loop for ever."""
         for job in reversed(self.store.list()):
             if job.status == "queued":
                 self.submit(job.id)
             elif job.status == "running":
+                has_video = self.store.source_path(job.id) is not None or bool(job.source_pending)
+                if job.attempts < 1 and has_video:
+                    job.attempts += 1
+                    job.status = "queued"
+                    for s in job.stages:
+                        s.state, s.detail = "pending", ""
+                    job.add_log("the server restarted while this job was running; it starts again by itself")
+                    self.store.save(job)
+                    self.submit(job.id)
+                    continue
                 job.status, job.error = "failed", "The server restarted while this job was running."
+                for s in job.stages:
+                    if s.state == "running":                      # the step it was on stopped there, not still working
+                        s.state, s.detail = "failed", "interrupted"
                 self.store.save(job)
                 self._finished(job)
             elif any(c.render in ("queued", "rendering") for c in job.clips):

@@ -517,10 +517,15 @@ async function jobView(jobId) {
   const cards = new Map();
 
   function renderStages() {
-    stages.replaceChildren(...job.stages.map((s) => el('div', { class: `stage ${s.state}` },
-      el('div', { class: 'k', text: STAGE_LABEL[s.name] }),
-      el('div', { class: 'v', text: STATE_TEXT[s.state] }),
-      s.detail && el('div', { class: 'small muted', text: s.detail }))));
+    // a job that has stopped has no step that is still working, whatever an older record says
+    const stopped = ['failed', 'cancelled'].includes(job.status);
+    stages.replaceChildren(...job.stages.map((raw) => {
+      const s = stopped && raw.state === 'running' ? { ...raw, state: job.status === 'failed' ? 'failed' : 'pending', detail: raw.detail || 'stopped' } : raw;
+      return el('div', { class: `stage ${s.state}` },
+        el('div', { class: 'k', text: STAGE_LABEL[s.name] }),
+        el('div', { class: 'v', text: STATE_TEXT[s.state] }),
+        s.detail && el('div', { class: 'small muted', text: s.detail }));
+    }));
   }
 
   function renderTimeline() {
