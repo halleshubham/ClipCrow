@@ -25,7 +25,7 @@ say "refuses to listen publicly without any login"
 if out="$(docker run --rm "$IMG" 2>&1)"; then echo "it started without a login"; exit 1; fi
 grep -q "CLIPCROW_TOKEN" <<<"$out"          # (no pipes into grep -q: with pipefail its early exit breaks the writer)
 
-say "starts, answers its health check, serves the UI, and stops cleanly on SIGTERM"
+say "starts, answers its health check, serves the UI, and stops cleanly on SIGTERM (shutdown handlers run)"
 cid="$(docker run -d --shm-size=1g -e CLIPCROW_TOKEN=smoke-token -e ANTHROPIC_API_KEY=smoke -p 18000:8000 "$IMG")"
 trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
 for i in $(seq 1 90); do curl -fsS http://127.0.0.1:18000/api/config >/tmp/config.json 2>/dev/null && break || sleep 1; done
@@ -47,6 +47,10 @@ docker exec "$cid" curl -fsS http://127.0.0.1:8000/api/config >/dev/null || fail
 docker stop -t 60 "$cid" >/dev/null
 exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$cid")"
 echo "exit code after SIGTERM: $exit_code"
-[ "$exit_code" = "0" ] || fail "it did not stop cleanly on SIGTERM (exit code $exit_code)"
+# uvicorn re-raises SIGTERM once it has shut down, so a normal "docker stop" ends in 143 (128 + 15); 0 is fine too.
+# What matters is that the shutdown handlers ran (the app's drain is one of them) and that it exited on its own, not by SIGKILL (137).
+case "$exit_code" in 0|143) ;; *) fail "it did not stop cleanly on SIGTERM (exit code $exit_code)";; esac
+logs="$(docker logs "$cid" 2>&1)"
+grep -q "Application shutdown complete" <<<"$logs" || fail "the shutdown handlers did not run (no 'Application shutdown complete')"
 docker logs "$cid" 2>&1 | tail -5
 echo; echo "image smoke test passed"
