@@ -452,3 +452,35 @@ def test_measure_reports_speech_share_without_any_speech_recognition(tmp_path):
     assert r.words_per_minute is None and r.speech_share is not None and r.speech_share < 0.7
     assert "Sound for about" in r.breakdown and r.view()["speech_share"] == round(r.speech_share, 2)
     assert derive(r).caption_max_words == 4                                          # no rate, no look: the default
+
+
+# --- a look must be seen often enough and stay readable --------------------------------------------------------------------
+
+from clipcrow.styles import luminance, look_in_use  # noqa: E402
+
+
+def test_luminance_orders_colours_the_way_the_eye_does():
+    assert luminance("#000000") == 0 and luminance("#FFFFFF") == pytest.approx(1)
+    assert luminance("#FF00FF") > 0.175 > luminance("#7A0000") and luminance("#0000FF") < 0.175      # magenta reads, deep blue does not
+
+
+def test_a_caption_seen_in_one_frame_is_not_the_references_style():
+    one = {**LOOK, "frames_with_captions": 1}
+    assert not look_in_use(one) and look_in_use({**LOOK, "frames_with_captions": 4}) and look_in_use(LOOK)   # no count: trusted
+    s = derive(m(look=one))
+    assert not s.captions.from_reference and s.captions.top_px == BANDS["lower"] and s.captions.color == "#FFFFFF"
+
+
+def test_dark_caption_text_is_replaced_with_readable_text_but_position_and_size_are_kept():
+    boxed = {**LOOK, "frames_with_captions": 5, "color": "#000000", "highlight_color": "#101010", "band": "upper", "size": 7.0}
+    c = derive(m(look=boxed)).captions
+    assert c.from_reference and c.color == "#FFFFFF" and c.highlight_color == "#FFD54A"
+    assert c.top_px == BANDS["upper"] and c.size_scale == 1.4 and c.uppercase
+
+
+def test_the_notes_say_why_a_look_was_not_used(tmp_path):
+    p = cutting_video(tmp_path / "r.mp4")
+    few = measure(p, read_look=lambda path, d: {**LOOK, "frames_with_captions": 1})
+    assert any("only 1 of the frames" in n for n in few.notes) and "Captions sit" not in few.breakdown
+    dark = measure(p, read_look=lambda path, d: {**LOOK, "frames_with_captions": 5, "color": "#000000"})
+    assert any("dark caption text" in n for n in dark.notes)

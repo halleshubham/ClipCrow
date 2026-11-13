@@ -92,6 +92,26 @@ class Measurements:
                 "look": self.look, "breakdown": self.breakdown, "notes": self.notes}
 
 
+MIN_CAPTION_FRAMES = 3          # of the ~6 frames shown: captions seen in fewer than this are not treated as the reference's style
+MIN_TEXT_LUMINANCE = 0.175      # ClipCrow draws captions over the picture with a dark shadow: text needs 4.5:1 against black, (L + .05) / .05
+
+
+def luminance(hex_color: str) -> float:
+    """WCAG relative luminance of ``#RRGGBB``."""
+    def lin(c: float) -> float:
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+
+def look_in_use(look: Optional[dict]) -> bool:
+    """Captions count as the reference's style only when they were seen in enough frames (one frame may be a title card)."""
+    if not look or not look.get("present"):
+        return False
+    n = look.get("frames_with_captions")
+    return n is None or n >= MIN_CAPTION_FRAMES
+
+
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
@@ -110,13 +130,17 @@ def derive(m: Measurements) -> StyleSettings:
     words = 4 if wpm is None else (5 if wpm >= 180 else 4 if wpm >= 130 else 3)
     caps = CaptionLookSettings()
     look = m.look or {}
-    if look.get("present"):
+    if look_in_use(look):
         from .styles_look import BANDS, size_scale
+        color, hot = look.get("color") or "#FFFFFF", look.get("highlight_color") or "#FFD54A"
+        if luminance(color) < MIN_TEXT_LUMINANCE:          # dark text on a coloured box: we have no box, so keep readable text
+            color = "#FFFFFF"
+        if luminance(hot) < MIN_TEXT_LUMINANCE:
+            hot = "#FFD54A"
         caps = CaptionLookSettings(
             from_reference=True, top_px=BANDS.get(look.get("band") or "lower", BANDS["lower"]),
             size_scale=size_scale(look.get("size")), uppercase=bool(look.get("uppercase")),
-            color=look.get("color") or "#FFFFFF", highlight_color=look.get("highlight_color") or "#FFD54A",
-            face=look.get("face") or "unknown")
+            color=color, highlight_color=hot, face=look.get("face") or "unknown")
         if look.get("words_per_line"):
             words = max(1, min(8, int(look["words_per_line"])))      # what is on screen beats a guess from speech rate
     return StyleSettings(min_clip=lo, max_clip=hi, caption_max_words=words, caption_pause_break=0.15,
@@ -200,8 +224,15 @@ def measure(path, *, count_words: Optional[Callable[[str], Optional[int]]] = Non
             m.look = read_look(str(path), dur)
         except Exception:                         # the look is a bonus: pacing must survive a model that will not answer
             m.notes.append("The caption look could not be read, so ClipCrow's own caption style is used.")
-        if m.look is not None and not m.look.get("present"):
+        look = m.look
+        if look is not None and not look.get("present"):
             m.notes.append("No captions were visible in the frames checked, so ClipCrow's own caption style is used.")
+        elif look is not None and not look_in_use(look):
+            m.notes.append(f"Captions showed in only {look.get('frames_with_captions')} of the frames checked, so they were not "
+                           "treated as this reference's style and ClipCrow's own caption style is used.")
+        elif look is not None and luminance(look.get("color") or "#FFFFFF") < MIN_TEXT_LUMINANCE:
+            m.notes.append("This reference draws dark caption text on a coloured box. ClipCrow has no caption box yet, so the "
+                           "captions stay light and readable; position, size and capitals are still taken from the reference.")
     m.breakdown = describe(m)
     return m
 
@@ -220,7 +251,7 @@ def describe(m: Measurements) -> str:
                      f"{', few pauses' if m.speech_share >= 0.9 else ', with clear pauses' if m.speech_share < 0.75 else ''}.")
     if m.loudness_lufs is not None:
         lines.append(f"Loudness {m.loudness_lufs:.1f} LUFS.")
-    look = m.look or {}
+    look = m.look if look_in_use(m.look) else {}
     if look.get("present"):
         where = {"upper": "near the top", "middle": "in the middle", "lower": "low in the frame"}.get(look.get("band"), "")
         bits = [f"Captions sit {where}".strip()]

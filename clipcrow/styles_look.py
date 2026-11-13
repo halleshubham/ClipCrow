@@ -40,6 +40,7 @@ USER = """Describe the captions in these frames.
 - color: the main caption colour, as #RRGGBB.
 - highlight_color: the colour of the emphasised or currently-spoken word, if one word is coloured differently.
 - uppercase: true only if the Latin caption text is written in CAPITAL LETTERS.
+- frames_with_captions: in how many of the frames you were shown do you see captions at all (0 if none).
 - face: the look of the lettering: "heavy sans", "sans", "serif" or "unknown"."""
 
 
@@ -47,6 +48,7 @@ class CaptionLook(BaseModel):
     """What the model is allowed to say. Every field is bounded; unknown fields are refused."""
     model_config = ConfigDict(extra="forbid")
     present: bool = False
+    frames_with_captions: Optional[int] = Field(default=None, ge=0, le=12)
     band: str = Field(default="lower", pattern=r"^(upper|middle|lower)$")
     size: Optional[float] = Field(default=None, ge=1.0, le=20.0)
     words_per_line: Optional[int] = Field(default=None, ge=1, le=12)
