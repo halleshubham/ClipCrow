@@ -3,10 +3,15 @@
 set -eu
 UID_APP=10001
 
-for d in /data /models /models/home /models/hf; do mkdir -p "$d"; done
-# Volumes arrive owned by root: fix the top level quickly and only walk the tree when it is not already ours.
+# A volume or bind mount arrives owned by root: when its top level is not ours, take the whole tree once.
 for d in /data /models; do
+  mkdir -p "$d"
   [ "$(stat -c %u "$d")" = "$UID_APP" ] || chown -R "$UID_APP:$UID_APP" "$d"
+done
+# The directories this script creates itself would be root's: hand every one of them to the app, whatever state the volume is in.
+for d in /models/home /models/home/.cache /models/hf; do
+  mkdir -p "$d"
+  chown "$UID_APP:$UID_APP" "$d"
 done
 
 export HOME=/models/home HF_HOME=/models/hf XDG_CACHE_HOME=/models/home/.cache

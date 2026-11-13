@@ -10,6 +10,11 @@ say "runs as an unprivileged user, not root"
 say "the tools, and a real render of a Devanagari clip inside the image (Chrome, FFmpeg, fonts, GSAP, HyperFrames)"
 docker run --rm --shm-size=1g "$IMG" clipcrow selftest
 
+say "the same render with ROOT-OWNED volumes mounted (what a fresh Coolify volume or an old root-owned one looks like)"
+vol="$(mktemp -d)"; mkdir -p "$vol/data" "$vol/models"; chmod 755 "$vol" "$vol/data" "$vol/models"   # owned by the runner's user, not uid 10001
+docker run --rm --shm-size=1g -v "$vol/data:/data" -v "$vol/models:/models" "$IMG" clipcrow selftest
+[ "$(stat -c %u "$vol/models/home")" = "10001" ]          # the entrypoint handed the cache directories to the app
+
 say "libraries the server needs import"
 docker run --rm "$IMG" python -c "import faster_whisper, cv2, boto3, fastapi, anthropic, playwright; print('imports ok')"
 if [ "$VARIANT" = "gpu" ]; then
