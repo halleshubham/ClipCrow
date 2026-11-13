@@ -43,8 +43,8 @@ const fail = (m) => { console.error('FAIL:', m); process.exit(1); };
     return { w: v.videoWidth, h: v.videoHeight, d: v.duration };
   });
   if (!(meta.h > meta.w && meta.d > 5)) fail(`first clip is not a vertical video: ${JSON.stringify(meta)}`);
-  await page.click('details summary');
-  if (!(await page.locator('details').innerText()).includes('Platform AI disclosure')) fail('no AI disclosure line');
+  await page.click('details.usage summary');
+  if (!(await page.locator('details.usage').innerText()).includes('Platform AI disclosure')) fail('no AI disclosure line');
   // --- the clip editor: change text and cut points, wait for the real re-render, then reset to the AI plan
   page.on('dialog', (d) => d.accept());
   const videoLength = () => page.evaluate(async () => {

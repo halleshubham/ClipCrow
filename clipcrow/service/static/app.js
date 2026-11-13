@@ -22,6 +22,12 @@ function el(tag, props = {}, ...kids) {
   return node;
 }
 
+function icon(name, size = 22) {          // drawn by the stylesheet (a CSS mask), so no markup is built here
+  const i = el('span', { class: `i i-${name}`, 'aria-hidden': 'true' });
+  i.style.width = i.style.height = `${size}px`;
+  return i;
+}
+
 class SignInNeeded extends Error {}
 
 async function api(path, opts = {}) {
@@ -81,7 +87,7 @@ function loginView() {
     el('div', {}, el('label', { class: 'field', for: 'token', text: 'Access token' }), input),
     err,
     el('button', { class: 'btn dark', type: 'submit', text: 'Sign in' }));
-  app.replaceChildren(form);
+  app.replaceChildren(el('div', { class: 'authwrap' }, form));
 }
 
 function accountLoginView() {
@@ -118,7 +124,7 @@ function accountLoginView() {
     el('div', {}, el('label', { class: 'field', for: 'password', text: 'Password' }), pw, hint),
     err, el('div', { class: 'row' }, submit, toggle));
   paint();
-  app.replaceChildren(form);
+  app.replaceChildren(el('div', { class: 'authwrap' }, form));
 }
 
 function renderAcct() {
@@ -323,11 +329,12 @@ async function newJobView() {
   try { styles = (await api('/styles')).filter((x) => x.status === 'ready'); } catch (e) { if (e instanceof SignInNeeded) throw e; }
   let file = null;
   const fileName = el('div', { class: 'small muted', text: `MP4, MOV, MKV or WebM, up to ${c.max_upload_mb} MB` });
-  const fileTitle = el('div', { style: { fontWeight: '600' }, text: 'Drop a video here, or choose a file' });
+  const fileTitle = el('div', { class: 'ttl', text: 'Drop a video here, or choose a file' });
   const fileInput = el('input', { type: 'file', id: 'file', accept: 'video/*,.mkv,.m4v', 'aria-label': 'Video file' });
-  const drop = el('label', { class: 'drop', for: 'file' }, fileInput, el('div', {}, fileTitle, fileName));
+  const drop = el('label', { class: 'drop', for: 'file' }, fileInput, el('span', { class: 'ico' }, icon('upload', 24)), el('div', {}, fileTitle, fileName));
   const setFile = (f) => {
     file = f;
+    drop.classList.toggle('has', !!f);
     fileTitle.textContent = f ? f.name : 'Drop a video here, or choose a file';
     fileName.textContent = f ? `${(f.size / 1048576).toFixed(0)} MB` : `MP4, MOV, MKV or WebM, up to ${c.max_upload_mb} MB`;
   };
@@ -356,7 +363,7 @@ async function newJobView() {
   const submit = el('button', { class: 'btn primary', type: 'submit', text: 'Generate clips' });
   const cancelBtn = el('button', { class: 'btn', type: 'button', text: 'Cancel upload', hidden: true });
 
-  const form = el('form', { class: 'card', novalidate: true, onsubmit: async (e) => {
+  const form = el('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
     err.hidden = true;
     const fail = (m) => { err.textContent = m; err.hidden = false; submit.disabled = false; cancelBtn.hidden = true; progress.hidden = true; status.textContent = ''; };
@@ -413,14 +420,17 @@ async function newJobView() {
       select('length', 'Clip length', [['15-60', '15–60 seconds'], ['30-90', '30–90 seconds']]),
       select('style', 'Style from a reference', [['', 'None'], ...styles.map((x) => [x.id, x.name])],
         styles.length ? 'Uses what was measured in that reference: clip length, caption size, colour and position, and how often the picture pushes in.'
-          : 'Measure a reference video on the Styles page, then pick it here.'),
+          : 'Measure a reference video on the Styles page, then pick it here.')),
+    el('details', { class: 'adv' }, el('summary', {}, 'More options', el('span', { class: 'sub', text: 'spread, speakers, text behind, cover, logo, push-ins' })),
+      el('div', { class: 'stack' },
+      el('div', { class: 'grid2', style: { marginTop: 0 } },
       select('spread', 'Spread across the video', [['0.5', 'Balanced (recommended)'], ['0', 'Off: best clips first'], ['0.8', 'Wide']],
         'Keeps clips from being slices of one section.'),
       select('multi', 'Several people on screen', [['switch', 'Cut to whoever is talking (recommended)'], ['split', 'Stack two people'], ['off', 'Follow one face']],
         'For interviews and podcasts filmed with a wide shot.'),
       text('speaker', 'Speaker name (lower third)', { autocomplete: 'off', class: 'deva' }),
       text('role', 'Role', { autocomplete: 'off', class: 'deva' })),
-    el('div', { class: 'stack', style: { marginTop: '24px' } },
+      el('div', { class: 'stack' },
       el('label', { class: 'check', for: 'cutout' }, el('input', { type: 'checkbox', id: 'cutout' }),
         el('span', {}, el('strong', { text: 'Text behind the speaker' }), el('br'),
           el('span', { class: 'muted', text: 'Cuts the person out so a big word can sit behind them. Slower to render; best for a single face.' }))),
@@ -445,28 +455,28 @@ async function newJobView() {
           el('span', { class: 'muted' }, brand.outro ? `Your branding video (${brand.outro_seconds} s), added at the end.` : ['No ending video yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
       el('label', { class: 'check', for: 'immersive' }, el('input', { type: 'checkbox', id: 'immersive' }),
         el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
-          el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back. Suits a person talking to camera.' })))),
-    el('label', { class: 'row small muted', for: 'rights', style: { marginTop: '24px', alignItems: 'flex-start', flexWrap: 'nowrap' } }, rights,
-      el('span', { text: 'I own this video or have the rights to process it.' })),
-    err,
-    el('div', { class: 'row', style: { marginTop: '24px' } }, submit, cancelBtn, status),
-    progress);
+          el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back. Suits a person talking to camera.' })))))),
+    err, progress,
+    el('div', { class: 'actionbar' }, el('div', { class: 'row' },
+      el('label', { class: 'row small muted', for: 'rights', style: { alignItems: 'flex-start', flexWrap: 'nowrap', gap: '10px' } }, rights,
+        el('span', { text: 'I own this video or have the rights to process it.' })),
+      el('div', { class: 'row' }, status, cancelBtn, submit))));
   const $ = (id) => form.querySelector('#' + id);
   $('explainer').addEventListener('change', () => { $('explainer-opts').hidden = !$('explainer').checked; });
   $('style').addEventListener('change', () => { $('length').disabled = !!$('style').value; });      // the style sets the clip length
 
-  const aside = el('div', { class: 'stack grow' },
+  const aside = el('div', { class: 'aside' },
     el('section', { class: 'card' }, el('h2', { text: 'What happens next' }),
-      el('ol', { class: 'stack small', style: { paddingLeft: '20px', margin: 0, gap: '10px' } },
+      el('ol', { class: 'steps' },
         ['Transcribe: word-by-word timing, in the spoken language.', 'Plan: AI picks self-contained moments and writes the hook and title.',
           'Frame: a vertical crop that follows the speaker.', 'Render: captions, hook, stat and name card burned in.'].map((t) => el('li', { text: t })))),
-    el('section', { class: 'card', style: { background: 'var(--accent-soft)', borderColor: '#E6C85A' } }, el('h2', { text: 'How AI is used' }),
+    el('section', { class: 'callout' }, el('h2', { text: 'How AI is used' }),
       el('p', { class: 'small', style: { margin: 0 }, text: 'AI chooses the cut points, titles, hooks and emphasised words. Your footage stays real. Nothing AI-generated is added, and every job keeps a record of what the AI decided.' })));
-  app.replaceChildren(el('div', { class: 'cols' }, el('div', { style: { flex: '999 1 640px', minWidth: '0' } }, form), aside));
+  app.replaceChildren(el('div', { class: 'layout' }, form, aside));
 }
 
 const STATUS_CLASS = { queued: 'queued', running: 'running', done: 'done', failed: 'failed', cancelled: 'cancelled' };
-const STAGE_LABEL = { transcribe: '1 · TRANSCRIBE', plan: '2 · PLAN', assets: '3 · PICTURES', frame: '4 · FRAME', render: '5 · RENDER' };
+const STAGE_LABEL = { transcribe: 'Transcribe', plan: 'Plan', assets: 'Pictures', frame: 'Frame', render: 'Render' };
 const STAGE_WORD = { transcribe: 'Transcribing', plan: 'Planning', assets: 'Making pictures', frame: 'Framing clips', render: 'Rendering' };
 const STATE_TEXT = { pending: 'Waiting', running: 'Working…', done: 'Done', skipped: 'Skipped', failed: 'Failed' };
 
@@ -497,12 +507,13 @@ async function jobView(jobId) {
   const errBox = el('div', { class: 'alert', role: 'alert', hidden: true });
   const stages = el('div', { class: 'stages' });
   const logPre = el('pre', { tabindex: '0', 'aria-label': 'Job log' });
-  const logCard = el('section', { class: 'log grow', style: { flex: '999 1 520px' } }, el('h2', { text: 'LIVE LOG' }), logPre);
+  const logCard = el('details', { class: 'activity log', open: true }, el('summary', { text: 'Activity' }), logPre);
+  let logClosed = false;
   const timeline = el('div', {});
   const clipsGrid = el('div', { class: 'clips' });
   const clipsSection = el('section', { hidden: true }, el('h2', { text: 'Clips' }), timeline, el('div', { style: { height: '20px' } }), clipsGrid);
   const usageBody = el('div', { class: 'small muted', text: 'The usage record appears once the plan is ready.' });
-  const usage = el('details', { class: 'card', hidden: true }, el('summary', { text: 'AI usage and disclosure' }), el('div', { style: { marginTop: '12px' } }, usageBody));
+  const usage = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'AI usage and disclosure' }), el('div', { style: { marginTop: '12px' } }, usageBody));
   const cards = new Map();
 
   function renderStages() {
@@ -531,6 +542,12 @@ async function jobView(jobId) {
   const FRAMING_TEXT = { track: 'face-tracked crop', fit_blur: 'whole frame', cover: 'centre crop', split: 'two people stacked' };
   const busy = (c) => c.render === 'queued' || c.render === 'rendering';
 
+  function scoreRing(score) {
+    const ring = el('div', { class: 'ring', role: 'img', 'aria-label': `Clip score ${score} out of 100`, title: `Clip score ${score} / 100` }, el('span', { text: String(score) }));
+    ring.style.setProperty('--p', `${score}%`);
+    return ring;
+  }
+
   function clipCard(c, i) {
     const url = `/api/jobs/${jobId}/clips/${c.id}`;
     const player = el('div', { class: 'player' });
@@ -538,6 +555,7 @@ async function jobView(jobId) {
       player.replaceChildren(el('video', { controls: true, playsinline: true, preload: 'metadata', src: `${url}/video?v=${c.rev}`, 'aria-label': `Clip ${i + 1}: ${c.title}` }));
     } else {
       player.textContent = job.status === 'running' ? 'Rendering…' : 'Not rendered';
+      player.classList.toggle('wait', job.status === 'running');
     }
     const score = c.score == null ? null : Math.round(c.score * 100);
     const actions = el('div', { class: 'row' });
@@ -547,13 +565,14 @@ async function jobView(jobId) {
     if (c.ready && job.status === 'done' && job.source_removed) actions.append(el('span', { class: 'small muted', text: 'Original video removed: no more edits' }));
     else if (c.ready && job.status === 'done') actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}`, text: 'Edit' }));
     return el('article', { class: 'card clipcard', 'data-clip': c.id }, player,
-      el('div', { class: 'grow stack', style: { gap: '12px', minWidth: '220px' } },
+      el('div', { class: 'clipbody' },
         el('div', { class: 'chips' },
           el('span', { class: 'chip plain', text: `${fmt(c.start)} – ${fmt(c.end)}` }),
           el('span', { class: 'chip plain', text: `${Math.round(c.end - c.start)} s` }),
           el('span', { class: 'chip plain', text: FRAMING_TEXT[c.framing] || c.framing }),
           c.edited && el('span', { class: 'chip', text: 'edited by you' })),
-        el('h2', { class: 'deva', style: { fontSize: '20px', lineHeight: '1.4', margin: 0 }, translate: 'no', text: c.title }),
+        el('div', { class: 'cliphead' }, el('h2', { class: 'deva', style: { fontSize: '18px', lineHeight: '1.4', margin: 0 }, translate: 'no', text: c.title }),
+          score != null && scoreRing(score)),
         c.hook && el('div', { class: 'small muted' }, 'Hook: ', el('span', { class: 'deva', text: c.hook })),
         c.why && el('p', { class: 'small muted', style: { margin: 0 }, text: c.why }),
         c.notes && c.notes.map((n) => el('div', { class: 'small', style: { color: 'var(--warn)' }, text: n })),
@@ -562,8 +581,6 @@ async function jobView(jobId) {
           el('button', { class: 'btn', type: 'button', style: { marginTop: '8px' }, text: 'Try again', onclick: async () => {
             try { job = await api(`/jobs/${jobId}`); await api(`${'/jobs/' + jobId}/clips/${c.id}/render`, { method: 'POST' }); job = await api(`/jobs/${jobId}`); update(); schedule(); } catch (e) { alert(e.message); }
           } })),
-        score != null && el('div', {}, el('div', { class: 'row tiny muted', style: { justifyContent: 'space-between' } }, el('span', { text: 'Clip score' }), el('span', { text: `${score} / 100` })),
-          el('div', { class: 'bar-score' }, el('div', { style: { width: `${score}%` } }))),
         c.ai_decided.length > 0 && el('div', {}, el('div', { class: 'tiny muted', style: { marginBottom: '4px' }, text: 'AI decided' }),
           el('div', { class: 'chips' }, c.ai_decided.map((t) => el('span', { class: 'chip', text: t })))),
         actions));
@@ -616,6 +633,7 @@ async function jobView(jobId) {
     errBox.hidden = !job.error;
     errBox.textContent = job.error || '';
     renderStages();
+    if (job.status === 'done' && !logClosed) { logClosed = true; logCard.open = false; }      // the result matters now, not the log
     const nearBottom = logPre.scrollHeight - logPre.scrollTop - logPre.clientHeight < 40;
     logPre.textContent = job.log.length ? job.log.join('\n') : 'Waiting to start…';
     if (nearBottom) logPre.scrollTop = logPre.scrollHeight;
@@ -641,8 +659,8 @@ async function jobView(jobId) {
       el('div', { class: 'row' }, el('div', { class: 'grow' }, title, meta), badge, cancelBtn, deleteBtn),
       errBox,
       el('section', { class: 'card' }, stages),
-      el('div', { class: 'cols' }, logCard),
       clipsSection,
+      logCard,
       usage));
   update();
   timer = setTimeout(poll, 1500);
@@ -654,12 +672,12 @@ async function jobsView() {
   const body = jobs.length
     ? el('div', { class: 'card', style: { padding: '8px 24px' } }, el('table', {},
       el('thead', {}, el('tr', {}, ['Video', 'Status', 'Started', 'Clips'].map((h) => el('th', { text: h })))),
-      el('tbody', {}, jobs.map((j) => el('tr', {},
+      el('tbody', {}, jobs.map((j) => el('tr', { class: 'jobrow' },
         el('td', {}, el('a', { href: `#/jobs/${j.id}`, translate: 'no', text: j.name })),
         el('td', {}, el('span', { class: `badge ${STATUS_CLASS[j.status]}`, text: statusText(j) })),
         el('td', { text: when(j.created_at) }),
         el('td', { text: j.clips.length ? `${j.clips.filter((c) => c.ready).length} of ${j.clips.length}` : '—' }))))))
-    : el('div', { class: 'card empty' }, 'No jobs yet. ', el('a', { href: '#/', text: 'Start one' }), '.');
+    : el('div', { class: 'card empty' }, el('div', { class: 'ico' }, icon('film', 26)), 'No jobs yet. ', el('a', { href: '#/', text: 'Start one' }), '.');
   app.replaceChildren(el('h1', { text: 'Jobs' }), el('div', { style: { height: '16px' } }), body);
 }
 
@@ -804,7 +822,7 @@ async function clipEditorView(jobId, clipId) {
     el('div', { class: 'row' }, el('div', { class: 'grow' }, el('h1', { text: 'Edit clip' }),
       el('div', { class: 'small muted', translate: 'no', text: view.title })), el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
     el('div', { class: 'cols' },
-      el('div', { class: 'stack', style: { gap: '12px' } }, player, status),
+      el('div', { class: 'stack edcol sticky', style: { gap: '12px' } }, player, status),
       el('div', { class: 'stack grow', style: { flex: '999 1 420px' } },
         group('Words on screen', field('Title', f.title), field('Hook line (first seconds)', f.hook, 'Leave empty to remove it.'),
           el('div', { class: 'grid2', style: { marginTop: 0 } }, field('Speaker name', f.speaker_name), field('Role', f.speaker_title)),
@@ -912,7 +930,7 @@ async function brandView() {
 
   app.replaceChildren(el('div', { class: 'stack' },
     el('div', {}, el('h1', { text: 'Brand' }), el('p', { class: 'small muted', text: 'Your logo and ending video are added to clips when you tick them on a new job. Clips already made keep the copy they were made with.' })),
-    err, note, el('div', { class: 'cols' }, logoBox, outroBox), look));
+    err, note, el('div', { class: 'pair' }, logoBox, outroBox), look));
 }
 
 // ---- sharing ---------------------------------------------------------------------------------------
