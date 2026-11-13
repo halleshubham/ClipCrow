@@ -209,3 +209,20 @@ def test_a_cover_longer_than_half_a_trimmed_clip_is_refused_with_a_sentence(make
     on, _ = apply_edit(edl, "c1", ClipEdit(cover=True), source_duration=600)
     ok, _ = apply_edit(on, "c1", ClipEdit(source_out=3.5), source_duration=600)
     assert ok.clips[0].duration == 3.5
+
+
+def test_a_rerender_moves_the_cover_png_beside_the_clip_and_drops_it_when_switched_off(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from clipcrow.service import pipelines
+
+    def fake_render(edl, clip_id, tmp, **kw):
+        tmp.write_bytes(b"mp4")
+        if edl == "with":
+            tmp.with_name(tmp.stem + ".cover.png").write_bytes(b"png")
+        return tmp, SimpleNamespace(warnings=["w"])
+    monkeypatch.setattr("clipcrow.pipeline.render_clip", fake_render)
+    out = tmp_path / "c1.mp4"
+    assert pipelines.render_one(None, "with", "c1", out, tmp_path / "w", tmp_path, "g") == ["w"]
+    assert (tmp_path / "c1.cover.png").read_bytes() == b"png" and not list(tmp_path.glob("*.new.*"))
+    pipelines.render_one(None, "without", "c1", out, tmp_path / "w", tmp_path, "g")
+    assert not (tmp_path / "c1.cover.png").exists()
