@@ -1,0 +1,66 @@
+# ClipCrow, GPU (NVIDIA). Pulls the image built by .github/workflows/image.yml from GitHub's container registry.
+# Coolify: new resource > Docker Compose > this file; add a registry credential for ghcr.io (a token with read:packages)
+# because the package is private; set the variables below in the Coolify UI. See docs/deploy.md.
+services:
+  clipcrow:
+    image: ghcr.io/halleshubham/clipcrow:${CLIPCROW_TAG:-latest}
+    restart: unless-stopped
+    shm_size: "2gb"                 # headless Chrome crashes on Docker's default 64 MB /dev/shm
+    stop_grace_period: 90s          # must stay above DRAIN_TIMEOUT_SECONDS (45) + the server's own 20 s shutdown wait
+    # NVIDIA GPU (needs the NVIDIA driver and nvidia-container-toolkit on the host)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      # Coolify: gives the service a domain and routes it (a "magic" variable; Coolify fills it in)
+      - SERVICE_FQDN_CLIPCROW_8000
+      # --- who may use it: set ONE of these. Without either the server refuses to start on a public address.
+      - CLIPCROW_TOKEN=${CLIPCROW_TOKEN:-}                  # single user / small team behind one shared token
+      - CLIPCROW_ACCOUNTS=${CLIPCROW_ACCOUNTS:-}            # 1 = sign-up and per-user jobs (see CLIPCROW_SIGNUP, CLIPCROW_PLANS)
+      - CLIPCROW_SIGNUP=${CLIPCROW_SIGNUP:-}                # 0 = close registration
+      - CLIPCROW_PLANS=${CLIPCROW_PLANS:-}                  # e.g. /data/plans.json (plans, credit packs; no prices live in the code)
+      # --- the planner
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CLIPCROW_MODEL=${CLIPCROW_MODEL:-}
+      - CLIPCROW_INDIC_MODEL=${CLIPCROW_INDIC_MODEL:-}      # e.g. large-v3 for Marathi/Hindi
+      # --- object storage (Cloudflare R2 or any S3-compatible store); leave empty to keep everything on the /data volume
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ENDPOINT=${R2_ENDPOINT:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET=${R2_BUCKET:-}
+      - R2_PREFIX=${R2_PREFIX:-clipcrow}
+      - CLIPCROW_R2_BACKUP_SOURCE=${CLIPCROW_R2_BACKUP_SOURCE:-}
+      - CLIPCROW_R2_REDIRECT=${CLIPCROW_R2_REDIRECT:-}
+      - CLIPCROW_LOCAL_CLIP_DAYS=${CLIPCROW_LOCAL_CLIP_DAYS:-}
+      # --- retention without accounts (0 = keep for ever)
+      - CLIPCROW_RETENTION_DAYS=${CLIPCROW_RETENTION_DAYS:-}
+      - CLIPCROW_SOURCE_DAYS=${CLIPCROW_SOURCE_DAYS:-}
+      # --- optional integrations
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID:-}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET:-}
+      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET:-}
+      - SOCIOBIRD_API_URL=${SOCIOBIRD_API_URL:-}
+      - SOCIOBIRD_API_KEY=${SOCIOBIRD_API_KEY:-}
+      - CLIPCROW_SOCIOBIRD_SHARED=${CLIPCROW_SOCIOBIRD_SHARED:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # --- shutdown: how long a deploy waits for the running job before putting it back in the queue
+      - DRAIN_TIMEOUT_SECONDS=${DRAIN_TIMEOUT_SECONDS:-45}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - clipcrow-data:/data         # jobs, uploads, clipcrow.db (and plans.json): back this up
+      - clipcrow-models:/models     # Whisper and matte model caches: safe to lose, slow to refill
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/config"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+volumes:
+  clipcrow-data:
+  clipcrow-models:

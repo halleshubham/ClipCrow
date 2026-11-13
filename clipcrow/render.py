@@ -52,14 +52,27 @@ def check(project: str | Path, timeout: int = 180) -> dict:
 
 
 def check_problems(report: dict) -> list[str]:
-    """Human-readable error findings from a check report (warnings are not errors)."""
+    """Human-readable error findings from a check report that should stop a render (warnings are not errors).
+
+    ``contrast`` is deliberately NOT here: HyperFrames measures text against the video's own pixels and calls a bright
+    patch behind white captions an error, but our captions carry a heavy dark shadow, and failing a customer's clip over a
+    design lint would be worse than a caption that is slightly harder to read. See ``check_warnings``."""
     out = []
-    for section in ("lint", "runtime", "layout", "contrast", "audio"):
+    for section in ("lint", "runtime", "layout", "audio"):
         s = report.get(section) or {}
         for f in s.get("findings", []):
             if f.get("severity", "error") == "error":
                 out.append(f"{section}: {f.get('message') or f.get('code') or f}")
     return out
+
+
+def check_warnings(report: dict) -> list[str]:
+    """Things worth telling a person that do not stop a render (at most one line each)."""
+    findings = [f for f in ((report.get("contrast") or {}).get("findings") or []) if f.get("code") == "contrast_aa_failure"]
+    if not findings:
+        return []
+    worst = min(f.get("ratio", 3) for f in findings)
+    return [f"captions may be hard to read where the picture is bright (lowest contrast {worst}:1)"]
 
 
 def render(project: str | Path, output: str | Path, *, fmt: str = "mp4", quality: str = "standard",

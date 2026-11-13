@@ -180,7 +180,14 @@ class Mirror:
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="clipcrow-mirror")
 
     def submit(self, job_id: str) -> None:
-        self._pool.submit(self._safe, job_id)
+        try:
+            self._pool.submit(self._safe, job_id)
+        except RuntimeError:                                 # shutting down: the next start reconciles
+            pass
+
+    def close(self) -> None:
+        """Let uploads already started finish (a deploy's grace period bounds how long this can take)."""
+        self._pool.shutdown(wait=True, cancel_futures=True)
 
     def _safe(self, job_id: str) -> None:
         try:

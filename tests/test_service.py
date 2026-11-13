@@ -314,3 +314,64 @@ def test_ids_with_a_trailing_newline_are_not_ids(tmp_path, path):
     assert not JOB_ID.match("0123456789ab\n") and not CLIP_ID.match("c1\n")
     c, _ = client(tmp_path)
     assert c.get(path).status_code == 404
+
+
+# --- stopping for a deploy -------------------------------------------------------------------------------------------
+
+def test_a_drain_waits_for_a_job_that_finishes_in_time_and_starts_nothing_new(tmp_path, video_bytes):
+    gate = threading.Event()
+    c, app = client(tmp_path, FakePipeline(gate=gate))
+    first = upload(c, video_bytes).json()["id"]
+    second = upload(c, video_bytes).json()["id"]
+    threading.Timer(0.3, gate.set).start()                                 # the running job finishes during the wait
+    app.state.runner.drain(5.0)
+    assert app.state.store.get(first).status == "done"
+    assert app.state.store.get(second).status == "queued"                  # never started: it waits for the restart
+
+
+def test_a_job_that_does_not_finish_in_time_is_put_back_in_the_queue_not_failed_and_runs_again_after_the_restart(tmp_path, video_bytes):
+    gate = threading.Event()
+    c, app = client(tmp_path, FakePipeline(gate=gate))
+    jid = upload(c, video_bytes).json()["id"]
+    end = time.time() + 5
+    while app.state.store.get(jid).status != "running" and time.time() < end:
+        time.sleep(0.02)
+    app.state.runner.drain(0.2, stop_grace=5.0)
+    job = app.state.store.get(jid)
+    assert job.status == "queued" and job.error is None and all(s.state == "pending" for s in job.stages)
+    assert any("starts again by itself" in line for line in job.log)
+    gate.set()                                                             # a new process over the same data directory
+    c2, app2 = client(tmp_path, FakePipeline())
+    done = wait(c2, jid)
+    assert done["status"] == "done" and len(done["clips"]) >= 1
+
+
+def test_a_stopped_server_gives_nobody_a_failed_job_or_a_refund_for_a_requeued_one(tmp_path, video_bytes):
+    from clipcrow.service.accounts import Accounts
+    from clipcrow.service.plans import Catalog, Plan
+    gate = threading.Event()
+    a = Accounts(tmp_path / "data" / "x.db")
+    app = create_app(tmp_path / "data", FakePipeline(gate=gate), accounts=a, catalog=Catalog(plans={"free": Plan("free", "Free", 100, 7, 3)}))
+    c = TestClient(app)
+    c.post("/api/auth/register", json={"email": "a@example.com", "password": "correct horse battery"})
+    jid = upload(c, video_bytes).json()["id"]
+    end = time.time() + 5
+    while app.state.store.get(jid).status != "running" and time.time() < end:
+        time.sleep(0.02)
+    app.state.runner.drain(0.1, stop_grace=5.0)
+    me = c.get("/api/me").json()
+    assert app.state.store.get(jid).status == "queued" and me["used_minutes"] == 5       # still reserved, not refunded, not charged twice
+    gate.set()
+
+
+def test_the_app_drains_when_it_shuts_down(tmp_path, video_bytes, monkeypatch):
+    monkeypatch.setenv("DRAIN_TIMEOUT_SECONDS", "0")
+    gate = threading.Event()
+    app = create_app(tmp_path / "data", FakePipeline(gate=gate))
+    with TestClient(app) as c:                                              # entering and leaving runs the lifespan
+        jid = upload(c, video_bytes).json()["id"]
+        end = time.time() + 5
+        while app.state.store.get(jid).status != "running" and time.time() < end:
+            time.sleep(0.02)
+    assert app.state.store.get(jid).status == "queued"
+    gate.set()

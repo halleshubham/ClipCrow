@@ -58,6 +58,11 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   purges the bucket FIRST and aborts/retries if that fails. A clip is served from the bucket only when the local file is
   missing or (redirect mode) byte-identical (`storage.signature`). Presigned links live at most an hour; the bucket is
   never public.
+- Container: the image is built by `image.yml` and smoke-tested by `scripts/smoke_image.sh` (a real render inside it); FFmpeg,
+  fonts and GSAP come from the same scripts CI uses. `DRAIN_TIMEOUT_SECONDS` + the 20 s server wait must stay below the
+  compose `stop_grace_period`. A drained job is requeued, never marked failed or refunded. The HyperFrames pin in the
+  Dockerfile must equal `render.HYPERFRAMES_VERSION` (the build checks). HyperFrames' contrast audit is a warning, not a
+  reason to fail a render (`render.check_warnings`).
 - Clip edits are `service.editor.ClipEdit`, a closed set of fields applied by the pure `apply_edit`; never accept a raw
   EDL or a path from the browser. The AI's `decided` list is not rewritten by a person: add a note instead.
   All edl.json writes go through the runner's edit lock; a render finishes only the latest edit (`_gen`).

@@ -160,3 +160,22 @@ def test_the_devanagari_font_really_lacks_latin_letters(fonts_available):
         # The Google Fonts build (npm) already carries Latin; the Debian fonts-noto-core build does not.
         # The companion stays: we cannot know which build a deployment installs, and it is harmless.
         pytest.skip("this Noto Serif Devanagari build already has Latin letters; the companion is redundant here")
+
+
+# --- what the HyperFrames check may stop a render for ----------------------------------------------------------------------
+
+def test_a_contrast_finding_is_a_note_not_a_reason_to_fail_a_render():
+    from clipcrow import render
+    report = {"lint": {"findings": []}, "runtime": {"findings": []}, "layout": {"findings": []}, "audio": {"findings": []},
+              "contrast": {"findings": [{"code": "contrast_aa_failure", "severity": "error", "ratio": 1.3,
+                                         "message": "Contrast is 1.3:1; WCAG AA requires 3:1."}]}}
+    assert render.check_problems(report) == []
+    assert render.check_warnings(report) == ["captions may be hard to read where the picture is bright (lowest contrast 1.3:1)"]
+    assert render.check_warnings({"contrast": {"findings": []}}) == [] and render.check_warnings({}) == []
+
+
+def test_other_check_errors_still_stop_a_render():
+    from clipcrow import render
+    report = {"lint": {"findings": [{"severity": "error", "message": "bad html"}]}, "layout": {"findings": [{"message": "overflow"}]},
+              "runtime": {"findings": [{"severity": "warning", "message": "slow"}]}, "audio": {"findings": []}}
+    assert render.check_problems(report) == ["lint: bad html", "layout: overflow"]

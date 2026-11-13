@@ -53,9 +53,11 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
         compiled.warnings.append(note)
 
     if run_check:
-        problems = render.check_problems(render.check(project))
+        report = render.check(project)
+        problems = render.check_problems(report)
         if problems:
             raise EDLError("the compiled project failed HyperFrames check:\n  " + "\n  ".join(problems))
+        compiled.warnings.extend(w for w in render.check_warnings(report) if w not in compiled.warnings)
     out = render.render(project, output, quality=edl.render.quality, workers=workers,
                         browser_path=os.environ.get("CLIPCROW_BROWSER"))
     write_sidecar(edl, clip, out)

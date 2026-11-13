@@ -6,6 +6,7 @@ downloads and permissions are off, and the shot is a fixed-size first screen, so
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from .urlguard import UnsafeURL, assert_public_url
@@ -35,7 +36,9 @@ def capture_page(url: str, dest: str | Path, *, width: int = 1080, height: int =
     blocked: list[str] = []
     try:
         with playwright_factory() as p:
-            browser = p.chromium.launch(args=["--no-sandbox", *chrome_args])
+            # One Chrome in the image: the one HyperFrames renders with (HYPERFRAMES_BROWSER_PATH), when it is set.
+            exe = os.environ.get("HYPERFRAMES_BROWSER_PATH") or os.environ.get("CLIPCROW_BROWSER") or None
+            browser = p.chromium.launch(args=["--no-sandbox", *chrome_args], **({"executable_path": exe} if exe else {}))
             try:
                 ctx = browser.new_context(viewport={"width": width, "height": height}, accept_downloads=False,
                                           service_workers="block", permissions=[], java_script_enabled=True,

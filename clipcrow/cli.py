@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -43,8 +44,10 @@ def main(argv: list[str] | None = None) -> int:
     sv.add_argument("--max-upload-mb", type=int, default=4096)
     sv.add_argument("--demo", action="store_true", help="built-in Marathi transcript and recorded answers: no Whisper, no API key")
     sv.add_argument("--insecure", action="store_true", help="allow a non-local address without CLIPCROW_TOKEN")
-    sv.add_argument("--accounts", action="store_true", help="multi-user: sign-up, per-user jobs, minutes metered against a plan, retention")
-    sv.add_argument("--no-signup", action="store_true", help="with --accounts: do not let new people register")
+    sv.add_argument("--accounts", action="store_true", default=os.environ.get("CLIPCROW_ACCOUNTS") == "1", help="multi-user: sign-up, per-user jobs, minutes metered against a plan, retention")
+    sv.add_argument("--no-signup", action="store_true", default=os.environ.get("CLIPCROW_SIGNUP") == "0", help="with --accounts: do not let new people register")
+    st = sub.add_parser("selftest", help="can this machine render? checks the tools and renders a tiny Devanagari clip")
+    st.add_argument("--no-render", action="store_true", help="check the tools only")
     u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
     u.add_argument("edl")
     pl = sub.add_parser("plan", help="transcript -> EDL with an LLM (needs ANTHROPIC_API_KEY)")
@@ -75,7 +78,6 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "schema":
             print(json.dumps(json_schema(), indent=2)); return 0
         if a.cmd == "serve":
-            import os
             import uvicorn
             from .service.api import create_app
             from .service.billing import Razorpay
@@ -103,8 +105,11 @@ def main(argv: list[str] | None = None) -> int:
                              backup_source=os.environ.get("CLIPCROW_R2_BACKUP_SOURCE") == "1",
                              local_clip_days=int(os.environ.get("CLIPCROW_LOCAL_CLIP_DAYS", "0") or 0),
                              sociobird_shared=os.environ.get("CLIPCROW_SOCIOBIRD_SHARED") == "1")
-            uvicorn.run(app, host=a.host, port=a.port, log_level="info")
+            uvicorn.run(app, host=a.host, port=a.port, log_level="info", timeout_graceful_shutdown=20)
             return 0
+        if a.cmd == "selftest":
+            from .selftest import run as selftest
+            return 0 if selftest(skip_render=a.no_render) else 1
         if a.cmd == "transcribe":
             from .asr import release_models, transcribe
             tr = transcribe(a.media, a.language, progress=lambda m: print(f"  {m}", file=sys.stderr))

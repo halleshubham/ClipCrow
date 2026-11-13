@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import hmac
 import json
 import logging
@@ -17,6 +18,7 @@ import math
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
@@ -111,7 +113,17 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     csp = CSP.replace("media-src 'self'", f"media-src 'self' {storage.origin}") if storage else CSP
     if start_runner:
         runner.recover()
-    app = FastAPI(title="ClipCrow", docs_url=None, redoc_url=None)
+    @asynccontextmanager
+    async def lifespan(_app):
+        yield
+        if start_runner:                                    # SIGTERM from a deploy: let the running job finish, or requeue it
+            seconds = float(os.environ.get("DRAIN_TIMEOUT_SECONDS", "45") or 0)
+            await asyncio.to_thread(runner.drain, seconds)
+        publish_pool.shutdown(wait=False, cancel_futures=True)
+        if mirror:
+            await asyncio.to_thread(mirror.close)
+
+    app = FastAPI(title="ClipCrow", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.store, app.state.runner, app.state.accounts, app.state.catalog = store, runner, accounts, catalog
     app.state.mirror, app.state.mirror_source = mirror, backup_source
     limit = max_upload_mb * 1024 * 1024

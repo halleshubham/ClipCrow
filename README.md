@@ -28,6 +28,12 @@ reproducible (same browser binary → byte-identical video, verified) and an edi
 - Hostile-input safe: EDL values are restricted to safe shapes and HTML-escaped; media must sit
   under `--media-root`; remote URLs are refused.
 
+## Run it in a container
+`docker-compose.gpu.yml` (NVIDIA) and `docker-compose.yml` (CPU) pull `ghcr.io/halleshubham/clipcrow`, built and smoke-tested
+by GitHub Actions (the smoke test renders a clip inside the image). `clipcrow selftest` answers "can this machine render?".
+Step by step for Coolify, R2, Razorpay and the pitfalls: **[docs/deploy.md](docs/deploy.md)**. A running job survives a deploy:
+on stop the app drains (finishes the job or requeues it).
+
 ## Web service
 ```bash
 pip install -e '.[service]'

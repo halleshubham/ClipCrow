@@ -49,6 +49,10 @@ class JobRunner:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-job")
         self.on_finish = None                                      # called with the job once it is done, failed or cancelled
         self.on_change = None                                      # called with a job id when its files changed (to mirror them)
+        self._cond = threading.Condition()
+        self._active = 0                                           # tasks (jobs and clip re-renders) running right now
+        self._draining = False
+        self._requeue: set[str] = set()                            # jobs stopped by a drain: run again after the restart
         self._cancel: dict[str, threading.Event] = {}
         self._edit_lock = threading.Lock()                       # one edit at a time touches edl.json
         self._replan: dict[tuple[str, str], str] = {}            # (job, clip) -> multi mode to re-plan framing with
@@ -106,7 +110,45 @@ class JobRunner:
         queued = [j for j in reversed(self.store.list()) if j.status == "queued"]
         return next((i + 1 for i, j in enumerate(queued) if j.id == job_id), 0)
 
+    # --- shutdown --------------------------------------------------------------------------------
+
+    def drain(self, timeout: float, stop_grace: float = 10.0) -> None:
+        """For a deploy or a stop: start nothing new, give what is running ``timeout`` seconds, then ask the running
+        job to stop and put it back in the queue (its reserved minutes stay reserved, it is never marked failed or
+        cancelled): the next start picks it up again. Waiting jobs stay queued for the same reason."""
+        with self._cond:
+            self._draining = True
+            self._cond.wait_for(lambda: self._active == 0, timeout)
+            running = [j for j in self.store.list() if j.status == "running"]
+            for j in running:
+                self._requeue.add(j.id)
+                ev = self._cancel.get(j.id)
+                if ev:
+                    ev.set()
+            if running:
+                self._cond.wait_for(lambda: self._active == 0, stop_grace)
+
+    def _enter(self) -> bool:
+        with self._cond:
+            if self._draining:
+                return False
+            self._active += 1
+            return True
+
+    def _leave(self) -> None:
+        with self._cond:
+            self._active -= 1
+            self._cond.notify_all()
+
     def _run(self, job_id: str) -> None:
+        if not self._enter():
+            return                                              # draining: it stays queued and runs after the restart
+        try:
+            self._run_job(job_id)
+        finally:
+            self._leave()
+
+    def _run_job(self, job_id: str) -> None:
         store = self.store
         job = store.get(job_id)
         if job.status != "queued":
@@ -152,8 +194,14 @@ class JobRunner:
             self.pipeline.run(job, src, store.dir(job_id) / "out", hooks, say)
             job.status = "done"
         except Cancelled:
-            job.status = "cancelled"
-            job.add_log("cancelled")
+            if job_id in self._requeue:                         # stopped by a deploy, not by a person
+                job.status = "queued"
+                for s in job.stages:
+                    s.state, s.detail = "pending", ""
+                job.add_log("the server was restarted; this job starts again by itself")
+            else:
+                job.status = "cancelled"
+                job.add_log("cancelled")
         except EXPECTED as e:
             job.status, job.error = "failed", str(e)[:500]
         except Exception as e:                                  # never show internals to the browser
@@ -243,6 +291,15 @@ class JobRunner:
         self._pool.submit(self._render_clip, job_id, clip_id)
 
     def _render_clip(self, job_id: str, clip_id: str) -> None:
+        if not self._enter():
+            self._mark(job_id, clip_id, render="failed", render_error="The server was restarted before this clip could be rendered. Render it again.")
+            return
+        try:
+            self._render_clip_now(job_id, clip_id)
+        finally:
+            self._leave()
+
+    def _render_clip_now(self, job_id: str, clip_id: str) -> None:
         key = (job_id, clip_id)
         gen = self._gen.get(key, 0)
         try:
