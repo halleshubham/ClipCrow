@@ -24,7 +24,7 @@ CANVAS_FPS = 30
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
-class BrandError(RuntimeError):
+class BrandError(ValueError):
     """A sentence that is safe to show a person."""
 
 

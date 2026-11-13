@@ -16,7 +16,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .. import fonts
+from .. import branding, fonts
 from ..edl import EDL, Clip, HexColor
 from ..punch import plan_punch_ins, sentence_spans
 
@@ -51,6 +51,10 @@ class ClipEdit(_M):
     multi: Optional[Literal["switch", "split", "off"]] = None
     punch_ins: Optional[bool] = None            # slow push-ins at sentence starts: on or off
     drop_pictures: Optional[list[str]] = Field(default=None, max_length=8)   # ids of picture overlays to remove
+    cover: Optional[bool] = None                # the bold title for the first frames: on or off
+    cover_text: Optional[str] = Field(default=None, max_length=80)   # its words ("" = back to the hook / title)
+    logo: Optional[bool] = None                 # the brand logo (only when the job has one)
+    outro: Optional[bool] = None                # the ending video (only when the job has one)
 
 
 def _first_line(e: ValidationError) -> str:
@@ -79,6 +83,53 @@ def _set_text(overlays: list[dict], kind: str, field: str, value: str, new: dict
         return False
     o[field] = value
     return True
+
+
+def _brand_edit(edl: EDL, clip: Clip, d: dict, edit: ClipEdit) -> list[str]:
+    """Cover title, logo and ending video: switched on and off, never re-styled here (the style stays as it was made)."""
+    changed: list[str] = []
+    if edit.cover is not None or edit.cover_text is not None:
+        cur = d.get("cover")
+        hook = next((o["text"] for o in d["overlays"] if o["kind"] == "hook" and o.get("text", "").strip()), "")
+        default = re.sub(r"\s+", " ", hook or d.get("title", "")).strip()[:80]
+        text = (cur or {}).get("text") or default
+        if edit.cover_text is not None:
+            text = edit.cover_text.strip() or default          # "" goes back to the hook (or title)
+        if edit.cover is False:
+            if cur and cur.get("enabled", True):
+                cur["enabled"] = False
+                changed.append("cover")
+        else:                                                   # giving the words switches it on
+            if not text:
+                raise ValueError("The cover needs some words: this clip has no hook or title to use.")
+            base = cur
+            if base is None:
+                made = branding.make_cover(clip, branding.BrandKit(), text)
+                if made is None:
+                    raise ValueError("This clip is too short for a cover title.")
+                base = made.model_dump(exclude_none=True)
+            new = {**base, "text": text[:80], "enabled": True}
+            if new != cur:
+                d["cover"] = new
+                changed.append("cover")
+    for name, label, asset in (("logo", "logo", "brand-logo"), ("outro", "ending video", "brand-outro")):
+        want = getattr(edit, name)
+        if want is None:
+            continue
+        cur = d.get(name)
+        if want:
+            if cur is None:
+                if not any(a.id == asset for a in edl.assets):
+                    raise ValueError(f"This job has no {label}: add one on the Brand page and make the clips again.")
+                d[name] = {"asset": asset}
+                changed.append(label)
+            elif not cur.get("enabled", True):
+                cur["enabled"] = True
+                changed.append(label)
+        elif cur and cur.get("enabled", True):
+            cur["enabled"] = False
+            changed.append(label)
+    return changed
 
 
 def apply_edit(edl: EDL, clip_id: str, edit: ClipEdit, *, source_duration: float) -> tuple[EDL, Optional[str]]:
@@ -151,6 +202,8 @@ def apply_edit(edl: EDL, clip_id: str, edit: ClipEdit, *, source_duration: float
         ov[:] = [o for o in ov if not (o["kind"] == "media" and o["id"] in gone)]
         if len(ov) != before:
             changed.append("pictures")
+
+    changed += _brand_edit(edl, clip, d, edit)
 
     replan: Optional[str] = None
     layout = d["layout"]
@@ -225,6 +278,10 @@ def clip_view(edl: EDL, clip_id: str, *, source_duration: float) -> dict:
                       "ai": next((a.ai for a in edl.assets if a.id == o.asset), "none"),
                       "source": next((a.source_url for a in edl.assets if a.id == o.asset), "")}
                      for o in clip.overlays if o.kind == "media"],
+        "cover": {"on": bool(clip.cover and clip.cover.enabled), "text": clip.cover.text if clip.cover else branding.cover_text(clip),
+                  "ms": clip.cover.duration_ms if clip.cover else 250},
+        "logo": {"available": any(a.id == "brand-logo" for a in edl.assets), "on": bool(clip.logo and clip.logo.enabled)},
+        "outro": {"available": any(a.id == "brand-outro" for a in edl.assets), "on": bool(clip.outro and clip.outro.enabled)},
         "canvas": {"width": edl.render.width, "height": edl.render.height},
         "words": words,
         "edited": any(n.startswith("edited by a person") for n in (clip.ai.notes if clip.ai else [])),

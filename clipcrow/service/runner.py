@@ -40,7 +40,8 @@ def clip_infos(edl: EDL, ready: set[str] = frozenset()) -> list[ClipInfo]:
         out.append(ClipInfo(
             id=c.id, title=c.title, hook=hook, start=c.source_in, end=c.source_out,
             score=c.ai.score if c.ai else None, why=c.ai.why if c.ai else "",
-            ai_decided=list(c.ai.decided) if c.ai else [], framing=c.layout.framing, ready=c.id in ready))
+            ai_decided=list(c.ai.decided) if c.ai else [], framing=c.layout.framing, ready=c.id in ready,
+            has_cover=bool(c.cover and c.cover.enabled)))
     return out
 
 
@@ -50,6 +51,7 @@ class JobRunner:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-job")
         self.on_finish = None                                      # called with the job once it is done, failed or cancelled
         self.on_change = None                                      # called with a job id when its files changed (to mirror them)
+        self.brands = None                                         # BrandStore: the logo and ending video of an account
         self.storage = None                                        # object storage, for jobs whose upload went straight to it
         self._cond = threading.Condition()
         self._active = 0                                           # tasks (jobs and clip re-renders) running right now
@@ -203,6 +205,11 @@ class JobRunner:
             store.save(job)
 
         hooks = Hooks(stage=stage, clip_ready=clip_ready, planned=planned, clip_notes=clip_notes, cancelled=ev.is_set)
+        p = job.params
+        if p.cover or p.logo or p.outro:
+            from ..branding import BrandingChoice, BrandKit
+            hooks.choice = BrandingChoice(cover=p.cover, logo=p.logo, outro=p.outro)
+            hooks.brand = self.brands.kit(job.owner or "shared") if self.brands else BrandKit()
         try:
             if job.source_pending:                              # a direct upload: the original is in the bucket, fetch it first
                 self._fetch_source(job, say, hooks)

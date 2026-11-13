@@ -27,10 +27,10 @@ from .jobs import JOB_ID
 
 log = logging.getLogger("clipcrow.service")
 
-REL = re.compile(r"^(out/(c\d{1,3}\.mp4(\.ai\.json)?|edl\.json|plan-report\.json|transcript\.json)|source\.[a-z0-9]{2,5})\Z")
+REL = re.compile(r"^(out/(c\d{1,3}\.mp4(\.ai\.json)?|c\d{1,3}\.cover\.png|edl\.json|plan-report\.json|transcript\.json)|source\.[a-z0-9]{2,5})\Z")
 PREFIX = re.compile(r"^[A-Za-z0-9._/-]{0,60}\Z")
 CONTENT_TYPES = {".mp4": "video/mp4", ".json": "application/json", ".mov": "video/quicktime", ".mkv": "video/x-matroska",
-                 ".webm": "video/webm", ".m4v": "video/x-m4v"}
+                 ".webm": "video/webm", ".png": "image/png", ".m4v": "video/x-m4v"}
 
 
 class StorageError(RuntimeError):
@@ -266,7 +266,7 @@ class Mirror:
     def wanted(self, job) -> list[str]:
         rels = ["out/edl.json", "out/plan-report.json", "out/transcript.json"]
         for c in job.clips:
-            rels += [f"out/{c.id}.mp4", f"out/{c.id}.mp4.ai.json"]
+            rels += [f"out/{c.id}.mp4", f"out/{c.id}.mp4.ai.json", f"out/{c.id}.cover.png"]
         src = self.store.source_path(job.id)
         if self.backup_source and src is not None:
             rels.append(src.name)

@@ -45,6 +45,9 @@ class Params(_M):
     links: list[str] = Field(default_factory=list, max_length=6)
     ai_images: bool = False
     multi: Literal["switch", "split", "off"] = "switch"
+    cover: bool = False                     # a bold title for the first ~250 ms (and a cover PNG)
+    logo: bool = False                      # the account's logo in a corner
+    outro: bool = False                     # the account's ending video after each clip
 
 
 class Stage(_M):
@@ -69,6 +72,7 @@ class ClipInfo(_M):
     render_error: str = ""
     rev: int = 0                 # bumps after each re-render so the browser reloads the video
     edited: bool = False
+    has_cover: bool = False
     notes: list[str] = Field(default_factory=list)      # e.g. text behind the speaker skipped: no matte
 
 
@@ -190,6 +194,11 @@ class JobStore:
 
     def source_path(self, job_id: str) -> Optional[Path]:
         return next(iter(sorted(self.dir(job_id).glob("source.*"))), None)
+
+    def cover_path(self, job_id: str, clip_id: str) -> Path:
+        if not CLIP_ID.match(clip_id):
+            raise KeyError(clip_id)
+        return self.dir(job_id) / "out" / f"{clip_id}.cover.png"
 
     def clip_path(self, job_id: str, clip_id: str) -> Path:
         if not CLIP_ID.match(clip_id):

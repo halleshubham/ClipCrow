@@ -25,6 +25,11 @@ def render_one(job: Job, edl, clip_id: str, out: Path, workdir: Path, media_root
     mp4, compiled = render_clip(edl, clip_id, tmp, workdir=workdir, media_root=media_root, gsap_js=gsap_js,
                                 asset_root=out.parent)
     os.replace(mp4, out)
+    cover_new, cover = tmp.with_name(tmp.stem + ".cover.png"), out.with_name(out.stem + ".cover.png")
+    if cover_new.is_file():
+        os.replace(cover_new, cover)
+    else:
+        cover.unlink(missing_ok=True)
     side = Path(str(mp4) + ".ai.json")
     if side.is_file():
         os.replace(side, Path(str(out) + ".ai.json"))

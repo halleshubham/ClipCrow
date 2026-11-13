@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import re
+import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -23,17 +24,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional, Union
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
 from ..assets.urlguard import UnsafeURL, assert_public_url
+from ..branding import BrandError
 from ..costs import estimate_cost, estimate_total
 from ..edl import load_edl
 from ..planner.source import probe_source
 from .accounts import AccountError, Accounts, User
 from .billing import BillingError, Razorpay, apply_event
+from .brand import MAX_LOGO_BYTES, MAX_OUTRO_BYTES, BrandStore
 from .editor import ClipEdit, clip_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Catalog, load_catalog
@@ -146,6 +149,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         csp = csp.replace("connect-src 'self'", f"connect-src 'self' {storage.origin}")
     uploads = UploadStore(data_dir) if direct else None
     runner.storage = storage
+    brands = BrandStore(data_dir)
+    runner.brands = brands
     if start_runner:
         runner.recover()
     @asynccontextmanager
@@ -332,6 +337,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             if j.owner == user.id:
                 purge_remote(j.id, "Your files could not be removed from storage just now, so the account was not deleted. Try again in a minute.")
                 store.delete(j.id)
+        brands.delete_all(user.id)
         accounts.delete(user.id)
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(SESSION_COOKIE)
@@ -500,7 +506,11 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     def truthy(v) -> bool:
         return v is True or str(v).lower() in ("1", "true", "on", "yes")
 
-    def build_params(o: dict) -> Params:
+    def brand_owner(request: Request) -> str:
+        user = getattr(request.state, "user", None)
+        return user.id if accounts and user is not None else "shared"
+
+    def build_params(o: dict, owner: str = "shared") -> Params:
         """The job options, from a form or from JSON (strings or typed values), checked once for both upload paths."""
         link_list = [x.strip() for x in str(o.get("links") or "").splitlines() if x.strip()]
         want_images = truthy(o.get("ai_images"))
@@ -519,11 +529,16 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                             spread=_opt_float(o.get("spread"), 0.5), speaker_name=str(o.get("speaker_name") or "").strip() or None,
                             speaker_title=str(o.get("speaker_title") or "").strip(), cutout=truthy(o.get("cutout")),
                             immersive=truthy(o.get("immersive")), explainer=truthy(o.get("explainer")), links=link_list,
-                            ai_images=want_images, multi=o.get("multi") or "switch")
+                            ai_images=want_images, multi=o.get("multi") or "switch",
+                            cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), outro=truthy(o.get("outro")))
         except (ValidationError, ValueError, TypeError) as e:
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
         if params.min_clip >= params.max_clip:
             raise HTTPException(422, "The shortest clip must be shorter than the longest.")
+        if params.logo and brands.logo_path(owner) is None:
+            raise HTTPException(422, "Upload a logo on the Brand page first, or turn the logo off.")
+        if params.outro and brands.outro_path(owner) is None:
+            raise HTTPException(422, "Upload an ending video on the Brand page first, or turn it off.")
         return params
 
     # --- direct uploads: the browser sends the file to the bucket, not through this server --------------------------------
@@ -617,7 +632,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         sb = need_direct()
         rec = upload_or_404(upload_id, request)
         user = request.state.user
-        params = build_params(body.options)                    # a bad option must not cost the person their upload: check first
+        params = build_params(body.options, brand_owner(request))                    # a bad option must not cost the person their upload: check first
         if sorted(p.n for p in body.parts) != list(range(1, rec.parts + 1)):
             raise HTTPException(422, "Some parts of the upload are missing.")
         if any(not ETAG.match(p.etag) for p in body.parts):
@@ -670,7 +685,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          speaker_title: Optional[str] = Form(""), cutout: Optional[str] = Form(None),
                          multi: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
                          explainer: Optional[str] = Form(None), links: Optional[str] = Form(None),
-                         ai_images: Optional[str] = Form(None)) -> dict:
+                         ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
+                         logo: Optional[str] = Form(None), outro: Optional[str] = Form(None)) -> dict:
         if rights.lower() not in ("1", "true", "on", "yes"):
             raise HTTPException(400, "Confirm that you own this video or have the rights to process it.")
         declared = int(request.headers.get("content-length") or 0)
@@ -678,7 +694,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
                                    speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi,
-                                   immersive=immersive, explainer=explainer, links=links, ai_images=ai_images))
+                                   immersive=immersive, explainer=explainer, links=links, ai_images=ai_images, cover=cover, logo=logo, outro=outro),
+                              brand_owner(request))
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in VIDEO_SUFFIXES:
             raise HTTPException(400, "Upload an MP4, MOV, MKV, WebM or M4V video.")
@@ -778,6 +795,78 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     @app.get("/api/jobs/{job_id}/clips/{clip_id}/download", dependencies=[Depends(authed)])
     def clip_download(job_id: str, clip_id: str, request: Request):
         return clip_response(job_id, clip_id, request, download=True)
+
+    @app.get("/api/jobs/{job_id}/clips/{clip_id}/cover", dependencies=[Depends(authed)])
+    def clip_cover(job_id: str, clip_id: str, request: Request, download: int = 0):
+        job = job_or_404(job_id, request)
+        try:
+            path = store.cover_path(job_id, clip_id)
+        except KeyError:
+            raise HTTPException(404, "No such clip.")
+        if not path.is_file():
+            raise HTTPException(404, "This clip has no cover image.")
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(job.name).stem).strip("._") or "clip"
+        return FileResponse(path, media_type="image/png", filename=f"{stem[:60]}-{clip_id}-cover.png" if download else None)
+
+    # --- the brand kit: logo, ending video, how the cover and logo look ----------------------------------------
+    @app.get("/api/brand", dependencies=[Depends(authed)])
+    def brand_get(request: Request) -> dict:
+        return brands.describe(brand_owner(request))
+
+    @app.put("/api/brand", dependencies=[Depends(authed)])
+    def brand_put(request: Request, body: dict = Body(...)) -> dict:
+        try:
+            brands.set_settings(brand_owner(request), body)
+        except BrandError as e:
+            raise HTTPException(422, str(e))
+        return brands.describe(brand_owner(request))
+
+    @app.post("/api/brand/logo", dependencies=[Depends(authed)])
+    async def brand_logo(request: Request, file: UploadFile = File(...)) -> dict:
+        data = await file.read(MAX_LOGO_BYTES + 1)
+        try:
+            return await asyncio.to_thread(brands.put_logo, brand_owner(request), data)
+        except BrandError as e:
+            raise HTTPException(422, str(e))
+
+    @app.post("/api/brand/outro", dependencies=[Depends(authed)])
+    async def brand_outro(request: Request, file: UploadFile = File(...)) -> dict:
+        owner = brand_owner(request)
+        with tempfile.TemporaryDirectory(dir=data_dir) as tmp:
+            raw = Path(tmp) / "in"
+            size = 0
+            with raw.open("wb") as f:
+                while chunk := await file.read(1 << 20):
+                    size += len(chunk)
+                    if size > MAX_OUTRO_BYTES:
+                        raise HTTPException(413, f"The ending video can be at most {MAX_OUTRO_BYTES // (1024 * 1024)} MB.")
+                    f.write(chunk)
+            try:
+                return await asyncio.to_thread(brands.put_outro, owner, raw)
+            except BrandError as e:
+                raise HTTPException(422, str(e))
+
+    @app.delete("/api/brand/{what}", dependencies=[Depends(authed)])
+    def brand_delete(what: str, request: Request) -> dict:
+        try:
+            return brands.delete(brand_owner(request), what)
+        except BrandError as e:
+            raise HTTPException(404, str(e))
+
+    @app.get("/api/brand/logo/file", dependencies=[Depends(authed)])
+    def brand_logo_file(request: Request):
+        path = brands.logo_path(brand_owner(request))
+        if path is None:
+            raise HTTPException(404, "No logo yet.")
+        return FileResponse(path, media_type={".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}[path.suffix],
+                            headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/brand/outro/file", dependencies=[Depends(authed)])
+    def brand_outro_file(request: Request):
+        path = brands.outro_path(brand_owner(request))
+        if path is None:
+            raise HTTPException(404, "No ending video yet.")
+        return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-cache"})
 
     # --- editing one clip ---------------------------------------------------------------------
     def editable(job_id: str, clip_id: str, request: Request) -> Job:

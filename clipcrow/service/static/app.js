@@ -315,8 +315,10 @@ class DirectUpload {
   }
 }
 
-function newJobView() {
+async function newJobView() {
   const c = state.config;
+  let brand = { logo: false, outro: false, settings: {} };
+  try { brand = await api('/brand'); } catch (e) { if (e instanceof SignInNeeded) throw e; }
   let file = null;
   const fileName = el('div', { class: 'small muted', text: `MP4, MOV, MKV or WebM, up to ${c.max_upload_mb} MB` });
   const fileTitle = el('div', { style: { fontWeight: '600' }, text: 'Drop a video here, or choose a file' });
@@ -365,6 +367,7 @@ function newJobView() {
       multi: $('multi').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', links: $('links').value, ai_images: $('ai_images').checked ? 'true' : '',
+      cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '',
     };
     submit.disabled = true;
     progress.hidden = false;
@@ -425,6 +428,15 @@ function newJobView() {
         el('label', { class: c.ai_images ? 'check' : 'check muted', for: 'ai_images' }, el('input', { type: 'checkbox', id: 'ai_images', disabled: !c.ai_images }),
           el('span', {}, el('strong', { text: 'Also generate images with AI' }), el('br'),
             el('span', { class: 'muted', text: c.ai_images ? 'AI-generated pictures mean most platforms ask you to label the video as AI content.' : 'Not set up on this server.' })))),
+      el('label', { class: 'check', for: 'cover' }, el('input', { type: 'checkbox', id: 'cover', checked: !!brand.settings.default_cover }),
+        el('span', {}, el('strong', { text: 'Cover title on the first frames' }), el('br'),
+          el('span', { class: 'muted', text: 'A bold title (the hook line) for the first quarter-second, so the poster frame says what the clip is about. You also get it as a picture. Platforms choose their own thumbnail, so this raises the odds, it cannot force it.' }))),
+      el('label', { class: brand.logo ? 'check' : 'check muted', for: 'logo' }, el('input', { type: 'checkbox', id: 'logo', disabled: !brand.logo, checked: brand.logo && !!brand.settings.default_logo }),
+        el('span', {}, el('strong', { text: 'Logo in a corner' }), el('br'),
+          el('span', { class: 'muted' }, brand.logo ? 'Your logo, from the Brand page.' : ['No logo yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
+      el('label', { class: brand.outro ? 'check' : 'check muted', for: 'outro' }, el('input', { type: 'checkbox', id: 'outro', disabled: !brand.outro, checked: brand.outro && !!brand.settings.default_outro }),
+        el('span', {}, el('strong', { text: 'Ending video after each clip' }), el('br'),
+          el('span', { class: 'muted' }, brand.outro ? `Your branding video (${brand.outro_seconds} s), added at the end.` : ['No ending video yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
       el('label', { class: 'check', for: 'immersive' }, el('input', { type: 'checkbox', id: 'immersive' }),
         el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
           el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back. Suits a person talking to camera.' })))),
@@ -523,6 +535,7 @@ async function jobView(jobId) {
     const score = c.score == null ? null : Math.round(c.score * 100);
     const actions = el('div', { class: 'row' });
     if (c.ready) actions.append(el('a', { class: 'btn dark', href: `${url}/download`, text: 'Download MP4' }));
+    if (c.ready && c.has_cover) actions.append(el('a', { class: 'btn', href: `${url}/cover?download=1`, text: 'Cover image' }));
     if (c.ready && job.status === 'done' && state.config.publishing) actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}/share`, text: 'Share' }));
     if (c.ready && job.status === 'done' && job.source_removed) actions.append(el('span', { class: 'small muted', text: 'Original video removed: no more edits' }));
     else if (c.ready && job.status === 'done') actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}`, text: 'Edit' }));
@@ -705,6 +718,10 @@ async function clipEditorView(jobId, clipId) {
   const syncMulti = () => { multiField.hidden = f.framing.value !== 'auto'; };
   f.framing.addEventListener('change', syncMulti); syncMulti();
   f.punch = el('input', { id: 'punch', type: 'checkbox' }); f.punch.checked = view.punch_ins;
+  f.cover = el('input', { id: 'cover_on', type: 'checkbox' }); f.cover.checked = view.cover.on;
+  textIn('cover_text', view.cover.text, 80);
+  f.logo = el('input', { id: 'logo_on', type: 'checkbox', disabled: !view.logo.available }); f.logo.checked = view.logo.on;
+  f.outro = el('input', { id: 'outro_on', type: 'checkbox', disabled: !view.outro.available }); f.outro.checked = view.outro.on;
 
   function body() {
     const out = {};
@@ -722,6 +739,10 @@ async function clipEditorView(jobId, clipId) {
     if (Number(f.cap_top.value) !== cap.top_px) c.top_px = Number(f.cap_top.value);
     if (Object.keys(c).length) out.captions = c;
     if (f.punch.checked !== view.punch_ins) out.punch_ins = f.punch.checked;
+    if (f.cover.checked !== view.cover.on) out.cover = f.cover.checked;
+    if (f.cover.checked && f.cover_text.value.trim() !== view.cover.text) out.cover_text = f.cover_text.value;
+    if (f.logo.checked !== view.logo.on) out.logo = f.logo.checked;
+    if (f.outro.checked !== view.outro.on) out.outro = f.outro.checked;
     const drop = [...app.querySelectorAll('[data-drop]')].filter((x) => x.checked).map((x) => x.dataset.drop);
     if (drop.length) out.drop_pictures = drop;
     if (f.framing.value) { out.framing = f.framing.value; if (f.framing.value === 'auto') out.multi = f.multi.value; }
@@ -792,6 +813,12 @@ async function clipEditorView(jobId, clipId) {
             el('input', { type: 'checkbox', id: `drop-${p.id}`, 'data-drop': p.id }),
             el('span', {}, el('strong', { translate: 'no', text: p.caption || 'Picture' }), ` at ${fmt(p.t || 0)}`, el('br'),
               el('span', { class: 'muted', text: `${p.ai === 'generated' ? 'AI-generated' : 'Page screenshot'} · tick to remove it` }))))),
+        group('Cover and branding',
+          el('label', { class: 'check', for: 'cover_on' }, f.cover, el('span', {}, el('strong', { text: 'Cover title on the first frames' }), el('br'),
+            el('span', { class: 'muted', text: 'Shown for the first fraction of a second, so the poster frame carries the title.' }))),
+          field('Cover words', f.cover_text, 'Leave empty to use the hook line.'),
+          el('label', { class: view.logo.available ? 'check' : 'check muted', for: 'logo_on' }, f.logo, el('span', { text: view.logo.available ? 'Logo in a corner' : 'Logo (this job has none)' })),
+          el('label', { class: view.outro.available ? 'check' : 'check muted', for: 'outro_on' }, f.outro, el('span', { text: view.outro.available ? 'Ending video' : 'Ending video (this job has none)' }))),
         group('Framing', field('Picture', f.framing), multiField,
           el('label', { class: 'check', for: 'punch' }, f.punch, el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
             el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back.' })))),
@@ -801,6 +828,84 @@ async function clipEditorView(jobId, clipId) {
   showPlayer(view.render); showStatus(view.render);
   if (view.render.render === 'queued' || view.render.render === 'rendering') timer = setTimeout(poll, 1500);
   return { cleanup() { dead = true; clearTimeout(timer); } };
+}
+
+// ---- brand kit -------------------------------------------------------------------------------------
+
+async function brandView() {
+  let brand = await api('/brand');
+  const s = brand.settings;
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const note = el('div', { class: 'small', role: 'status', 'aria-live': 'polite' });
+  const fail = (e) => { if (e instanceof SignInNeeded) { route(); return; } err.textContent = e.message; err.hidden = false; };
+  const stamp = () => `?v=${Date.now()}`;
+
+  async function send(path, input, what) {
+    err.hidden = true;
+    if (!input.files[0]) return fail(new Error(`Choose ${what} first.`));
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    note.textContent = 'Uploading…';
+    try { await api(path, { method: 'POST', body: fd }); await route(); } catch (e) { note.textContent = ''; fail(e); }
+  }
+  async function remove(what) {
+    if (!confirm('Remove it? Clips already made keep their copy.')) return;
+    try { await api(`/brand/${what}`, { method: 'DELETE' }); await route(); } catch (e) { fail(e); }
+  }
+
+  const logoIn = el('input', { type: 'file', id: 'logo_file', accept: 'image/png,image/jpeg,image/webp' });
+  const outroIn = el('input', { type: 'file', id: 'outro_file', accept: 'video/*' });
+  const logoBox = el('section', { class: 'card stack' }, el('h2', { text: 'Logo' }),
+    brand.logo ? el('img', { src: `/api/brand/logo/file${stamp()}`, alt: 'Your logo', style: { maxWidth: '220px', maxHeight: '120px', background: '#888', padding: '8px', borderRadius: '8px' } })
+      : el('p', { class: 'small muted', text: 'No logo yet.' }),
+    el('div', {}, el('label', { class: 'field', for: 'logo_file', text: 'PNG, JPEG or WebP, up to 3 MB. A transparent PNG looks best. SVG is not accepted.' }), logoIn),
+    el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.logo ? 'Replace logo' : 'Upload logo', onclick: () => send('/brand/logo', logoIn, 'a logo') }),
+      brand.logo && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('logo') })));
+  const outroBox = el('section', { class: 'card stack' }, el('h2', { text: 'Ending video' }),
+    brand.outro ? el('video', { src: `/api/brand/outro/file${stamp()}`, controls: true, playsinline: true, preload: 'metadata', style: { width: '180px' }, 'aria-label': 'Your ending video' })
+      : el('p', { class: 'small muted', text: 'No ending video yet.' }),
+    el('div', {}, el('label', { class: 'field', for: 'outro_file', text: 'A short branding clip, 0.5–20 s, up to 90 MB. It is converted to a vertical 1080×1920 video.' }), outroIn),
+    el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.outro ? 'Replace ending video' : 'Upload ending video', onclick: () => send('/brand/outro', outroIn, 'a video') }),
+      brand.outro && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('outro') })));
+
+  const f = {};
+  const opt = (id, label, options, value) => {
+    const sel = (f[id] = el('select', { id }, options.map(([v, t]) => el('option', { value: v, text: t })))); sel.value = value;
+    return el('div', {}, el('label', { class: 'field', for: id, text: label }), sel);
+  };
+  const num = (id, label, min, max, step, value) => {
+    f[id] = el('input', { id, type: 'number', min: String(min), max: String(max), step: String(step), value: String(value) });
+    return el('div', {}, el('label', { class: 'field', for: id, text: label }), f[id]);
+  };
+  const color = (id, label, value) => { f[id] = el('input', { id, type: 'color', value }); return el('div', {}, el('label', { class: 'field', for: id, text: label }), f[id]); };
+  const tick = (id, label, value) => { f[id] = el('input', { id, type: 'checkbox' }); f[id].checked = value; return el('label', { class: 'check', for: id }, f[id], el('span', { text: label })); };
+
+  const look = el('section', { class: 'card stack' }, el('h2', { text: 'Look' }),
+    el('div', { class: 'grid2', style: { marginTop: 0 } },
+      opt('logo_position', 'Logo corner', [['tr', 'Top right'], ['tl', 'Top left'], ['br', 'Bottom right'], ['bl', 'Bottom left']], s.logo_position),
+      num('logo_size_pct', 'Logo width (% of the screen)', 5, 40, 1, s.logo_size_pct),
+      num('logo_opacity', 'Logo opacity (0.1–1)', 0.1, 1, 0.1, s.logo_opacity),
+      num('logo_margin_px', 'Logo margin (px)', 0, 300, 10, s.logo_margin_px),
+      num('cover_ms', 'Cover title shows for (ms)', 100, 1500, 50, s.cover_ms),
+      opt('cover_background', 'Cover background', [['frame', 'The video, darkened'], ['color', 'A solid colour']], s.cover_background),
+      color('cover_color', 'Cover text colour', s.cover_color), color('cover_accent', 'Cover last-word colour', s.cover_accent),
+      color('cover_bg_color', 'Cover solid colour', s.cover_bg_color),
+      num('outro_max_seconds', 'Use at most (seconds) of the ending video', 1, 30, 0.5, s.outro_max_seconds)),
+    el('div', { class: 'stack' }, el('div', { class: 'small muted', text: 'Tick by default on a new job:' }),
+      tick('default_cover', 'Cover title', s.default_cover), tick('default_logo', 'Logo', s.default_logo), tick('default_outro', 'Ending video', s.default_outro)),
+    el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: async () => {
+      err.hidden = true;
+      const num_ = (id) => Number(f[id].value);
+      const body = { logo_position: f.logo_position.value, logo_size_pct: num_('logo_size_pct'), logo_opacity: num_('logo_opacity'),
+        logo_margin_px: num_('logo_margin_px'), cover_ms: num_('cover_ms'), cover_background: f.cover_background.value,
+        cover_color: f.cover_color.value.toUpperCase(), cover_accent: f.cover_accent.value.toUpperCase(), cover_bg_color: f.cover_bg_color.value.toUpperCase(),
+        outro_max_seconds: num_('outro_max_seconds'), default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_outro: f.default_outro.checked };
+      try { await api('/brand', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); note.textContent = 'Saved. New jobs use this.'; } catch (e) { fail(e); }
+    } })));
+
+  app.replaceChildren(el('div', { class: 'stack' },
+    el('div', {}, el('h1', { text: 'Brand' }), el('p', { class: 'small muted', text: 'Your logo and ending video are added to clips when you tick them on a new job. Clips already made keep the copy they were made with.' })),
+    err, note, el('div', { class: 'cols' }, logoBox, outroBox), look));
 }
 
 // ---- sharing ---------------------------------------------------------------------------------------
@@ -880,13 +985,14 @@ async function route() {
   const hash = location.hash || '#/';
   renderAcct();
   document.querySelectorAll('nav a').forEach((a) => {
-    const on = (a.dataset.nav === 'new' && (hash === '#/' || hash === '#' || hash === '#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs'));
+    const on = (a.dataset.nav === 'new' && (hash === '#/' || hash === '#' || hash === '#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs')) || (a.dataset.nav === 'brand' && hash === '#/brand');
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   try {
     if (state.config.needs_login && !state.config.signed_in) return loginView();
     let m;
-    if (hash === '#/' || hash === '#' || hash === '#/new') newJobView();
+    if (hash === '#/' || hash === '#' || hash === '#/new') await newJobView();
+    else if (hash === '#/brand') await brandView();
     else if (hash === '#/jobs') await jobsView();
     else if (hash === '#/account') await accountView();
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})\/share$/))) { const v = await shareView(m[1], m[2]); cleanup = v.cleanup; }

@@ -33,6 +33,8 @@ class Hooks:
     planned: Callable[[EDL, dict], None] = lambda edl, report: None          # clips chosen and framed
     clip_notes: Callable[[str, list], None] = lambda clip_id, notes: None    # warnings for a person to read
     cancelled: Callable[[], bool] = lambda: False
+    brand: Optional[BrandKit] = None                  # the account's logo / ending video / styles
+    choice: Optional[BrandingChoice] = None           # which of cover, logo and outro this job asked for
 
     def check(self) -> None:
         if self.cancelled():
@@ -59,6 +61,7 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
     out.mkdir(parents=True, exist_ok=True)
     report: dict = {}
     hk = hooks or Hooks()
+    brand, choice = brand or hk.brand, choice or hk.choice
     hk.check()
 
     if edl_path:

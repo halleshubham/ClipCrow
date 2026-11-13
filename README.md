@@ -62,6 +62,19 @@ involvement).
   re-renders in seconds, and if the matte cannot be made the clip still renders without that effect and says so) and
   *slow push-ins* (the picture eases in as a sentence begins, then snaps back; timing is code, and the footage, the
   text behind and the cutout scale together).
+- **Cover title and branding** (`--cover`, `--logo IMAGE`, `--outro VIDEO`, or the checkboxes and the **Brand** page):
+  - *Cover title*: a bold title (the hook line, else the title; no extra model call) fills the first ~250 ms on top of the
+    footage, solid from frame 0, so the frame a platform or a person takes as the poster carries the title. The same
+    frame is saved as `cN.cover.png` ("Cover image" button). Honest limit: Instagram and TikTok let the person pick a
+    cover, and YouTube Shorts chooses its own thumbnail, so this makes the right frame the likely one, it cannot force it.
+  - *Logo*: your PNG/JPEG/WebP in a chosen corner (size, opacity, margin), from the end of the cover to the end of the clip,
+    kept clear of the platforms' status bar and buttons. SVG is refused (it can carry script).
+  - *Ending video*: your branding clip, converted once to 1080x1920 H.264/AAC, appended after the render with FFmpeg
+    (first N seconds; a silent ending gets silent audio so the file keeps one audio stream). If joining fails the clip is
+    delivered without it, with a note.
+  - The kit is per account (`data/brand/<account>/`), uploads are sniffed and re-checked with ffprobe, and a job copies the
+    files it uses, so changing the kit never alters finished clips. The editor switches each of them on or off per clip
+    (the style stays as it was made); deleting the account deletes the kit.
 - **Explainer mode** (`--explainer --link URL ... [--ai-images]`, or the checkbox): the model picks, per clip, up to three
   sentences that deserve a picture and what to show: **a page you linked** (by number from your list, so it cannot
   invent an address; captured as a screenshot) or, if you allow it, **an AI-generated image**. When and for how long is
