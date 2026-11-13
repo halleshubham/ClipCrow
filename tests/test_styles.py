@@ -428,3 +428,27 @@ def test_devanagari_keeps_its_font_and_never_goes_uppercase(tmp_path, ref_bytes,
     for cl in edl_of(tmp_path, r.json()["id"])["clips"]:
         assert cl["captions"]["font_family"] in ("Noto Sans Devanagari", "Noto Serif Devanagari")
         assert cl["captions"]["uppercase"] is False
+
+
+# --- speech share: how much of the reference has sound (cheap, deterministic, no speech recognition) -----------------------
+
+def half_silent_video(path):
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=white:s=160x90:r=30:d=10",
+                    "-f", "lavfi", "-i", "sine=f=330:d=5", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+                    "-filter_complex", "[1:a]atrim=0:5,asetpts=N/SR/TB[a1];[2:a]atrim=0:5,asetpts=N/SR/TB[a2];[a1][a2]concat=n=2:v=0:a=1[a]",
+                    "-map", "0:v", "-map", "[a]", "-t", "10", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+                    str(path)], check=True)
+    return path
+
+
+def test_speech_share_counts_sound_against_silence(tmp_path):
+    from clipcrow.styles import speech_share
+    assert 0.4 <= speech_share(half_silent_video(tmp_path / "h.mp4"), 10.0) <= 0.6
+    assert speech_share(cutting_video(tmp_path / "t.mp4"), 20.0) >= 0.95            # a steady tone is all sound
+
+
+def test_measure_reports_speech_share_without_any_speech_recognition(tmp_path):
+    r = measure(half_silent_video(tmp_path / "h.mp4"))
+    assert r.words_per_minute is None and r.speech_share is not None and r.speech_share < 0.7
+    assert "Sound for about" in r.breakdown and r.view()["speech_share"] == round(r.speech_share, 2)
+    assert derive(r).caption_max_words == 4                                          # no rate, no look: the default

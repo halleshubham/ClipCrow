@@ -72,17 +72,11 @@ class RealPipeline:
     @staticmethod
     def reference_look(path: str, duration: float) -> dict | None:
         """What the reference's captions look like, read by one Claude vision call. None when there are no credentials."""
+        import anthropic
         from ..planner import AnthropicLLM
         from ..styles_look import read_look
-        return read_look(path, duration, AnthropicLLM()).model_dump()
-
-    @staticmethod
-    def reference_words(path: str) -> int | None:
-        """Spoken words in a style reference (for the speech rate), or None when recognition is not installed."""
-        if importlib.util.find_spec("faster_whisper") is None:
-            return None
-        from ..asr import transcribe
-        return len(transcribe(path).words)
+        llm = AnthropicLLM(client=anthropic.Anthropic(timeout=60.0, max_retries=1))      # a stuck call must not hold the queue
+        return read_look(path, duration, llm).model_dump()
 
     def run(self, job: Job, video: Path, out: Path, hooks: Hooks, say) -> MakeResult:
         from ..planner import AnthropicLLM

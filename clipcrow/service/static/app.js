@@ -1041,7 +1041,13 @@ async function stylesView() {
       if (!confirm('Delete this style? Jobs already made keep their copy.')) return;
       try { await api(`/styles/${s.id}`, { method: 'DELETE' }); list = await api('/styles'); draw(); } catch (e) { fail(e); }
     } });
-    if (s.status === 'analyzing') return el('section', { class: 'card stack' }, head, el('p', { class: 'small muted', text: 'Measuring cuts, speech and loudness. This takes about a minute.' }));
+    if (s.status === 'analyzing') {
+      const minutes = (Date.now() - new Date(s.created_at).getTime()) / 60000;
+      const slow = minutes > 3;
+      return el('section', { class: 'card stack' }, head,
+        el('p', { class: 'small muted', text: slow ? 'This is taking longer than usual. You can delete it and upload the reference again.' : 'Measuring cuts, loudness and the caption look. This normally takes under a minute.' }),
+        slow ? el('div', {}, del) : null);
+    }
     if (s.status === 'failed') return el('section', { class: 'card stack' }, head, el('p', { class: 'small', translate: 'no', text: s.error }), el('div', {}, del));
     const st = s.settings;
     const f = {
@@ -1071,7 +1077,8 @@ async function stylesView() {
       try { await api(`/styles/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); saved.textContent = 'Saved. New jobs use this.'; } catch (e) { fail(e); }
     } });
     const facts = [`${m.duration} s long`, `${m.cuts} cuts (${m.cuts_per_minute} a minute)`, `typical shot ${m.median_shot_seconds} s`,
-      m.words_per_minute == null ? 'speech not measured' : `${m.words_per_minute} words a minute`];
+      m.speech_share == null ? null : `sound ${Math.round(m.speech_share * 100)}% of the time`,
+      m.words_per_minute == null ? null : `${m.words_per_minute} words a minute`].filter(Boolean);
     const colorField = (label, input) => el('div', { class: 'row' }, el('label', { class: 'field', for: input.id, text: label }), input);
     return el('section', { class: 'card stack' }, head,
       el('p', { class: 'small muted', text: `Measured: ${facts.join(' · ')}.` }),

@@ -8,8 +8,9 @@ how often a push-in may happen, how many words a caption group holds, and how lo
 The mapping from measurements to settings is a heuristic and is documented here so it can be argued with:
   * clip length: the reference's own length (min = 60% of it, max = 125%), kept inside 10..180 s
   * push-in rhythm: from cuts per minute (the visual energy of the edit): fast >= 20, medium >= 8, calm below
-  * caption group size: from speech rate (words per minute): fast speech gets longer groups
-Phase 2 reads the caption look itself from frames; this module never does.
+  * caption group size: the number of words on screen at once when the reference has captions (read from frames, see
+    ``styles_look``); otherwise 4. A speech rate may refine it (``words_per_minute``), but nothing in the service measures one:
+    transcribing a reel on a CPU took minutes, and a style must be ready in seconds.
 """
 from __future__ import annotations
 
@@ -77,6 +78,7 @@ class Measurements:
     median_shot_seconds: float = 0.0
     words_per_minute: Optional[float] = None      # None: speech was not measured (no recognition, or no speech)
     loudness_lufs: Optional[float] = None
+    speech_share: Optional[float] = None          # share of the reference that is not silence, 0..1
     look: Optional[dict] = None                   # what the vision pass saw (styles_look.CaptionLook), or None
     breakdown: str = ""                           # a few lines a person can read
     notes: list[str] = field(default_factory=list)
@@ -86,6 +88,7 @@ class Measurements:
                 "cuts_per_minute": round(self.cuts_per_minute, 1), "median_shot_seconds": round(self.median_shot_seconds, 2),
                 "words_per_minute": None if self.words_per_minute is None else round(self.words_per_minute),
                 "loudness_lufs": None if self.loudness_lufs is None else round(self.loudness_lufs, 1),
+                "speech_share": None if self.speech_share is None else round(self.speech_share, 2),
                 "look": self.look, "breakdown": self.breakdown, "notes": self.notes}
 
 
@@ -153,6 +156,17 @@ def loudness(path) -> Optional[float]:
     return float(found[-1]) if found else None
 
 
+def speech_share(path, duration: float) -> Optional[float]:
+    """How much of the reference has sound above the noise floor: 1.0 is wall-to-wall talking, lower means pauses and gaps."""
+    r = _run(["ffmpeg", "-v", "info", "-i", str(path), "-vn", "-af", "silencedetect=noise=-35dB:d=0.35", "-f", "null", "-"], 300)
+    starts = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", r.stderr)]
+    ends = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", r.stderr)]
+    if len(starts) > len(ends):                      # silence running to the end of the file
+        ends.append(duration)
+    quiet = sum(max(0.0, min(e, duration) - max(s_, 0.0)) for s_, e in zip(starts, ends))
+    return max(0.0, min(1.0, 1.0 - quiet / duration)) if duration > 0 else None
+
+
 def measure(path, *, count_words: Optional[Callable[[str], Optional[int]]] = None,
             read_look: Optional[Callable[[str, float], Optional[dict]]] = None) -> Measurements:
     """Measure a reference. ``count_words(path)`` returns the number of spoken words, or None when it cannot.
@@ -170,6 +184,7 @@ def measure(path, *, count_words: Optional[Callable[[str], Optional[int]]] = Non
                      cuts_per_minute=len(cuts) / (dur / 60.0), median_shot_seconds=shots[len(shots) // 2])
     if info["has_audio"]:
         m.loudness_lufs = loudness(path)
+        m.speech_share = speech_share(path, dur)
         n = None
         if count_words is not None:
             try:
@@ -200,6 +215,9 @@ def describe(m: Measurements) -> str:
     if m.words_per_minute:
         lines.append(f"The speaker says about {m.words_per_minute:.0f} words a minute"
                      f"{' (fast)' if m.words_per_minute >= 180 else ' (measured)' if m.words_per_minute >= 130 else ' (slow)'}.")
+    if m.speech_share is not None:
+        lines.append(f"Sound for about {m.speech_share * 100:.0f}% of the time"
+                     f"{', few pauses' if m.speech_share >= 0.9 else ', with clear pauses' if m.speech_share < 0.75 else ''}.")
     if m.loudness_lufs is not None:
         lines.append(f"Loudness {m.loudness_lufs:.1f} LUFS.")
     look = m.look or {}
