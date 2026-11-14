@@ -454,14 +454,10 @@ def post(c, video_bytes, **form):
     return upload(c, video_bytes, **form)
 
 
-def test_links_are_checked_when_the_job_is_submitted(tmp_path, video_bytes):
+def test_the_server_no_longer_opens_pages_for_a_person(tmp_path, video_bytes):
     c, _ = client(tmp_path)
-    r = post(c, video_bytes, explainer="true", links="http://10.0.0.1/admin")
-    assert r.status_code == 422 and "private network" in r.json()["detail"] and "Link 1" in r.json()["detail"]
-    r = post(c, video_bytes, explainer="true", links="\n".join(f"http://93.184.216.{i}/" for i in range(1, 8)))
-    assert r.status_code == 422 and "at most 6" in r.json()["detail"]
-    r = post(c, video_bytes, explainer="true", links="ftp://93.184.216.34/x")
-    assert r.status_code == 422
+    r = post(c, video_bytes, explainer="true", links="http://93.184.216.34/story")
+    assert r.status_code == 422 and "screenshot" in r.json()["detail"]
     assert c.get("/api/jobs").json() == []                                       # nothing was created for a refused submit
 
 
@@ -474,10 +470,10 @@ def test_ai_images_are_only_accepted_when_the_server_can_make_them(tmp_path, vid
     pipe.can_generate_images = True
     c2, _ = client(tmp_path / "b", pipe)
     assert c2.get("/api/config").json()["ai_images"] is True
-    r = post(c2, video_bytes, explainer="true", ai_images="true", links="http://93.184.216.34/story")
+    r = post(c2, video_bytes, explainer="true", ai_images="true")
     assert r.status_code == 201
     p = r.json()["params"]
-    assert p["explainer"] is True and p["ai_images"] is True and p["links"] == ["http://93.184.216.34/story"]
+    assert p["explainer"] is True and p["ai_images"] is True and p["links"] == []
     wait(c2, r.json()["id"])                                                      # let the background job end before the test does
 
 

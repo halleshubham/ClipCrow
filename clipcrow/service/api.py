@@ -43,6 +43,7 @@ from .plans import Catalog, load_catalog
 from .publish import LIMITS, PublishError, SocioBird, caption_html, settings_for, validate_when
 from .retention import Sweeper, env_days, expires_at
 from .storage import Mirror, S3Storage, StorageError, signature
+from .pictures import MAX_BYTES as MAX_PICTURE_BYTES, PICTURE_ID, PictureError, PictureStore, parse_ids
 from .uploads import OPEN_LIMIT, Upload, UploadStore
 from .workers import DirectDoneIn, DirectIn, HeartbeatIn, PollIn, ResultIn, TASK_ID, WorkerError, WorkerHub, _clean_name
 from ..render import HYPERFRAMES_VERSION
@@ -179,6 +180,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     uploads = UploadStore(data_dir) if direct else None
     runner.storage = storage
     brands = BrandStore(data_dir)
+    pictures = PictureStore(data_dir)
     runner.brands = brands
     styles = StyleStore(data_dir)
     hub = WorkerHub(worker_token, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds, render_pin=HYPERFRAMES_VERSION,
@@ -266,7 +268,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     if start_runner and (accounts or any(env_days()) or storage):
         app.state.sweeper = Sweeper(store, days_for, storage=storage, mirror=mirror, local_clip_days=local_clip_days,
-                                    extra=[lambda: expire_uploads()] if direct else [])          # resolved when it runs: defined further down
+                                    extra=([lambda: expire_uploads()] if direct else []) + [pictures.expire])          # resolved when it runs: defined further down
         app.state.sweeper.start()
 
     def purge_remote(job_id: str, message: str = "The stored copies could not be removed just now, so nothing was deleted. Try again in a minute.") -> None:
@@ -381,6 +383,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 purge_remote(j.id, "Your files could not be removed from storage just now, so the account was not deleted. Try again in a minute.")
                 store.delete(j.id)
         brands.delete_all(user.id)
+        pictures.delete_all(user.id)
         styles.delete_all(user.id)
         accounts.delete(user.id)
         resp = JSONResponse({"ok": True})
@@ -557,15 +560,17 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     def build_params(o: dict, owner: str = "shared") -> Params:
         """The job options, from a form or from JSON (strings or typed values), checked once for both upload paths."""
-        link_list = [x.strip() for x in str(o.get("links") or "").splitlines() if x.strip()]
+        if str(o.get("links") or "").strip():
+            raise HTTPException(422, "This server no longer opens web pages for you. Take a screenshot yourself and add it as a picture.")
+        try:
+            picture_ids = parse_ids(o.get("pictures"))
+        except PictureError as e:
+            raise HTTPException(422, str(e))
+        if picture_ids and not truthy(o.get("explainer")):
+            raise HTTPException(422, "Turn on the explainer option to use pictures.")
+        if any(pictures.path(owner, pid) is None for pid in picture_ids):
+            raise HTTPException(422, "A picture you added is no longer available. Add it again.")
         want_images = truthy(o.get("ai_images"))
-        if len(link_list) > 6:
-            raise HTTPException(422, "Use at most 6 links.")
-        for u in link_list:
-            try:
-                assert_public_url(u)
-            except UnsafeURL as e:
-                raise HTTPException(422, f"Link {link_list.index(u) + 1}: {e}")
         if want_images and not getattr(pipeline, "can_generate_images", False):
             raise HTTPException(422, "AI image generation is not set up on this server.")
         try:
@@ -573,7 +578,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                             min_clip=_opt_int(o.get("min_clip")) or 15, max_clip=_opt_int(o.get("max_clip")) or 60,
                             spread=_opt_float(o.get("spread"), 0.5), speaker_name=str(o.get("speaker_name") or "").strip() or None,
                             speaker_title=str(o.get("speaker_title") or "").strip(), cutout=truthy(o.get("cutout")),
-                            immersive=truthy(o.get("immersive")), explainer=truthy(o.get("explainer")), links=link_list,
+                            immersive=truthy(o.get("immersive")), explainer=truthy(o.get("explainer")), pictures=picture_ids,
                             ai_images=want_images, multi=o.get("multi") or "switch", graphics=truthy(o.get("graphics")),
                             clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", whole=truthy(o.get("whole")),
                             cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), outro=truthy(o.get("outro")))
@@ -598,6 +603,28 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if params.outro and brands.outro_path(owner) is None:
             raise HTTPException(422, "Upload an ending video on the Brand page first, or turn it off.")
         return params
+
+    # --- the person's own pictures for an explainer (the model looks at them and places them) -----------------------
+    @app.post("/api/pictures", dependencies=[Depends(authed)], status_code=201)
+    async def picture_add(request: Request, file: UploadFile = File(...)) -> dict:
+        data = await file.read(MAX_PICTURE_BYTES + 1)
+        try:
+            out = await asyncio.to_thread(pictures.add, brand_owner(request), data)
+        except PictureError as e:
+            raise HTTPException(422, str(e))
+        return {**out, "url": f"/api/pictures/{out['id']}"}
+
+    @app.get("/api/pictures/{picture_id}", dependencies=[Depends(authed)])
+    def picture_get(picture_id: str, request: Request):
+        path = pictures.path(brand_owner(request), picture_id)
+        if path is None:
+            raise HTTPException(404, "No such picture.")
+        return FileResponse(path, media_type="image/png")
+
+    @app.delete("/api/pictures/{picture_id}", dependencies=[Depends(authed)], status_code=204)
+    def picture_delete(picture_id: str, request: Request) -> None:
+        if not pictures.delete(brand_owner(request), picture_id):
+            raise HTTPException(404, "No such picture.")
 
     # --- direct uploads: the browser sends the file to the bucket, not through this server --------------------------------
     def need_direct() -> S3Storage:
@@ -731,6 +758,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                                          f"month. Upgrade, buy minutes, or wait for the month to reset.")
             job.reserved_minutes = minutes
         store.save(job)
+        pictures.adopt(brand_owner(request), params.pictures, store.dir(job.id) / "pictures")      # only now: a refused job keeps the person's pictures
         uploads.delete(rec.id)
         runner.submit(job.id)
         return view(store.get(job.id))
@@ -743,7 +771,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          speaker_title: Optional[str] = Form(""), cutout: Optional[str] = Form(None),
                          multi: Optional[str] = Form(None), graphics: Optional[str] = Form(None),
                          clean: Optional[str] = Form(None), clean_pace: Optional[str] = Form(None), whole: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
-                         explainer: Optional[str] = Form(None), links: Optional[str] = Form(None),
+                         explainer: Optional[str] = Form(None), links: Optional[str] = Form(None), pictures_ids: Optional[str] = Form(None, alias="pictures"),
                          ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
                          logo: Optional[str] = Form(None), outro: Optional[str] = Form(None),
                          style: Optional[str] = Form(None)) -> dict:
@@ -754,7 +782,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
                                    speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, whole=whole,
-                                   immersive=immersive, explainer=explainer, links=links, ai_images=ai_images, cover=cover, logo=logo, outro=outro,
+                                   immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, outro=outro,
                                    style=style),
                               brand_owner(request))
         suffix = Path(file.filename or "").suffix.lower()
@@ -800,6 +828,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                                          f"month. Upgrade, buy minutes, or wait for the month to reset.")
             job.reserved_minutes = minutes
         store.save(job)
+        pictures.adopt(brand_owner(request), params.pictures, store.dir(job.id) / "pictures")
         runner.submit(job.id)
         return view(store.get(job.id))
 

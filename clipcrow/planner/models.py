@@ -50,8 +50,9 @@ class DetailResult(BaseModel):
 
 class Beat(BaseModel):
     sentence: int            # the sentence this picture belongs to (an id as given)
-    kind: str                # "screenshot" (a link from the list), "image" (a generated picture) or "none"
+    kind: str                # "picture" (one the person supplied), "screenshot" (a link from the list), "image" (a generated picture) or "none"
     link: Optional[int] = None
+    picture: Optional[int] = None   # for "picture": the number of the person's picture (as in P1)
     prompt: str = ""         # for "image": what to draw, plain description
     caption: str = ""        # at most a few words shown under the picture
 

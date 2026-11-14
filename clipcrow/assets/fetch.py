@@ -8,6 +8,7 @@ Messages kept in notes are fixed sentences, never raw exceptions or addresses.
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -17,19 +18,25 @@ from .screenshot import CaptureError, capture_page
 
 
 def fetch_assets(edl: EDL, out_dir: str | Path, *, images: Optional[ImageProvider] = None,
-                 capture_fn: Callable[..., Path] = capture_page,
+                 capture_fn: Callable[..., Path] = capture_page, pictures: Optional[dict[str, Path]] = None,
                  say: Callable[[str], None] = lambda _m: None) -> tuple[EDL, list[str]]:
     out_dir = Path(out_dir).resolve()          # asset uris are relative to this folder (compile's ``asset_root``)
     (out_dir / "assets").mkdir(parents=True, exist_ok=True)
     failed: dict[str, str] = {}
     assets = []
     for a in edl.assets:
-        if a.uri or a.origin not in ("capture", "ai_image"):
+        if a.uri or a.origin not in ("capture", "ai_image", "upload") or (a.origin == "upload" and not a.ref):
             assets.append(a)
             continue
         dest = out_dir / "assets" / f"{a.id}.png"
         try:
-            if a.origin == "capture":
+            if a.origin == "upload":                      # the person's own picture, already checked and re-encoded when it was uploaded
+                src = (pictures or {}).get(a.ref)
+                if src is None or not Path(src).is_file():
+                    raise ImageError("a picture you added is no longer available")
+                shutil.copyfile(src, dest)
+                assets.append(a.model_copy(update={"uri": _rel(dest, out_dir)}))
+            elif a.origin == "capture":
                 say(f"capturing a page for {a.id}")
                 real = capture_fn(a.source_url, dest)
                 assets.append(a.model_copy(update={"uri": _rel(real, out_dir), "tool": "page-screenshot"}))

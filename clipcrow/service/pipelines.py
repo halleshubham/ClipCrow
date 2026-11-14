@@ -18,12 +18,14 @@ def _worker_clip_limit() -> float:
         return 60.0
 
 
-def planner_options(job: Job) -> PlannerOptions:
+def planner_options(job: Job, pictures_dir: Path | None = None) -> PlannerOptions:
     p = job.params
     opts = PlannerOptions(job_id=job.id, min_clip=p.min_clip, max_clip=p.max_clip, target_clips=p.clips, whole=p.whole,
                           spread=p.spread, cutout=p.cutout, immersive=p.immersive, explainer=p.explainer,
                           links=tuple(p.links), ai_images=p.ai_images, speaker_name=p.speaker_name or None,
                           speaker_title=p.speaker_title)
+    if pictures_dir is not None:
+        opts.pictures = tuple((pid, pictures_dir / f"{pid}.png") for pid in p.pictures if (pictures_dir / f"{pid}.png").is_file())
     st = p.style
     if st is not None:                    # clip length was already settled when the job was made (see api.build_params)
         opts.caption_max_words = st.caption_max_words
@@ -104,7 +106,7 @@ class RealPipeline:
         if self.hub is not None:                                 # each clip goes to a matching render worker when one is online
             from .workers import RemoteRenderer
             render_fn = RemoteRenderer(self.hub, check=hooks.check, say=say, max_clip_seconds=_worker_clip_limit())
-        return make(video, out, language=job.params.language, llm=AnthropicLLM(), opts=planner_options(job),
+        return make(video, out, language=job.params.language, llm=AnthropicLLM(), opts=planner_options(job, out.parent / "pictures"),
                     hooks=hooks, say=say, multi=job.params.multi, graphics=job.params.graphics, clean=job.params.clean, clean_pace=job.params.clean_pace, transcribe_fn=transcribe_fn, render_fn=render_fn,
                     images=self._images() if job.params.ai_images else None,
                     gsap_js=os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"),

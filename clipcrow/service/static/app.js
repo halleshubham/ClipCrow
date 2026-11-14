@@ -328,6 +328,40 @@ class DirectUpload {
   }
 }
 
+
+function pictureField() {
+  const picked = [];
+  const list = el('div', { class: 'pic-list' });
+  const msg = el('div', { class: 'hint', role: 'status' });
+  const input = el('input', { type: 'file', id: 'pictures_file', accept: 'image/png,image/jpeg,image/webp', multiple: true });
+  const paint = () => {
+    list.replaceChildren(...picked.map((p, i) => el('div', { class: 'pic' },
+      el('img', { src: `/api/pictures/${p.id}`, alt: `Picture ${i + 1}`, loading: 'lazy' }),
+      el('button', { class: 'btn', type: 'button', text: 'Remove', 'aria-label': `Remove picture ${i + 1}`, onclick: async () => {
+        try { await api(`/pictures/${p.id}`, { method: 'DELETE' }); } catch (_) { /* already gone */ }
+        picked.splice(picked.indexOf(p), 1);
+        paint();
+      } }))));
+    input.disabled = picked.length >= 6;
+  };
+  input.addEventListener('change', async () => {
+    msg.textContent = '';
+    for (const file of [...input.files]) {
+      if (picked.length >= 6) { msg.textContent = 'Up to 6 pictures.'; break; }
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        picked.push({ id: (await api('/pictures', { method: 'POST', body: fd })).id });
+        paint();
+      } catch (ex) { msg.textContent = `${file.name}: ${ex.message}`; }
+    }
+    input.value = '';
+  });
+  const node = el('div', {}, el('label', { class: 'field', for: 'pictures_file', text: 'Pictures to show (up to 6)' }), input, list, msg,
+    el('div', { class: 'hint', text: 'Screenshots of a news page, a chart or a document. PNG, JPEG or WebP, up to 10 MB each. The AI looks at every picture and decides which moment it fits, and may leave one out. The pictures are sent to the AI service so it can see them: only add what you may share.' }));
+  return { node, ids: () => picked.map((p) => p.id).join(',') };
+}
+
 async function newJobView() {
   const c = state.config;
   let brand = { logo: false, outro: false, settings: {} };
@@ -353,6 +387,7 @@ async function newJobView() {
     if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
   });
 
+  const pics = pictureField();
   const select = (id, label, options, hint) => el('div', {},
     el('label', { class: 'field', for: id, text: label }),
     el('select', { id }, options.map(([v, t]) => el('option', { value: v, text: t }))),
@@ -384,7 +419,7 @@ async function newJobView() {
       language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
       multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
-      explainer: $('explainer').checked ? 'true' : '', links: $('links').value, ai_images: $('ai_images').checked ? 'true' : '',
+      explainer: $('explainer').checked ? 'true' : '', pictures: pics.ids(), ai_images: $('ai_images').checked ? 'true' : '',
       cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '',
     };
     submit.disabled = true;
@@ -445,11 +480,9 @@ async function newJobView() {
           el('span', { class: 'muted', text: 'Cuts the person out so a big word can sit behind them. Slower to render; best for a single face.' }))),
       el('label', { class: 'check', for: 'explainer' }, el('input', { type: 'checkbox', id: 'explainer' }),
         el('span', {}, el('strong', { text: 'Explainer: show pictures' }), el('br'),
-          el('span', { class: 'muted', text: 'Puts a picture over the video where the speaker names something: a page you link below, or an AI-generated image.' }))),
+          el('span', { class: 'muted', text: 'Puts a picture over the video where the speaker names something: a picture you add below (the AI looks at it and picks the moment), or an AI-generated image.' }))),
       el('div', { id: 'explainer-opts', class: 'stack', hidden: true, style: { paddingLeft: '30px' } },
-        el('div', {}, el('label', { class: 'field', for: 'links', text: 'Pages to show (one address per line, up to 6)' }),
-          el('textarea', { id: 'links', rows: '3', placeholder: 'Paste a link, one per line', autocomplete: 'off', spellcheck: 'false' }),
-          el('div', { class: 'hint', text: 'The AI chooses which of your pages fits which moment. It never invents an address. Only public web pages work.' })),
+        pics.node,
         el('label', { class: c.ai_images ? 'check' : 'check muted', for: 'ai_images' }, el('input', { type: 'checkbox', id: 'ai_images', disabled: !c.ai_images }),
           el('span', {}, el('strong', { text: 'Also generate images with AI' }), el('br'),
             el('span', { class: 'muted', text: c.ai_images ? 'AI-generated pictures mean most platforms ask you to label the video as AI content.' : 'Not set up on this server.' })))),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -34,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--max-clip", type=int, default=60); mk.add_argument("--cutout", action="store_true")
     mk.add_argument("--immersive", action="store_true", help="slow push-ins at sentence starts (face-to-camera reels)")
     mk.add_argument("--explainer", action="store_true", help="show pictures over the footage where the speaker names something")
+    mk.add_argument("--picture", action="append", default=[], help="a picture of yours (PNG/JPEG/WebP) the explainer may show: the model looks at it and picks the moment (repeat up to 6 times)")
     mk.add_argument("--link", action="append", default=[], help="a public page the explainer may show (repeat up to 6 times)")
     mk.add_argument("--ai-images", action="store_true", help="let the explainer ask for AI-generated images (GEMINI_API_KEY; "
                     "marks the clip as AI-generated media)")
@@ -180,12 +182,20 @@ def main(argv: list[str] | None = None) -> int:
             from .assets.urlguard import assert_public_url
             for u in a.link:
                 assert_public_url(u)
+            if len(a.picture) > 6:
+                raise ValueError("use at most 6 --picture files")
+            pics = []
+            for k, f in enumerate(a.picture):
+                fp = Path(f)
+                if not fp.is_file():
+                    raise ValueError(f"--picture {f}: no such file")
+                pics.append((hashlib.sha256(fp.read_bytes()).hexdigest()[:12], fp))
             images = None
             if a.ai_images:
                 from .assets.images import GeminiImages
                 images = GeminiImages()
             opts = PlannerOptions(min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips, whole=a.whole, cutout=a.cutout, immersive=a.immersive,
-                                  explainer=a.explainer, links=tuple(a.link), ai_images=a.ai_images,
+                                  explainer=a.explainer, links=tuple(a.link), ai_images=a.ai_images, pictures=tuple(pics),
                                   spread=a.spread,
                                   speaker_name=a.speaker_name, speaker_title=a.speaker_title)
             need_llm = not a.edl

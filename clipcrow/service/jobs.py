@@ -47,6 +47,7 @@ class Params(_M):
     explainer: bool = False                 # pictures over the footage (screenshots of the links, AI images)
     links: list[str] = Field(default_factory=list, max_length=6)
     ai_images: bool = False
+    pictures: list[str] = Field(default_factory=list, max_length=6)      # ids of the person's own pictures (copied into the job); the model places them
     multi: Literal["switch", "split", "off"] = "switch"
     graphics: bool = False                  # the source cuts to slides, cards or b-roll: show those whole instead of cropping them
     clean: bool = False                     # cut fumbles, fillers, retakes and dead air out of a raw recording first

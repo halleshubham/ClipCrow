@@ -77,18 +77,20 @@ involvement).
   - The kit is per account (`data/brand/<account>/`), uploads are sniffed and re-checked with ffprobe, and a job copies the
     files it uses, so changing the kit never alters finished clips. The editor switches each of them on or off per clip
     (the style stays as it was made); deleting the account deletes the kit.
-- **Explainer mode** (`--explainer --link URL ... [--ai-images]`, or the checkbox): the model picks, per clip, up to three
-  sentences that deserve a picture and what to show: **a page you linked** (by number from your list, so it cannot
-  invent an address; captured as a screenshot) or, if you allow it, **an AI-generated image**. When and for how long is
-  code (a picture starts at its sentence, away from the hook, with room between). Pictures are made *before* rendering
-  (the render browser never touches the network); one that fails is dropped with a note, never a failed job. Links are
-  checked on submit and again for every request the page makes (public http/https only, standard ports, no credentials,
-  no private/loopback/link-local/CGNAT addresses; known limit: DNS rebinding, so also block private ranges at the
-  network edge). A generated image is a `generated` asset, so the usage record turns the **AI-disclosure recommendation**
-  on by itself, and removing it in the editor turns it off. Screenshots need `pip install 'clipcrow[assets]'` and
-  `playwright install chromium`; images use `GEMINI_API_KEY` (`CLIPCROW_IMAGE_MODEL` to change the model; written to
-  Google's documented image output but **not tried against the live API from the build environment**). AI *video* has an
-  interface (`clipcrow.assets.video`) and **no provider**: nothing asks for generated video until one is registered.
+- **Explainer mode** (`--explainer --picture FILE ... [--ai-images]`, or the checkbox): the model picks, per clip, up to three
+  sentences (more when you give more pictures) that deserve a picture and what to show: **a picture you added** (screenshots of a news
+  page, a chart, a document; the model is shown each one and picks it by number, so it cannot invent a file or an address; one it
+  does not think fits is left out) or, if you allow it, **an AI-generated image**. The web service never opens web pages for you:
+  take the screenshot yourself. Uploaded pictures are checked by their first bytes (PNG, JPEG, WebP; no SVG), re-encoded to one PNG of
+  at most 2160 px, kept as drafts for 24 hours and copied into the job. When and for how long is code (a picture starts at its sentence,
+  away from the hook, with room between). Pictures are made *before* rendering (the render browser never touches the network); one
+  that fails is dropped with a note, never a failed job. A generated image is a `generated` asset, so the usage record turns the
+  **AI-disclosure recommendation** on by itself, and removing it in the editor turns it off; your own pictures are not AI content.
+  The command line still has `--link URL` (a public page captured by Playwright: `pip install 'clipcrow[assets]'` and
+  `playwright install chromium`, public http/https only, checked again for every request the page makes), but the web service does not.
+  Images use `GEMINI_API_KEY` (`CLIPCROW_IMAGE_MODEL` to change the model; written to Google's documented image output but **not tried
+  against the live API from the build environment**). AI *video* has an interface (`clipcrow.assets.video`) and **no provider**:
+  nothing asks for generated video until one is registered.
 - **Accounts** (`clipcrow serve --accounts [--no-signup]`, data in `<data>/clipcrow.db`): email + password (scrypt),
   session cookie (HttpOnly, SameSite=Strict, only its hash is stored), sign-in attempts rate limited, per-user jobs (someone
   else's job is a 404 everywhere), account deletion (password required; cancels a Razorpay subscription first and stops if

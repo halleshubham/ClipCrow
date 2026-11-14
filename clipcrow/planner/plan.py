@@ -55,6 +55,7 @@ class PlannerOptions:
     explainer: bool = False                 # pictures over the footage: screenshots of the links below, AI images
     links: tuple = ()                       # pages the explainer may show (the model picks by number, never invents)
     ai_images: bool = False                 # the model may ask for a generated picture (needs an image provider)
+    pictures: tuple = ()                    # the person's own pictures, ((id, path), ...): the model LOOKS at them and places them by number
     speaker_name: Optional[str] = None      # adds a lower third
     speaker_title: str = ""
     score_batch: int = 6
@@ -298,23 +299,37 @@ def _clip_dict(n: int, c: PlannedClip, tr: Transcript, opts: PlannerOptions, lan
 def _add_pictures(clips: list[dict], picked: list[PlannedClip], tr: Transcript, opts: PlannerOptions, llm: LLM,
                   lang: str, report: dict) -> list[dict]:
     """Explainer beats: media overlays plus the (not yet fetched) assets they show. Timing is code."""
-    from .explainer import plan_beats
+    from .explainer import plan_beats, thumbnail
 
     links = list(opts.links)
+    shots: list[bytes] = []
+    for _pid, path in opts.pictures:
+        try:
+            shots.append(thumbnail(path))
+        except (ValueError, OSError):
+            report["warnings"].append("a picture could not be read and was left out")
+            shots.append(b"")
+    ok = [i for i, b in enumerate(shots) if b]                  # numbers the model sees are positions in ``seen``; ``ok`` maps them back
+    seen = [shots[i] for i in ok]
 
     def beats(pair):
         d, c = pair
         sents = [s for s in tr.sentences if s.start >= c.start - 0.01 and s.end <= c.end + 0.01]
         hook_end = 2.8 if any(o["kind"] == "hook" for o in d["overlays"]) else 0.5
         return plan_beats(llm, sents, c.start, c.duration, links, allow_images=opts.ai_images, language=lang,
-                          hook_end=hook_end, purpose=f"beats:{d['id']}")
+                          hook_end=hook_end, purpose=f"beats:{d['id']}", pictures=seen)
 
     assets: list[dict] = []
     for (d, c), (plans, warnings) in zip(zip(clips, picked), _map(beats, list(zip(clips, picked)), opts.workers)):
         report["warnings"].extend(f"{d['id']}: {w}" for w in warnings)
         for k, b in enumerate(plans):
             aid = f"{d['id']}-pic{k + 1}"
-            if b.kind == "capture":
+            if b.kind == "upload":
+                pid = opts.pictures[ok[b.picture]][0]
+                assets.append(Asset(id=aid, kind="image", origin="upload", ai="none", tool="user-picture", ref=pid,
+                                    alt=b.caption).model_dump())
+                placement = {"placement": "panel", "top_px": 240, "height_px": 1000, "motion": "none"}
+            elif b.kind == "capture":
                 assets.append(Asset(id=aid, kind="image", origin="capture", ai="none",
                                     source_url=links[b.link], alt=b.caption).model_dump())
                 placement = {"placement": "panel", "top_px": 240, "height_px": 1000, "motion": "none"}

@@ -81,6 +81,7 @@ class Asset(_Model):
     uri: str = Field(default="", max_length=300)      # the file, relative to the media root ("" until it has been fetched)
     source_url: str = Field(default="", max_length=2000)   # a captured page's address (recorded, never fetched at render)
     alt: str = Field(default="", max_length=200)
+    ref: str = Field(default="", pattern=r"^([0-9a-f]{12})?$")   # an upload: which of the person's pictures (its id), copied into the job before render
 
     @model_validator(mode="after")
     def _honest(self):

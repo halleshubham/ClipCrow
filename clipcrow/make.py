@@ -149,12 +149,12 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
         hk.stage("plan", "done", f"{len(edl.clips)} clip(s)")
 
     hk.check()
-    pending = [a for a in edl.assets if not a.uri and a.origin in ("capture", "ai_image")]
+    pending = [a for a in edl.assets if not a.uri and (a.origin in ("capture", "ai_image") or (a.origin == "upload" and a.ref))]
     if pending:
         from .assets.fetch import fetch_assets
         hk.stage("assets", "running", f"{len(pending)} picture(s)")
         kw = {"capture_fn": capture_fn} if capture_fn else {}
-        edl, warns = fetch_assets(edl, out, images=images, say=say, **kw)
+        edl, warns = fetch_assets(edl, out, images=images, say=say, pictures={pid: Path(p) for pid, p in (opts.pictures if opts else ())}, **kw)
         for w in warns:
             say(w)
         hk.stage("assets", "done", f"{sum(1 for a in edl.assets if a.uri)} of {len(pending)} picture(s) made")

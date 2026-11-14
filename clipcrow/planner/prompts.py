@@ -81,27 +81,29 @@ def repair_suffix(language: str) -> str:
 
 
 def beats_prompt(sentences: list[Sentence], links: list[str], *, allow_images: bool, language: str,
-                 max_beats: int) -> str:
+                 max_beats: int, pictures: int = 0) -> str:
     text = "\n".join(fmt_sentence(s) for s in sentences)
     shown = "\n".join(f"[L{i}] {u[:160]}" for i, u in enumerate(links)) or "(none)"
-    kinds = '"screenshot" (show a page from the link list), ' + ('"image" (a generated picture), ' if allow_images else "") + '"none"'
+    kinds = (('"picture" (one of the pictures the person gave you, shown above as [P0], [P1], ...), ' if pictures else "")
+             + ('"screenshot" (show a page from the link list), ' if links else "")
+             + ('"image" (a generated picture), ' if allow_images else "") + '"none"')
+    picture_rule = ("- picture: for kind picture only: the number of the picture (as in [P1]) that matches what the sentence talks about. "
+                    "LOOK at each picture first. Use a picture only where it really shows what is being said, at most once each, and leave "
+                    "a picture unused rather than force it. Use only the pictures given.\n" if pictures else "")
     image_rule = ("- prompt: for kind image only: one plain sentence describing the picture (a scene, object or diagram "
                   "idea). No real people, no brands, no text in the picture, at most 200 characters.\n" if allow_images else "")
+    link_rule = ("- link: for kind screenshot only: the number of the link (as in [L1]) that matches what the sentence talks about. "
+                 "Use only the links listed; never invent an address.\n" if links else "")
+    links_block = f"\n<links>\n{shown}\n</links>\n" if links else ""
     return f"""This clip is an explainer. Choose up to {max_beats} moments where a picture would help the viewer \
 understand what is being said, and say what to show.
 
 Each beat is one sentence id (as in [S12]) plus:
 - kind: {kinds}. Use "none" when nothing should be shown.
-- link: for kind screenshot only: the number of the link (as in [L1]) that matches what the sentence talks about. \
-Use only the links listed; never invent an address.
-{image_rule}- caption: at most 6 words naming what is shown, or empty.
+{picture_rule}{link_rule}{image_rule}- caption: at most 6 words naming what is shown, or empty.
 Prefer sentences that name a thing, a number or a place. Skip the first and last sentence. Fewer, better beats.
 {language_instruction(language)}
-
-<links>
-{shown}
-</links>
-
+{links_block}
 <transcript>
 {text}
 </transcript>"""
