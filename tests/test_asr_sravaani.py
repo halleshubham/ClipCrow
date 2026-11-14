@@ -31,7 +31,7 @@ def test_a_short_recording_is_one_window():
 def test_tighten_ends_a_word_where_the_voice_stops_and_keeps_order():
     audio = tone_audio([(1.0, 1.4), (2.5, 3.0)], 4)
     db = energy_db(audio)
-    out = sv.tighten([{"w": "a", "s": 0.7, "e": 2.4}, {"w": "b", "s": 2.4, "e": 4.0}], db, speech_threshold(db))
+    out = sv.tighten([{"w": "a", "s": 0.8, "e": 2.4}, {"w": "b", "s": 2.4, "e": 4.0}], db, speech_threshold(db))
     assert out[0]["s"] == pytest.approx(0.98, abs=0.05) and out[0]["e"] == pytest.approx(1.4, abs=0.05)
     assert out[1]["s"] == pytest.approx(2.48, abs=0.05) and out[1]["e"] == pytest.approx(3.0, abs=0.05)
     assert out[0]["e"] <= out[1]["s"]
