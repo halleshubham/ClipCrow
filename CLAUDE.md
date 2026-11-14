@@ -67,6 +67,9 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   shorter than the line is not a redo, a name that merely comes back is not a restart (the opening must align as a phrase). (4) The job page lists every cut with
   its original time (`GET /api/jobs/{id}/cleanup`, `cleanup.json`): a person must be able to check the cuts. The model for the editing pass, the text correction
   and the planner is `$CLIPCROW_MODEL` (default `claude-opus-5-5`); each step and its model show in the job's AI usage table.
+  (5) The text correction must keep STUMBLES (repeats, an abandoned "तर मग…", every clause and question): a smoothed fumble cannot be cut later, and a dropped clause leaves
+  speech with no captions; `textfix.acceptable` refuses a fix whose length or word count moves too far. (6) The editing pass sees SHORT phrases (`JUDGE_PAUSE`,
+  `JUDGE_LINE_WORDS`), not the rules' sentences, so an abandoned fragment inside a sentence has a line of its own and only that line is removed.
   A cleaned recording is usually ONE reel of 3-8 minutes: a clip may run `edl.MAX_CLIP_SECONDS` (15 min), the job form offers 1½-3, 3-5, 5-8 minutes and
   "the whole video as one reel" (`Params.whole`, `PlannerOptions.whole`: one window, no scoring, the clip IS the recording whatever sentences the model
   named). Anything that assumed a short must follow the clip's real length: the editor's trim limit (`max_seconds_for`), the render timeout (12 x the

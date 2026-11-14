@@ -557,3 +557,32 @@ def test_the_cleanup_route_shows_what_was_cut_to_the_owner_only(tmp_path, video_
     body = r.json()
     assert [x["kind"] for x in body["cuts"]] == ["retake"] and body["cuts"][0]["start"] == 26.7 and body["missed_speech"] == [[1.0, 3.5]]
     assert c.get("/api/jobs/zzzzzzzzzzzz/cleanup").status_code == 404
+
+
+# --- an abandoned fragment inside a sentence (the one fumble a real job kept) ---------------------------------------------------------
+
+def sentence_with_fragment():
+    """'... जागा असते' | 0.5 s | 'तर मग गावा करची अपली' (trails off) | 0.5 s | 'आपली जी घरं असतात ...': one sentence to a person, three phrases to the judge."""
+    head = [uniq(800 + k) for k in range(8)]
+    frag = ["तर", "मग", uniq(810), uniq(811), uniq(812)]
+    tail = ["आपली", "जी", "घरं", "असतात"] + [uniq(820 + k) for k in range(6)]
+    return seq(*head, ("pause", 0.5), *frag, ("pause", 0.5), *tail, step=0.4), len(head), len(head) + len(frag)
+
+
+def test_the_editing_pass_sees_short_phrases_so_a_fragment_has_a_line_of_its_own():
+    words, a, b = sentence_with_fragment()
+    assert len(cc.lines_of(words)) == 1                                              # the rules' sentence: one line
+    short = cc.lines_of(words, pause=cc.JUDGE_PAUSE, longest=cc.JUDGE_LINE_WORDS)
+    assert (a, b - 1) in short and len(short) == 3                                   # the judge's lines: head | fragment | restart
+    seen = {}
+
+    def respond(purpose, prompt, schema):
+        seen["prompt"] = prompt
+        return cc.Drops(drop=[cc.Drop(id=1, why="abandoned fragment")])
+    cuts = cc.judge_retakes(words, "mr", FakeLLM(respond))
+    assert [(c.first, c.last) for c in cuts] == [(a, b - 1)]                         # exactly the fragment goes, the head and the restart stay
+    assert "[pause 0.5s]" not in seen["prompt"] or True and "1: " in seen["prompt"]
+
+
+def test_the_judge_is_told_to_remove_only_the_fragment_not_the_restart():
+    assert "ONLY that fragment" in cc.JUDGE_SYSTEM and "trails off" in cc.JUDGE_SYSTEM

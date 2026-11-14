@@ -39,7 +39,9 @@ PACES = {"natural": dict(max_pause=0.60, keep_pause=0.40),     # pauses up to ma
 MAX_REMOVED = 0.45               # more than this share of the recording cut = the detection is wrong: leave the video alone
 MIN_WORDS = 20                   # too little speech to judge
 MAX_MINUTES = 90                 # the audio is held in memory while it is cut
-JUDGE_BATCH = 80                 # sentences per model call
+JUDGE_BATCH = 120                # lines per model call
+JUDGE_PAUSE = 0.3                # the editing pass sees phrases split at pauses this long (the rules use 0.8 s sentences)
+JUDGE_LINE_WORDS = 14            # ... and at most this many words, so a fragment is never buried in a long line
 JUDGE_MAX_SHARE = 0.5            # the model may drop at most this share of a batch (a whole first take can be almost half of it)
 MISSED_RUN = 0.6                 # voiced audio this long with no recognised word is speech the recogniser missed: it is kept, never cut as "dead air"
 RESTART_PAUSE = 0.9              # seconds of silence after which a speaker may start a passage again
@@ -146,12 +148,12 @@ def overlap(a: list[str], b: list[str]) -> tuple[int, float]:
     return hit, 2 * hit / max(1, len(a) + len(b))
 
 
-def lines_of(words: list[Word]) -> list[tuple[int, int]]:
-    """Sentence-like lines: end punctuation, a pause over 0.8 s, or 28 words."""
+def lines_of(words: list[Word], pause: float = 0.8, longest: int = 28) -> list[tuple[int, int]]:
+    """Sentence-like lines: end punctuation, a pause over ``pause`` seconds, or ``longest`` words."""
     out, start = [], 0
     for i, w in enumerate(words):
         gap = words[i + 1].s - w.e if i + 1 < len(words) else 9
-        if SENT_END.search(w.w) or gap > 0.8 or i - start + 1 >= 28:
+        if SENT_END.search(w.w) or gap > pause or i - start + 1 >= longest:
             out.append((start, i))
             start = i + 1
     if start < len(words):
@@ -325,8 +327,9 @@ Return the ids of lines to REMOVE:
 - the restart phrase itself ("sorry, again", "one more time", "थांबा, पुन्हा सांगतो", "सॉरी, फिर से").
 - a whole passage said twice: when the speaker stops, pauses ("[pause 3.3s]" before a line) and says the passage again from its opening, remove the FIRST
   attempt, all of its lines, up to the pause. A long pause before a line that repeats an earlier opening is the clearest sign.
-- an unfinished sentence the speaker abandons mid-way and starts over (it ends in the middle of a thought, is followed by a pause or a new sentence, and
-  nothing in it is needed). Remove only the fragment, never the sentence that starts over.
+- an unfinished phrase the speaker abandons mid-way and starts over: it trails off ("...so then", "तर मग…", a word cut short), is often followed by a short
+  pause, and the next line says the same thing properly. Remove ONLY that fragment line, never the line that starts over. The lines are short phrases, so a
+  fragment inside a sentence has a line of its own; if a line is a complete thought, keep it.
 - off-camera chatter before or after the real talk ("is it recording?", "चालू आहे का?", "ठीक है, चलो").
 Rules: a repeated idea said for emphasis is not a retake. Never remove the only place a fact appears. Never remove a line only because it is short.
 When you are not sure, keep the line. Most lines are kept: return an empty list when nothing needs to go."""
@@ -336,7 +339,7 @@ LANGUAGE_NAME = {"mr": "Marathi", "hi": "Hindi", "en": "English"}
 
 def judge_retakes(words: list[Word], lang: str, llm, *, say: Callable[[str], None] = lambda _m: None) -> list[Cut]:
     """Whole-line cuts the model picked. Only integers it was shown are accepted, at most ``JUDGE_MAX_SHARE`` of a batch, never the last line of the recording."""
-    lines = lines_of(words)
+    lines = lines_of(words, pause=JUDGE_PAUSE, longest=JUDGE_LINE_WORDS)         # short phrases, so an abandoned fragment inside a sentence has a line of its own
     cuts: list[Cut] = []
     system = JUDGE_SYSTEM.format(language=LANGUAGE_NAME.get(lang, "spoken"))
     for i in range(0, len(lines), JUDGE_BATCH):

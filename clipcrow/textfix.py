@@ -20,7 +20,8 @@ from .planner.transcript import Transcript, parse_transcript
 
 REFINE_LANGS = {"mr", "hi"}
 BATCH = 25                       # sentences per call: small enough to answer in full, large enough to share context
-MIN_RATIO, MAX_RATIO = 0.5, 1.8  # corrected length / original length (characters, spaces ignored)
+MIN_WORDS_RATIO, MAX_WORDS_RATIO = 0.85, 1.2    # corrected word count / original word count: stumbles are kept, nothing is dropped or invented
+MIN_RATIO, MAX_RATIO = 0.7, 1.5  # corrected length / original length (characters, spaces ignored): a fix, never a rewrite or a deletion
 MIN_DEVANAGARI = 0.5             # the share of Devanagari letters among letters must not fall below half the original's
 
 SYSTEM = """You correct the speech-to-text output of a {language} video. The text was produced by Whisper, which hears the sounds roughly right but
@@ -31,6 +32,9 @@ Rules:
 - Keep the meaning and the order. Do not add, remove, summarise, translate or comment. One sentence in, one sentence out, same id.
 - Fix Hindi spellings and Hindi words that {language} does not use ("है", "नहीं", "क्या") into the {language} the speaker would say.
 - Keep English words the speaker uses (GPS, IIT, bank), written as they are, and keep numbers as spoken.
+- Write down the stumbles as they were said: repeated words, a phrase the speaker abandons and starts again, a trailing "तर मग…". Do NOT smooth them away, join a
+  fragment to the next phrase, or turn garbled sounds into a plausible new sentence. A later step cuts stumbles out; it can only do that if they are still there.
+- Every spoken word stays: do not drop a clause, a question or a sign-off because it looks redundant.
 - Names and numbers you cannot tell: leave the words as they are rather than guess.
 - If a sentence is too garbled to reconstruct, return it unchanged.
 - No quotation marks or explanations around a sentence; plain text only."""
@@ -63,6 +67,9 @@ def acceptable(original: str, fixed: str) -> bool:
         return False
     a, b = len(original.replace(" ", "")), len(fixed.replace(" ", ""))
     if a == 0 or not (MIN_RATIO <= b / a <= MAX_RATIO):
+        return False
+    n_old, n_new = len(original.split()), len(fixed.split())
+    if n_old >= 6 and not (MIN_WORDS_RATIO <= n_new / n_old <= MAX_WORDS_RATIO):        # a dropped clause or a question removes WORDS, whatever its length in letters
         return False
     return _devanagari_share(fixed) >= MIN_DEVANAGARI * _devanagari_share(original)
 

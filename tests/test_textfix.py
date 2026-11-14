@@ -166,3 +166,14 @@ def test_a_given_transcript_is_never_sent_for_correction(tmp_path, video):
     llm = scripted()
     make(video, tmp_path / "o2", transcript_path=t, llm=llm, opts=PlannerOptions(target_clips=1, workers=1), render=False)
     assert all(p != "text-refine" for p, _ in llm.calls)
+
+
+def test_a_correction_that_deletes_a_clause_or_rewrites_the_sentence_is_refused():
+    original = "आपल्याला माहिती आहे पुण्यासारख्या शहरात बाल्कन्या असतात आणि नागरिक नाराज आहेत"
+    assert not acceptable(original, "आपल्याला माहिती आहे पुण्यासारख्या शहरात बाल्कन्या असतात")      # a clause dropped (about 60% left)
+    assert acceptable(original, "आपल्याला माहिती आहे पुण्यासारख्या शहरात बाल्कन्या असतात आणि नागरिक नाराज आहेत")
+    assert acceptable(original, original.replace("शहरात", "शहरांमध्ये"))                                 # a spelling fix is fine
+
+
+def test_the_correction_is_told_to_keep_stumbles_and_every_word():
+    assert "stumbles" in textfix.SYSTEM and "Do NOT smooth" in textfix.SYSTEM and "Every spoken word stays" in textfix.SYSTEM
