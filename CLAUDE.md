@@ -54,6 +54,10 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
 
 ## Web service (`clipcrow/service/`)
+- **UI/UX consistency is part of "done"**: read `docs/ui.md` before touching `static/`. Reuse the shared classes (`.card`, `label.field`, `.check`, `.btn`, `.chip`),
+  tokens only (no literal colours), every control, including browser-drawn ones (date picker, file, range), is styled to look like the text field beside it,
+  and a new screen is checked in dark AND light at 360 px. A new `<input type=...>` must be added to `STYLED_INPUT_TYPES` in `tests/test_ui_consistency.py`
+  after you have looked at it. The calendar popup is the browser's: it follows `color-scheme`, do not replace it with a third-party widget (CSP, no build step).
 - `clipcrow serve --demo` runs it with no key, no Whisper (recorded answers); the browser test is `scripts/e2e_ui.js`.
 - The UI is plain JS with no build step. **Never put job data into markup**: use `textContent`/`el()`; a test bans
   `innerHTML` and inline handlers. The CSP forbids inline scripts and styles and third-party requests.

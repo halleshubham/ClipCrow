@@ -1,5 +1,6 @@
 // ClipCrow web UI. No framework, no build step. Every value that came from a job (file names, model text)
 // is inserted as text, never parsed as markup, and there are no inline handlers (the CSP forbids them).
+// Look and feel: read docs/ui.md before adding a screen or a control (shared classes, tokens only, every input styled like a field, both themes).
 
 const app = document.getElementById('app');
 const banner = document.getElementById('banner');
@@ -891,7 +892,7 @@ async function brandView() {
   const logoIn = el('input', { type: 'file', id: 'logo_file', accept: 'image/png,image/jpeg,image/webp' });
   const outroIn = el('input', { type: 'file', id: 'outro_file', accept: 'video/*' });
   const logoBox = el('section', { class: 'card stack' }, el('h2', { text: 'Logo' }),
-    brand.logo ? el('img', { src: `/api/brand/logo/file${stamp()}`, alt: 'Your logo', style: { maxWidth: '220px', maxHeight: '120px', background: '#888', padding: '8px', borderRadius: '8px' } })
+    brand.logo ? el('img', { src: `/api/brand/logo/file${stamp()}`, alt: 'Your logo', class: 'logo-preview' })
       : el('p', { class: 'small muted', text: 'No logo yet.' }),
     el('div', {}, el('label', { class: 'field', for: 'logo_file', text: 'PNG, JPEG or WebP, up to 3 MB. A transparent PNG looks best. SVG is not accepted.' }), logoIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.logo ? 'Replace logo' : 'Upload logo', onclick: () => send('/brand/logo', logoIn, 'a logo') }),
