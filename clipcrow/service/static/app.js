@@ -503,7 +503,7 @@ async function newJobView() {
           el('span', { class: 'muted' }, brand.outro ? `Your branding video (${brand.outro_seconds} s), added at the end.` : ['No ending video yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
       el('label', { class: brand.music ? 'check' : 'check muted', for: 'music' }, el('input', { type: 'checkbox', id: 'music', disabled: !brand.music, checked: brand.music && !!brand.settings.default_music }),
         el('span', {}, el('strong', { text: 'Background music (ducks under the speech)' }), el('br'),
-          el('span', { class: 'muted' }, brand.music ? `Your track (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music yet. ', el('a', { href: '#/brand', text: 'Add your own track on the Brand page' }), '.']))),
+          el('span', { class: 'muted' }, brand.music ? `${brand.music_name} (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music chosen. ', el('a', { href: '#/brand', text: 'Pick a track or add your own on the Brand page' }), '.']))),
       el('label', { class: 'check', for: 'clean' }, el('input', { type: 'checkbox', id: 'clean' }),
         el('span', {}, el('strong', { text: 'Raw recording: cut fumbles and dead air' }), el('br'),
           el('span', { class: 'muted', text: 'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.' }))),
@@ -1044,13 +1044,24 @@ async function brandView() {
     el('div', {}, el('label', { class: 'field', for: 'logo_file', text: 'PNG, JPEG or WebP, up to 3 MB. A transparent PNG looks best. SVG is not accepted.' }), logoIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.logo ? 'Replace logo' : 'Upload logo', onclick: () => send('/brand/logo', logoIn, 'a logo') }),
       brand.logo && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('logo') })));
+  const trackSel = el('select', { id: 'music_track' }, [['', brand.uploaded_music ? 'Your upload' : 'None'], ...brand.tracks.map((t) => [t.id, `${t.title}: ${t.mood}`])]
+    .map(([v, t]) => el('option', { value: v, text: t })));
+  trackSel.value = brand.settings.music_track || '';
+  trackSel.addEventListener('change', async () => {
+    try { await api('/brand', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ music_track: trackSel.value }) }); await route(); } catch (e) { fail(e); }
+  });
+  const previewSrc = brand.settings.music_track ? `/api/brand/tracks/${brand.settings.music_track}/file` : (brand.music ? `/api/brand/music/file${stamp()}` : '');
   const musicBox = el('section', { class: 'card stack' }, el('h2', { text: 'Background music' }),
-    brand.music ? el('audio', { src: `/api/brand/music/file${stamp()}`, controls: true, preload: 'metadata', style: { width: '100%' }, 'aria-label': 'Your music track' })
-      : el('p', { class: 'small muted', text: 'No music yet.' }),
-    el('div', {}, el('label', { class: 'field', for: 'music_file', text: 'Your own track: MP3, M4A or WAV, 5 seconds to 15 minutes, up to 30 MB. It plays under the voice and is lowered further while someone talks.' }), musicIn,
-      el('div', { class: 'hint', text: 'Only upload music you have the right to use in your videos. Platforms can mute or claim music they recognise.' })),
-    el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.music ? 'Replace music' : 'Upload music', onclick: () => send('/brand/music', musicIn, 'a music file') }),
-      brand.music && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('music') })));
+    el('div', {}, el('label', { class: 'field', for: 'music_track', text: 'Track' }), trackSel,
+      el('div', { class: 'hint', text: 'The built-in tracks are instrumental and made for this app. Or add your own below.' })),
+    previewSrc ? el('audio', { src: previewSrc, controls: true, preload: 'none', style: { width: '100%' }, 'aria-label': 'Preview of the chosen track' }) : el('p', { class: 'small muted', text: 'No music chosen.' }),
+    el('div', {}, el('label', { class: 'field', for: 'music_file', text: 'Your own track: MP3, M4A or WAV, 5 seconds to 15 minutes, up to 30 MB.' }), musicIn,
+      el('div', { class: 'hint', text: 'Only upload music you have the right to use in your videos. Platforms can mute or claim music they recognise. It plays under the voice and is lowered further while someone talks.' })),
+    el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.uploaded_music ? 'Replace my upload' : 'Upload music', onclick: async () => {
+      if (musicIn.files[0]) { try { await api('/brand', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ music_track: '' }) }); } catch (_) { /* the upload reports its own problem */ } }
+      send('/brand/music', musicIn, 'a music file');
+    } }),
+      brand.uploaded_music && el('button', { class: 'btn', type: 'button', text: 'Remove my upload', onclick: () => remove('music') })));
   const outroBox = el('section', { class: 'card stack' }, el('h2', { text: 'Ending video' }),
     brand.outro ? el('video', { src: `/api/brand/outro/file${stamp()}`, controls: true, playsinline: true, preload: 'metadata', style: { width: '180px' }, 'aria-label': 'Your ending video' })
       : el('p', { class: 'small muted', text: 'No ending video yet.' }),

@@ -14,6 +14,8 @@ The rules that came out of these are in `development-rules.md`; this file is the
 - **Adoption step 4: transitions, music and ducking.** Transitions (flash, blur, dip, whip) on hard cuts, rendered for real and looked at in frames. The cleanup's join times now travel in the EDL (`Clip.seams`), so
   cues and transitions can use the jump cuts. Music: the account uploads its own track (Brand page), the render ducks it under the speech with a sidechain compressor; ducking tested with real audio (bed 6+ dB
   lower under a tone than in the pause). One real render with transition + karaoke + cues + music: no warnings, -14.0 LUFS. All of it is OFF by default and unlistened-to on a real Marathi reel: judge by ear.
+- **Built-in background tracks**: two instrumental 90 s tracks generated with the ElevenLabs music API ("Calm keys", "Bright pulse", `scripts/make_tracks.py`), selectable on the Brand page next to the upload.
+  Not listened to by me (no ears): check them before offering them to anyone. A clip longer than 90 s loops the track with a hard seam.
 - **Platform length/size checks: only YouTube Shorts (3 min, vertical) is noted on the Share page.** Searches for Instagram, TikTok, Facebook, X and LinkedIn limits returned third-party guides that
   disagree widely (Instagram 3-20 min, TikTok 10-60 min, Facebook 90 s to no cap) and no official page, so a check there would be guesswork. Add one only from the platform's own help page, with its date. Next on the list: ducking/SFX placed from the EDL's word times, platform length/size checks before posting, a closed set of transitions,
   caption animation presets.

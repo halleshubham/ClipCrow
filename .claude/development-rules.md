@@ -88,8 +88,8 @@ History, incidents and open items are in `development-log.md`: add an entry ther
   (`seams`, set by `make()` from `cleanup.json`'s timemap through `with_seams`, clip time = cleaned-video time - source_in), speaker jumps in a tracked framing (a keyframe jump of > 0.1 within 0.12 s, never a pan) and
   both edges of a fit span; none in the first/last 0.3 s, cuts under 0.6 s apart share one effect. The look is a full-frame layer (`compile._transitions_scene`, z 8: over cards and logo, under the cover).
   Sound cues put a click on every hard cut when cues are on.
-- Background music and ducking (`music.py`, `Clip.music`, brand kit `music.m4a`, job option `music`, editor toggle, OFF by default): the track is the ACCOUNT'S OWN upload (we ship no music: the person is
-  responsible for the right to use it; the Brand page says platforms can mute or claim it), re-encoded to one stereo AAC, 5 s-15 min, 30 MB, copied into the job as asset `brand-music`. One ffmpeg pass: looped, faded,
+- Background music and ducking (`music.py`, `Clip.music`, brand kit, job option `music`, editor toggle, OFF by default): the track is one of the built-in ones (`clipcrow/tracks`, below) or the ACCOUNT'S OWN upload
+  (the person is responsible for the right to use it; the Brand page says platforms can mute or claim it; `music_track` "" = the upload), re-encoded to one stereo AAC, 5 s-15 min, 30 MB, copied into the job as asset `brand-music`. One ffmpeg pass: looped, faded,
   gained to `level_db` (default -10) relative to the SPEECH's integrated loudness (`loudness.measure` of both), and pushed down further by `sidechaincompress` keyed on the speech while someone talks; the speech keeps
   its own channel layout (mono -> stereo lowers it by 3 dB), picture copied. No speech to measure / no audio / unreadable track = clip untouched. Order in `render_clip`: music, cues, outro join, loudness.
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
@@ -176,6 +176,10 @@ History, incidents and open items are in `development-log.md`: add an entry ther
   made: keep the invoice. Never add a third-party sound (Freesound unless CC0, YouTube audio library, Epidemic/Artlist, any music) without a written licence and a manifest row.
 - A cue sits UNDER speech: short (0.3-3 s), placed by CODE on structural events (hard cut, punch-in, cover/card/logo entry, number reveal), never by the model, about one per 2-3 s at most, mixed
   in a separate ffmpeg pass (`adelay`, `volume`, `amix=normalize=0`) on the clip's own timeline. A silent generation is a failed one (the first "click" was): `tests/test_sfx.py` checks it.
+
+- Built-in tracks (`clipcrow/tracks/*.mp3` + `manifest.json`, made by `scripts/make_tracks.py` with the ElevenLabs music API, instrumental, 90 s, kept when they exist): same licence rule as the cues (a PAID ElevenLabs plan on
+  the day, keep the invoice) and a provenance row each; `tests/test_music_brand.py` checks the hash, length and that a track is audible. A brand picks one with the `music_track` setting (validated against the manifest, ids
+  `^[a-z0-9-]{1,40}\Z`); the job COPIES the chosen file as `brand/music.<ext>`. A track shorter than the clip loops (an abrupt seam; a crossfaded loop is not built).
 
 ## Deploying
 - Push to `main`; deploy only after CI and the Image workflow are green (a commit that changes only tests has no Image run: the previous image has the same code). Never restart while a job is

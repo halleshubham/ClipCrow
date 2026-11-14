@@ -26,4 +26,4 @@ def test_a_sound_is_the_file_that_was_recorded_short_and_not_silent(sid):
 
 
 def test_the_library_is_shipped_with_the_package():
-    assert '"clipcrow" = ["sfx/*"]' in (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"sfx/*"' in (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")

@@ -1,0 +1,25 @@
+{
+ "tool": "elevenlabs music (music_v1, instrumental)",
+ "tracks": {
+  "calm-keys": {
+   "file": "calm-keys.mp3",
+   "title": "Calm keys",
+   "mood": "calm, thoughtful",
+   "prompt": "Calm minimal lo-fi instrumental, soft piano and warm pads, steady low energy, no vocals, no drum build-ups, a quiet bed under a spoken voice",
+   "generated": "2026-11-14",
+   "sha256": "b0408cb7939671934366b8b3e97a9f465ea80f97c4be41aa93a66ae5e7a643a6",
+   "seconds": 90.0,
+   "lufs": -14.9
+  },
+  "bright-pulse": {
+   "file": "bright-pulse.mp3",
+   "title": "Bright pulse",
+   "mood": "light, upbeat",
+   "prompt": "Light upbeat modern instrumental, gentle muted percussion and a soft plucked synth, steady and unobtrusive, no vocals, no big drops or build-ups, a friendly bed under a spoken voice",
+   "generated": "2026-11-14",
+   "sha256": "a2f58eaad59b624b876d3e25813ce2c54be85584a0a604fb63c04f92566833a7",
+   "seconds": 90.1,
+   "lufs": -16.71
+  }
+ }
+}

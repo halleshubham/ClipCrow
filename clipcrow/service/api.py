@@ -36,7 +36,7 @@ from ..edl import load_edl
 from ..planner.source import probe_source
 from .accounts import AccountError, Accounts, User
 from .billing import BillingError, Razorpay, apply_event
-from .brand import MAX_LOGO_BYTES, MAX_MUSIC_BYTES, MAX_OUTRO_BYTES, BrandStore
+from .brand import MAX_LOGO_BYTES, MAX_MUSIC_BYTES, MAX_OUTRO_BYTES, TRACK_ID, BrandStore, track_path
 from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Catalog, load_catalog
@@ -1154,7 +1154,14 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         path = brands.music_path(brand_owner(request))
         if path is None:
             raise HTTPException(404, "No music yet.")
-        return FileResponse(path, media_type="audio/mp4", headers={"Cache-Control": "no-cache"})
+        return FileResponse(path, media_type="audio/mpeg" if path.suffix == ".mp3" else "audio/mp4", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/brand/tracks/{track_id}/file", dependencies=[Depends(authed)])
+    def brand_track_file(track_id: str):
+        path = track_path(track_id) if TRACK_ID.match(track_id) else None
+        if path is None:
+            raise HTTPException(404, "No such track.")
+        return FileResponse(path, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=3600"})
 
     @app.delete("/api/brand/{what}", dependencies=[Depends(authed)])
     def brand_delete(what: str, request: Request) -> dict:

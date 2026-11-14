@@ -93,3 +93,63 @@ def test_the_api_stores_serves_and_uses_the_track(tmp_path, video_bytes):
     edl = load_edl(app.state.store.edl_path(job["id"]))
     assert edl.clips[0].music.asset == "brand-music" and (tmp_path / "data" / "jobs" / job["id"] / "out" / "brand" / "music.m4a").is_file()
     assert c.delete("/api/brand/music").json()["music"] is False and c.get("/api/brand/music/file").status_code == 404
+
+
+# --- the built-in tracks -------------------------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+from clipcrow.service import brand as brand_mod  # noqa: E402
+
+
+def test_the_library_is_in_the_repo_with_provenance_and_audible_tracks():
+    lib = brand_mod.library()
+    assert len(lib) >= 2
+    manifest = __import__("json").loads((brand_mod.TRACKS_DIR / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["tool"] and set(manifest["tracks"]) == set(lib)
+    for tid, v in manifest["tracks"].items():
+        f = brand_mod.TRACKS_DIR / v["file"]
+        assert f.is_file() and v["prompt"] and v["generated"] and v["title"] and v["mood"] and tid == f.stem
+        assert __import__("hashlib").sha256(f.read_bytes()).hexdigest() == v["sha256"]          # not swapped without regenerating the row
+        assert 30 <= v["seconds"] <= 300 and v["lufs"] is not None and v["lufs"] > -35           # a real, audible bed, not silence
+    assert '"tracks/*"' in (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+
+
+def test_a_brand_can_pick_a_built_in_track_or_go_back_to_its_upload(store, tmp_path):
+    tid = sorted(brand_mod.library())[0]
+    assert store.music_path(OWNER) is None and store.describe(OWNER)["music"] is False
+    store.set_settings(OWNER, {"music_track": tid})
+    d = store.describe(OWNER)
+    assert d["music"] is True and d["music_name"] == brand_mod.library()[tid]["title"] and store.music_path(OWNER) == brand_mod.track_path(tid)
+    store.put_music(OWNER, track(tmp_path / "up"))
+    assert store.music_path(OWNER) == brand_mod.track_path(tid) and store.describe(OWNER)["uploaded_music"] is True      # the choice stays
+    store.set_settings(OWNER, {"music_track": ""})
+    assert store.music_path(OWNER) == store.uploaded_music(OWNER) and store.describe(OWNER)["music_name"] == "Your upload"
+    store.delete(OWNER, "music")
+    assert store.music_path(OWNER) is None
+    for bad in ("../x", "nope", 5):
+        with pytest.raises(BrandError):
+            store.set_settings(OWNER, {"music_track": bad})
+
+
+def test_the_track_ids_cannot_reach_other_files():
+    for bad in ("../manifest", "a/b", "", "A" * 5, "calm-keys\n", "x" * 41):
+        assert brand_mod.track_path(bad) is None
+
+
+def test_a_job_can_use_a_built_in_track_and_the_api_lists_and_plays_them(tmp_path, video_bytes):
+    c, app = client(tmp_path)
+    tracks = c.get("/api/brand").json()["tracks"]
+    assert len(tracks) >= 2 and all(t["id"] and t["title"] for t in tracks)
+    tid = tracks[0]["id"]
+    got = c.get(f"/api/brand/tracks/{tid}/file")
+    assert got.status_code == 200 and got.headers["content-type"] == "audio/mpeg" and len(got.content) > 100_000
+    assert c.get("/api/brand/tracks/nope/file").status_code == 404 and c.get("/api/brand/tracks/..%2Fmanifest/file").status_code == 404
+    assert upload(c, video_bytes, music="1").status_code == 422                                  # nothing chosen yet
+    assert c.put("/api/brand", json={"music_track": "nope"}).status_code == 422
+    assert c.put("/api/brand", json={"music_track": tid}).json()["music"] is True
+    assert c.get("/api/brand/music/file").headers["content-type"] == "audio/mpeg"
+    job = wait(c, upload(c, video_bytes, music="1").json()["id"])
+    assert job["status"] == "done", job["error"]
+    edl = load_edl(app.state.store.edl_path(job["id"]))
+    assert edl.clips[0].music.asset == "brand-music" and (tmp_path / "data" / "jobs" / job["id"] / "out" / "brand" / "music.mp3").is_file()

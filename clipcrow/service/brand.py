@@ -23,6 +23,8 @@ MAX_LOGO_BYTES = 3 * 1024 * 1024
 MAX_OUTRO_BYTES = 90 * 1024 * 1024
 MAX_OUTRO_SECONDS = 20.0
 MAX_MUSIC_BYTES = 30 * 1024 * 1024
+TRACKS_DIR = Path(__file__).resolve().parent.parent / "tracks"      # the built-in background tracks (made by scripts/make_tracks.py)
+TRACK_ID = re.compile(r"^[a-z0-9-]{1,40}\Z")
 MIN_MUSIC_SECONDS, MAX_MUSIC_SECONDS = 5.0, 900.0
 MAX_LOGO_SIDE = 4096
 OWNER = re.compile(r"^([0-9a-f]{32}|shared)\Z")
@@ -36,10 +38,24 @@ DEFAULTS = {
     "cover_ms": 250, "cover_background": "frame", "cover_color": "#FFFFFF", "cover_accent": "#FFD54A",
     "cover_bg_color": "#111111", "outro_max_seconds": 6.0,
     # what a new job ticks by default
-    "default_cover": False, "default_logo": False, "default_outro": False, "default_music": False,
+    "default_cover": False, "default_logo": False, "default_outro": False, "default_music": False, "music_track": "",
 }
 _RANGES = {"logo_size_pct": (5, 40, int), "logo_opacity": (0.1, 1.0, float), "logo_margin_px": (0, 300, int),
            "cover_ms": (100, 1500, int), "outro_max_seconds": (1.0, 30.0, float)}
+
+
+def library() -> dict:
+    """The built-in tracks: ``{id: {"file", "title", "mood", "seconds"}}`` (only those whose file is there)."""
+    try:
+        rows = json.loads((TRACKS_DIR / "manifest.json").read_text(encoding="utf-8")).get("tracks", {})
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in rows.items() if TRACK_ID.match(k) and isinstance(v, dict) and (TRACKS_DIR / str(v.get("file", ""))).is_file()}
+
+
+def track_path(track_id: str) -> Path | None:
+    row = library().get(track_id) if TRACK_ID.match(track_id or "") else None
+    return TRACKS_DIR / row["file"] if row else None
 
 
 def sniff_image(head: bytes) -> str | None:
@@ -94,6 +110,9 @@ class BrandStore:
                 if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
                     raise BrandError(f"{k.replace('_', ' ').capitalize()} must be between {lo} and {hi}.")
                 v = typ(v)
+            elif k == "music_track":
+                if not (isinstance(v, str) and (v == "" or v in library())):
+                    raise BrandError("Choose one of the listed tracks, or your own upload.")
             elif k == "logo_position":
                 if v not in POSITIONS:
                     raise BrandError("Choose a corner: tl, tr, bl or br.")
@@ -141,9 +160,14 @@ class BrandStore:
                 shutil.move(str(probe), d / f"logo{suffix}")
         return self.describe(owner)
 
-    def music_path(self, owner: str) -> Path | None:
+    def uploaded_music(self, owner: str) -> Path | None:
         p = self._dir(owner) / "music.m4a"
         return p if p.is_file() else None
+
+    def music_path(self, owner: str) -> Path | None:
+        """The track a job would use: the built-in one the brand chose, else its own upload (``music_track`` "" = the upload)."""
+        chosen = self.settings(owner).get("music_track", "")
+        return (track_path(chosen) if chosen else None) or self.uploaded_music(owner)
 
     def put_music(self, owner: str, source: Path) -> dict:
         """``source`` is an uploaded audio file already on disk (the caller capped its size). Re-encoded to one canonical stereo AAC file, without
@@ -202,7 +226,7 @@ class BrandStore:
             elif what == "outro":
                 (d / "outro.mp4").unlink(missing_ok=True)
             elif what == "music":
-                (d / "music.m4a").unlink(missing_ok=True)
+                (d / "music.m4a").unlink(missing_ok=True)       # the built-in tracks are not the person's to delete: choose another or none
             else:
                 raise BrandError("Unknown item.")
         return self.describe(owner)
@@ -216,8 +240,13 @@ class BrandStore:
         s = self.settings(owner)
         outro = self.outro_path(owner)
         music = self.music_path(owner)
+        lib = library()
+        chosen = s.get("music_track", "")
+        name = lib[chosen]["title"] if chosen in lib else ("Your upload" if music else "")
         return {"logo": self.logo_path(owner) is not None, "outro": outro is not None, "music": music is not None,
-                "music_seconds": round(probe_media(music)["duration"], 1) if music else 0,
+                "music_seconds": round(probe_media(music)["duration"], 1) if music else 0, "music_name": name,
+                "uploaded_music": self.uploaded_music(owner) is not None,
+                "tracks": [{"id": k, "title": v.get("title", k), "mood": v.get("mood", ""), "seconds": v.get("seconds", 0)} for k, v in sorted(lib.items())],
                 "outro_seconds": round(probe_media(outro)["duration"], 1) if outro else 0, "settings": s}
 
     def kit(self, owner: str) -> BrandKit:
