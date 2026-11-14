@@ -1,0 +1,93 @@
+{
+ "tool": "elevenlabs sound-generation",
+ "sounds": {
+  "whoosh-soft": {
+   "file": "whoosh-soft.mp3",
+   "use": "a quick transition between two moments",
+   "prompt": "Soft fast air whoosh, short transition swoosh, clean, dry, no music",
+   "requested_seconds": 0.8,
+   "generated": "2026-11-14",
+   "sha256": "16dd9ee0f896734e4c3da1df02402a7d1c0016c04492e2cc13d726d487c94d3a",
+   "seconds": 0.84,
+   "peak_db": -0.3,
+   "mean_db": -11.7
+  },
+  "whoosh-wide": {
+   "file": "whoosh-wide.mp3",
+   "use": "a card, cover or logo sliding in",
+   "prompt": "Cinematic wide swoosh sweeping across, clean, dry, no music",
+   "requested_seconds": 1.2,
+   "generated": "2026-11-14",
+   "sha256": "c9977e86d20575f49f99a45be247507f2003fdf0e1483b305f54401b92356926",
+   "seconds": 1.23,
+   "peak_db": 0.0,
+   "mean_db": -18.5
+  },
+  "pop": {
+   "file": "pop.mp3",
+   "use": "a word, sticker or text popping in",
+   "prompt": "Short bubble pop, clean UI sound, no music",
+   "requested_seconds": 0.5,
+   "generated": "2026-11-14",
+   "sha256": "d26984f582b0011dd9845bacc0f232783abed6d2c63d3a695c5665de27ae66df",
+   "seconds": 0.52,
+   "peak_db": -0.3,
+   "mean_db": -17.7
+  },
+  "click": {
+   "file": "click.mp3",
+   "use": "a hard cut or a UI tap",
+   "prompt": "A single sharp mouse button click, short dry tick sound effect",
+   "requested_seconds": 0.5,
+   "generated": "2026-11-14",
+   "sha256": "52c56e17d99d88fb47dd74f5a16b09b50c481474927a886645ff2f77389b28f6",
+   "seconds": 0.52,
+   "peak_db": -3.4,
+   "mean_db": -27.6
+  },
+  "shutter": {
+   "file": "shutter.mp3",
+   "use": "a screenshot or picture appearing",
+   "prompt": "Camera shutter click, single, clean, dry",
+   "requested_seconds": 0.6,
+   "generated": "2026-11-14",
+   "sha256": "28c789fc5c7c94c249767cc84d5cede37de381c25e8d219e394e785dc60192f7",
+   "seconds": 0.63,
+   "peak_db": 0.0,
+   "mean_db": -22.2
+  },
+  "riser": {
+   "file": "riser.mp3",
+   "use": "tension before a reveal",
+   "prompt": "Short rising tension riser building up, clean synth sweep, no music",
+   "requested_seconds": 2.0,
+   "generated": "2026-11-14",
+   "sha256": "2b205879243ac6fedbef2b801c6f14f85ce0053b4679b055799d7cafc59eb163",
+   "seconds": 2.04,
+   "peak_db": 0.0,
+   "mean_db": -14.0
+  },
+  "impact": {
+   "file": "impact.mp3",
+   "use": "a big statement or the end of a riser",
+   "prompt": "Deep cinematic impact hit with a short tail, bass boom, no music",
+   "requested_seconds": 1.5,
+   "generated": "2026-11-14",
+   "sha256": "58f676b9881053d22b35333800769838e50cadffdc653334e1238fb3ef59e271",
+   "seconds": 1.52,
+   "peak_db": -0.1,
+   "mean_db": -7.5
+  },
+  "ding": {
+   "file": "ding.mp3",
+   "use": "a number or fact landing",
+   "prompt": "Bright pleasant notification chime, single ding, clean",
+   "requested_seconds": 1.0,
+   "generated": "2026-11-14",
+   "sha256": "fbac7066e6692b7d15ab42877cbc63eac31f9c6ab8e5a11c86fcbb3fb121e926",
+   "seconds": 1.04,
+   "peak_db": -2.9,
+   "mean_db": -25.9
+  }
+ }
+}
