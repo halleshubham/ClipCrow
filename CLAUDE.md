@@ -78,8 +78,8 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   A cleaned recording is usually ONE reel of 3-8 minutes: a clip may run `edl.MAX_CLIP_SECONDS` (15 min), the job form offers 1½-3, 3-5, 5-8 minutes and
   "the whole video as one reel" (`Params.whole`, `PlannerOptions.whole`: one window, no scoring, the clip IS the recording whatever sentences the model
   named). Anything that assumed a short must follow the clip's real length: the editor's trim limit (`max_seconds_for`), the render timeout (12 x the
-  clip), and the GPU worker (clips over `CLIPCROW_WORKER_MAX_CLIP_SECONDS`, default 60 (a 98 s clip was 105 MB: over the proxy cap, a 413), render on the server because the MP4 would come back through
-  a proxy that caps a request near 100 MB).
+  clip), and the GPU worker (clips over `CLIPCROW_WORKER_MAX_CLIP_SECONDS`, default 60 (a 98 s clip was 105 MB: over the proxy cap, a 413), go only to a worker that sends the MP4 to the
+  bucket in presigned parts (`WorkerHub.direct_plan` / `direct_finish`, task `direct=True`); with no bucket or no such worker online they render on the server).
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
 
@@ -144,7 +144,10 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   A RENDER task (`RemoteRenderer`) ships the EDL, the source and the clip's assets by manifest NAMES (a dict lookup on the server, `safe_join`
   on the worker: never a path built from a name), only to a worker whose HyperFrames pin equals ours. What comes back is untrusted media:
   `validate_clip` probes container, codec, size, duration and bytes before anything is replaced, and the cover and the provenance sidecar are
-  made by the server, never uploaded by a worker. Any failure falls back to a local render. Name patterns use `fullmatch` (a `$` regex lets
+  made by the server, never uploaded by a worker. Any failure falls back to a local render.
+  A finished clip goes worker -> bucket (presigned multipart, so the proxy's ~100 MB cap does not apply) -> server disk: the object is the task's own `worker/<task id>.mp4` (allow-listed in
+  `storage.REL`), the part URLs sign their length, one plan per leased render task, the finished size must equal the announced one, the object is deleted after the copy and on every failure
+  (`discard_direct`), and the copy is probed by `validate_clip` like any worker clip. The worker token is never sent to the bucket host. No bucket / 404 = the old PUT through the server. Name patterns use `fullmatch` (a `$` regex lets
   a trailing newline through). `Transport` methods raise `NotImplementedError`, so a test double without `upload` fails loudly.
 - Clip edits are `service.editor.ClipEdit`, a closed set of fields applied by the pure `apply_edit`; never accept a raw
   EDL or a path from the browser. The AI's `decided` list is not rewritten by a person: add a note instead.

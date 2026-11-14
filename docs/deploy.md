@@ -67,9 +67,12 @@ plan). Checked on the live server on 2026-11-14: a 3 GB upload started with 48 p
 was refused with "larger than the 4096 MB limit". So the only size cap for a source video is ClipCrow's own `clipcrow serve --max-upload-mb`
 (default 4096; the bucket allows far more: 10 000 parts x 64 MB). A raw 1080p hour is roughly 3-6 GB, so raise it if you upload long raw recordings.
 
-What is still capped near 100 MB is anything that goes THROUGH the app host: ordinary API requests, and a GPU worker sending a rendered clip back.
-That is why clips longer than `CLIPCROW_WORKER_MAX_CLIP_SECONDS` (default 100 s) render on the server. Sending worker results through the bucket as well
-(presigned PUT) would lift that limit; it is not built yet.
+What is still capped near 100 MB is anything that goes THROUGH the app host: ordinary API requests. A GPU worker's finished clip does NOT: with a bucket
+the worker asks for presigned part URLs (`POST /api/worker/tasks/<id>/direct-upload`), PUTs the MP4 to the bucket in 32 MiB parts and says it is done
+(`.../direct-done`); the server completes the upload, checks the size, copies the object to its disk, deletes it from the bucket and probes it like any other
+worker clip. The worker never holds a storage key; the object is `worker/<task id>.mp4`. So clips of any length render on the GPU (up to
+`CLIPCROW_WORKER_MAX_DIRECT_MB`, 2048). `CLIPCROW_WORKER_DIRECT=0` turns it off. Without a bucket, or when no online worker can do this (an older image), clips
+longer than `CLIPCROW_WORKER_MAX_CLIP_SECONDS` (default 60) still render on the server. Restart the worker on the new image to get it.
 
 ### Testing direct uploads without Cloudflare
 

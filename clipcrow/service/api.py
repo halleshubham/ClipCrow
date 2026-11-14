@@ -44,7 +44,7 @@ from .publish import LIMITS, PublishError, SocioBird, caption_html, settings_for
 from .retention import Sweeper, env_days, expires_at
 from .storage import Mirror, S3Storage, StorageError, signature
 from .uploads import OPEN_LIMIT, Upload, UploadStore
-from .workers import HeartbeatIn, PollIn, ResultIn, TASK_ID, WorkerHub, _clean_name
+from .workers import DirectDoneIn, DirectIn, HeartbeatIn, PollIn, ResultIn, TASK_ID, WorkerError, WorkerHub, _clean_name
 from ..render import HYPERFRAMES_VERSION
 from .runner import JobRunner, Pipeline
 from .style_store import StyleStore
@@ -182,7 +182,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     runner.brands = brands
     styles = StyleStore(data_dir)
     hub = WorkerHub(worker_token, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds, render_pin=HYPERFRAMES_VERSION,
-                    max_upload_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_UPLOAD_MB", "300") or 300) * 1024 * 1024)) if worker_token else None
+                    max_upload_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_UPLOAD_MB", "300") or 300) * 1024 * 1024),
+                    max_direct_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_DIRECT_MB", "2048") or 2048) * 1024 * 1024),
+                    storage=storage if os.environ.get("CLIPCROW_WORKER_DIRECT", "1") != "0" else None) if worker_token else None
     if hub is not None:
         pipeline.hub = hub                                  # RealPipeline sends speech recognition to a worker when one is online
     style_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-style")
@@ -973,7 +975,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     @app.post("/api/worker/poll", dependencies=[Depends(worker_auth)])
     async def worker_poll(body: PollIn) -> dict:
-        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model, tuple(body.can), body.pin)
+        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model, tuple(body.can), body.pin, body.direct)
         if task is None:
             return {"task": None}
         out = {"id": task.id, "kind": task.kind, "lease_seconds": hub.lease_seconds, "meta": task.meta}
@@ -1022,6 +1024,26 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             target.unlink(missing_ok=True)
             raise HTTPException(404, "That task is no longer yours.")
         return {"ok": True, "size": size}
+
+    @app.post("/api/worker/tasks/{task_id}/direct-upload", dependencies=[Depends(worker_auth)])
+    async def worker_direct_upload(task_id: str, body: DirectIn) -> dict:
+        """Presigned part URLs for the finished clip: the bytes go to the bucket's own host, not through this domain's proxy."""
+        task_id_or_404(task_id)
+        try:
+            plan = await asyncio.to_thread(hub.direct_plan, task_id, body.worker, body.size)
+        except WorkerError as e:
+            raise HTTPException(409, str(e))
+        if plan is None:
+            raise HTTPException(404, "Direct upload is not available.")         # the worker then sends the clip through this server as before
+        return plan
+
+    @app.post("/api/worker/tasks/{task_id}/direct-done", dependencies=[Depends(worker_auth)])
+    async def worker_direct_done(task_id: str, body: DirectDoneIn) -> dict:
+        task_id_or_404(task_id)
+        ok = await asyncio.to_thread(hub.direct_finish, task_id, body.worker, [(p.n, p.etag) for p in body.parts])
+        if not ok:
+            raise HTTPException(422, "The clip did not arrive in full.")
+        return {"ok": True}
 
     @app.post("/api/worker/tasks/{task_id}/heartbeat", dependencies=[Depends(worker_auth)])
     def worker_heartbeat(task_id: str, body: HeartbeatIn) -> dict:

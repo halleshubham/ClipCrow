@@ -11,7 +11,7 @@ from .jobs import Job
 
 
 def _worker_clip_limit() -> float:
-    """Clips longer than this many seconds are rendered on the server, not sent to a GPU worker (CLIPCROW_WORKER_MAX_CLIP_SECONDS, 0 = no limit)."""
+    """Clips longer than this many seconds go only to a GPU worker that can send the MP4 to the bucket, else they render on the server (CLIPCROW_WORKER_MAX_CLIP_SECONDS, 0 = no limit)."""
     try:
         return max(0.0, float(os.environ.get("CLIPCROW_WORKER_MAX_CLIP_SECONDS", "60")))
     except ValueError:

@@ -396,7 +396,7 @@ def test_a_long_clip_is_rendered_on_the_server_not_sent_through_the_proxy(tmp_pa
     from tests.conftest import base_edl
     edl = EDL.model_validate(base_edl(clips=[{"id": "c1", "source_in": 0, "source_out": 300}], source={"uri": "s.mp4", "duration": 900, "width": 1080, "height": 1920, "fps": 30}))
     ran, said = [], []
-    hub = SimpleNamespace(online=lambda kind: True)
+    hub = SimpleNamespace(online=lambda kind, direct=False: not direct)          # a render worker is online, but none that can use the bucket
     rr = RemoteRenderer(hub, say=said.append, fallback=lambda *a, **k: ran.append("local") or ("out.mp4", None))
     rr(edl, "c1", tmp_path / "c1.mp4", workdir=tmp_path, media_root=tmp_path)
     assert ran == ["local"] and said and "long" in said[0]

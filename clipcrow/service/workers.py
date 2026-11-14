@@ -40,6 +40,8 @@ WORKER_NAME = r"^[A-Za-z0-9._-]{1,40}$"
 MAX_WORDS = 400_000
 KINDS = ("transcribe", "render")
 FILE_NAME = re.compile(r"^[A-Za-z0-9._@ /-]{1,200}$")          # what a manifest name may look like (and no "..", see _clean_name)
+DIRECT_PART = 32 * 1024 * 1024                                  # parts of a clip sent straight to the bucket (S3/R2 need at least 5 MiB)
+ETAG = re.compile(r'^"?[0-9a-fA-F]{32}"?\Z')
 UPLOADS = ("clip.mp4",)                                          # the only file a worker may send back
 
 
@@ -64,6 +66,22 @@ class PollIn(_M):
     model: str = Field(default="", max_length=40)
     can: list[Literal["transcribe", "render"]] = Field(default_factory=lambda: ["transcribe"], max_length=2)
     pin: str = Field(default="", max_length=40)                    # the HyperFrames version this worker renders with
+    direct: bool = False                                           # can send a finished clip straight to the bucket (see DirectIn)
+
+
+class DirectIn(_M):
+    worker: str = Field(pattern=WORKER_NAME)
+    size: int = Field(ge=1024, le=64 * 1024 ** 3)
+
+
+class PartDone(_M):
+    n: int = Field(ge=1, le=10_000)
+    etag: str = Field(pattern=r'^"?[0-9a-fA-F]{32}"?$', max_length=80)      # (pydantic's regex engine has no \Z, and its $ never matches before a newline)
+
+
+class DirectDoneIn(_M):
+    worker: str = Field(pattern=WORKER_NAME)
+    parts: list[PartDone] = Field(max_length=10_000)
 
 
 class HeartbeatIn(_M):
@@ -108,6 +126,9 @@ class Task:
     upload_dir: Optional[Path] = None
     uploads: dict[str, Path] = field(default_factory=dict)
     language: Optional[str] = None
+    direct: bool = False                    # only a worker that can send the clip straight to the bucket may take it (a long clip)
+    plan: Optional[dict] = None             # the multipart upload this worker was given: {"id", "rel", "size", "count"} ({} while it is being made)
+    direct_used: bool = False
 
     @property
     def audio(self) -> Optional[Path]:
@@ -121,17 +142,19 @@ class _Seen:
     model: str = ""
     can: tuple = ("transcribe",)
     pin: str = ""
+    direct: bool = False
 
 
 class WorkerHub:
     def __init__(self, token: str, *, pickup_seconds: float = 120.0, lease_seconds: float = 90.0,
                  online_seconds: float = 60.0, render_pin: str = "", max_upload_bytes: int = 300 * 1024 * 1024,
-                 clock: Callable[[], float] = time.monotonic):
+                 max_direct_bytes: int = 2 * 1024 ** 3, storage=None, clock: Callable[[], float] = time.monotonic):
         if not token or len(token) < 16:
             raise ValueError("CLIPCROW_WORKER_TOKEN must be at least 16 characters (try: openssl rand -hex 32)")
         self._token = token.encode()
         self.pickup_seconds, self.lease_seconds, self.online_seconds = pickup_seconds, lease_seconds, online_seconds
         self.render_pin, self.max_upload_bytes = render_pin, max_upload_bytes
+        self.max_direct_bytes, self.storage = max_direct_bytes, storage      # a finished clip may go to the bucket (storage) instead of through this server
         self._clock = clock
         self._cond = threading.Condition()
         self._tasks: dict[str, Task] = {}
@@ -142,32 +165,37 @@ class WorkerHub:
         return hmac.compare_digest(presented.encode(), self._token)
 
     # who is out there ------------------------------------------------------------------------------------------------
-    def _touch(self, name: str, device: str = "", model: str = "", can: Optional[tuple] = None, pin: Optional[str] = None) -> None:
+    def _touch(self, name: str, device: str = "", model: str = "", can: Optional[tuple] = None, pin: Optional[str] = None,
+               direct: Optional[bool] = None) -> None:
         old = self._seen.get(name)
         self._seen[name] = _Seen(self._clock(), device or (old.device if old else ""), model or (old.model if old else ""),
                                  can if can is not None else (old.can if old else ("transcribe",)),
-                                 pin if pin is not None else (old.pin if old else ""))
+                                 pin if pin is not None else (old.pin if old else ""),
+                                 direct if direct is not None else (old.direct if old else False))
 
-    def _eligible(self, s: _Seen, kind: Optional[str]) -> bool:
-        """Is this worker one that may take a ``kind`` task? A render needs the same HyperFrames pin as this server."""
+    def _eligible(self, s: _Seen, kind: Optional[str], direct: bool = False) -> bool:
+        """Is this worker one that may take a ``kind`` task? A render needs the same HyperFrames pin as this server (and, for a task that
+        will come back through the bucket, a worker that knows how)."""
         if kind is None:
             return True
         if kind not in s.can:
             return False
+        if direct and not (s.direct and self.storage is not None):
+            return False
         return kind != "render" or (bool(self.render_pin) and s.pin == self.render_pin)
 
-    def online(self, kind: Optional[str] = None) -> bool:
+    def online(self, kind: Optional[str] = None, direct: bool = False) -> bool:
         with self._cond:
-            return self._online(kind)
+            return self._online(kind, direct)
 
-    def _online(self, kind: Optional[str]) -> bool:
+    def _online(self, kind: Optional[str], direct: bool = False) -> bool:
         now = self._clock()
-        return any(now - s.at <= self.online_seconds and self._eligible(s, kind) for s in self._seen.values())
+        return any(now - s.at <= self.online_seconds and self._eligible(s, kind, direct) for s in self._seen.values())
 
     def describe(self) -> list[dict]:
         with self._cond:
             now = self._clock()
-            return [{"name": n, "device": s.device, "model": s.model, "can": list(s.can), "pin": s.pin,
+            return [{"name": n, "device": s.device, "model": s.model, "can": list(s.can), "pin": s.pin, "direct": s.direct,
                      "online": now - s.at <= self.online_seconds} for n, s in sorted(self._seen.items())]
 
     # the job side ----------------------------------------------------------------------------------------------------
@@ -182,14 +210,15 @@ class WorkerHub:
         return self._add(Task(uuid.uuid4().hex, job_id, "transcribe", {"audio": audio}, {"language": language}, self._clock(),
                               language=language))
 
-    def submit_render(self, job_id: str, files: dict[str, Path], meta: dict, upload_dir: Path, max_seconds: float = 3600.0) -> Task:
+    def submit_render(self, job_id: str, files: dict[str, Path], meta: dict, upload_dir: Path, max_seconds: float = 3600.0,
+                      direct: bool = False) -> Task:
         """A render task. ``files`` maps manifest names to server paths; the names are checked here so a bad one never reaches a worker."""
         for name in files:
             if not _clean_name(name):
                 raise WorkerError("a file in this render has a name the worker protocol does not allow")
         upload_dir.mkdir(parents=True, exist_ok=True)
         return self._add(Task(uuid.uuid4().hex, job_id, "render", dict(files), dict(meta), self._clock(),
-                              max_seconds=max_seconds, upload_dir=upload_dir))
+                              max_seconds=max_seconds, upload_dir=upload_dir, direct=direct))
 
     def wait(self, task: Task, check: Callable[[], None], tick: float = 0.25) -> dict:
         """Block until the worker finishes the task. ``check`` raises when the job was cancelled. Raises ``WorkerUnavailable`` when
@@ -207,7 +236,7 @@ class WorkerHub:
                     if task.state == "pending":
                         if now - task.created > self.pickup_seconds:
                             raise WorkerUnavailable("no GPU worker picked the task up in time")
-                        if not self._online(task.kind):
+                        if not self._online(task.kind, task.direct):
                             raise WorkerUnavailable("the GPU worker went offline")
                     elif task.state == "leased":
                         if now > task.lease_until:
@@ -222,15 +251,16 @@ class WorkerHub:
                 self._tasks.pop(task.id, None)
 
     # the worker side -------------------------------------------------------------------------------------------------
-    def poll(self, name: str, wait: float, device: str = "", model: str = "", can: tuple = ("transcribe",), pin: str = "") -> Optional[Task]:
+    def poll(self, name: str, wait: float, device: str = "", model: str = "", can: tuple = ("transcribe",), pin: str = "",
+             direct: bool = False) -> Optional[Task]:
         """Hand the worker a pending task it can do (leased to it), holding the request open up to ``wait`` seconds."""
         end = self._clock() + wait
         with self._cond:
-            self._touch(name, device, model, tuple(can), pin)
+            self._touch(name, device, model, tuple(can), pin, bool(direct))
             while True:
                 me = self._seen[name]
                 for t in self._tasks.values():
-                    if t.state == "pending" and self._eligible(me, t.kind):
+                    if t.state == "pending" and self._eligible(me, t.kind, t.direct):
                         t.state, t.worker = "leased", name
                         t.leased_at = self._clock()
                         t.lease_until = t.leased_at + self.lease_seconds
@@ -278,6 +308,99 @@ class WorkerHub:
                 return False
             t.uploads[name] = path
             return True
+
+    # a finished clip sent straight to the bucket -------------------------------------------------------------------------
+    # The MP4 would otherwise come back through the app's own domain, and the proxy in front of it refuses a request of about 100 MB.
+    # The worker gets presigned part URLs for ONE object that belongs to its task (``worker/<task id>.mp4``, an allow-listed name),
+    # puts the parts there, and says so; this server completes the upload, checks the size, copies the object next to the other
+    # uploads, deletes it from the bucket and probes it like any other worker clip. The worker never holds a storage key.
+    def direct_plan(self, task_id: str, worker: str, size: int) -> Optional[dict]:
+        """Presigned part URLs for the clip, or None when there is no bucket. ``WorkerError`` when the task is not this worker's."""
+        from .storage import StorageError
+        st = self.storage
+        if st is None:
+            return None
+        with self._cond:
+            t = self._leased(task_id, worker)
+            if t is None or t.kind != "render" or t.plan is not None:
+                raise WorkerError("this task cannot take an upload now")
+            if not (1024 <= size <= self.max_direct_bytes):
+                raise WorkerError("that clip is not a size this server accepts")
+            t.plan = {}                                         # claimed: a second request is refused while the URLs are being made
+            self._touch(worker)
+            job_id = t.job_id
+        rel = f"worker/{task_id}.mp4"
+        count = -(-size // DIRECT_PART)
+        part = DIRECT_PART if count > 1 else size
+        upload_id = None
+        try:
+            upload_id = st.create_multipart(job_id, rel)
+            parts = [{"n": n, "length": part if n < count else size - part * (count - 1),
+                      "url": st.presign_part(job_id, rel, upload_id, n, part if n < count else size - part * (count - 1))}
+                     for n in range(1, count + 1)]
+        except (StorageError, ValueError):
+            if upload_id:
+                self._abort(job_id, rel, upload_id)
+            with self._cond:
+                t.plan = None
+            raise WorkerError("the file storage could not be reached") from None
+        with self._cond:
+            t.plan = {"id": upload_id, "rel": rel, "size": size, "count": count}
+        return {"part_size": part, "parts": parts}
+
+    def _abort(self, job_id: str, rel: str, upload_id: str) -> None:
+        from .storage import StorageError
+        try:
+            self.storage.abort_multipart(job_id, rel, upload_id)
+        except (StorageError, ValueError):
+            pass                                                # the expiry sweep and the job's purge remove what is left
+
+    def direct_finish(self, task_id: str, worker: str, parts: list[tuple[int, str]]) -> bool:
+        """Put the parts together, check the size and bring the clip to the server's disk. False = refused (the worker reports a failure
+        and the server renders the clip itself)."""
+        from .storage import StorageError
+        st = self.storage
+        with self._cond:
+            t = self._leased(task_id, worker)
+            plan = dict(t.plan) if t and t.plan else None
+            if st is None or t is None or not plan or not plan.get("id") or t.direct_used or t.upload_dir is None:
+                return False
+            self._touch(worker)
+            job_id, upload_dir = t.job_id, t.upload_dir
+        if sorted(n for n, _e in parts) != list(range(1, plan["count"] + 1)):
+            self._abort(job_id, plan["rel"], plan["id"])
+            return False
+        dest = upload_dir / "clip.mp4"
+        try:
+            st.complete_multipart(job_id, plan["rel"], plan["id"], parts)
+            if st.size(job_id, plan["rel"]) != plan["size"]:
+                return False                                    # not the size that was announced
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            st.get_file(job_id, plan["rel"], dest)
+        except (StorageError, ValueError, OSError):
+            return False
+        finally:
+            try:
+                st.delete(job_id, plan["rel"])
+            except (StorageError, ValueError):
+                pass
+        if not self.commit_upload(task_id, worker, "clip.mp4", dest):
+            dest.unlink(missing_ok=True)
+            return False
+        with self._cond:
+            t.direct_used = True
+        return True
+
+    def discard_direct(self, task: Task) -> None:
+        """Whatever the task left in the bucket (an unfinished upload, an object) goes, whichever way the render ended."""
+        plan = task.plan
+        if not plan or not plan.get("id") or self.storage is None:
+            return
+        self._abort(task.job_id, plan["rel"], plan["id"])
+        try:
+            self.storage.delete(task.job_id, plan["rel"])
+        except Exception:                                       # noqa: BLE001  (a purge of the job's prefix removes it later)
+            pass
 
     def heartbeat(self, task_id: str, name: str) -> bool:
         """Extend the lease. False means the task is no longer this worker's: stop working on it."""
@@ -398,7 +521,7 @@ class RemoteRenderer:
     say: Callable[[str], None] = lambda _m: None
     fallback: Optional[Callable] = None
     max_seconds: float = 3600.0
-    max_clip_seconds: float = 60.0          # longer clips are rendered here: the MP4 comes back through a proxy that caps a request near 100 MB (0 = no limit)
+    max_clip_seconds: float = 60.0          # longer clips go only to a worker that can send them straight to the bucket; without one they are rendered here (0 = no limit)
 
     def _local(self, *args, **kw):
         fn = self.fallback
@@ -413,17 +536,19 @@ class RemoteRenderer:
         clip = next((c for c in edl.clips if c.id == clip_id), None)
         if clip is None or not self.hub.online("render"):
             return local()                                          # nothing out there (or a bad clip id: the real renderer says so)
-        if self.max_clip_seconds and clip.duration > self.max_clip_seconds:
+        long = bool(self.max_clip_seconds) and clip.duration > self.max_clip_seconds
+        if long and not self.hub.online("render", direct=True):            # the MP4 would have to come back through the proxy that caps a request near 100 MB
             self.say(f"{clip_id}: this clip is long, so it is rendered on the server")
             return local()
         taskdir = Path(workdir) / "worker-tasks" / uuid.uuid4().hex
+        task = None
         try:
             files, meta = self._bundle(edl, clip, taskdir, media_root, asset_root)
             self.say(f"{clip_id}: rendering on the GPU worker")
-            task = self.hub.submit_render(edl.job_id, files, meta, taskdir / "in", self.max_seconds)
+            task = self.hub.submit_render(edl.job_id, files, meta, taskdir / "in", self.max_seconds, direct=long)
             result = self.hub.wait(task, self.check)
             produced = task.uploads["clip.mp4"]
-            validate_clip(produced, edl, clip, max_bytes=self.hub.max_upload_bytes)
+            validate_clip(produced, edl, clip, max_bytes=self.hub.max_direct_bytes if task.direct_used else self.hub.max_upload_bytes)
             warnings = self._place(produced, Path(output), edl, clip, [str(w)[:300] for w in result.get("warnings", [])][:20])
             self.say(f"{clip_id}: the GPU worker rendered it")
             return Path(output), SimpleNamespace(warnings=warnings)
@@ -432,6 +557,8 @@ class RemoteRenderer:
         except (OSError, ValueError, KeyError, TypeError):             # never put a server path in a job's log
             reason = "an internal problem"
         finally:
+            if task is not None:
+                self.hub.discard_direct(task)
             shutil.rmtree(taskdir, ignore_errors=True)
         self.say(f"{clip_id}: the GPU worker did not deliver ({reason}); rendering on the server instead")
         return local()

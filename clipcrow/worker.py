@@ -41,6 +41,10 @@ class Transport:
     def upload(self, path: str, src: Path, *, timeout: float = 900.0) -> None:
         raise NotImplementedError
 
+    def put_part(self, url: str, src: Path, offset: int, length: int, *, timeout: float = 900.0) -> str:
+        """PUT ``length`` bytes of ``src`` from ``offset`` to a presigned URL of the bucket; returns the part's ETag."""
+        raise NotImplementedError
+
 
 class HttpTransport(Transport):
     def __init__(self, base: str, token: str):
@@ -86,10 +90,77 @@ class HttpTransport(Transport):
             raise WorkerHttpError(e.code, f"{e.code} from the server") from None
 
 
+    def put_part(self, url, src, offset, length, *, timeout=900.0):
+        """A presigned URL carries its own signature: the worker token must NOT be sent there (it is another host)."""
+        if not url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
+            raise ValueError("the storage address is not https")
+        try:
+            with open(src, "rb") as f:
+                f.seek(offset)
+                req = urllib.request.Request(url, data=_Slice(f, length), method="PUT")
+                req.add_header("Content-Type", "application/octet-stream")
+                req.add_header("Content-Length", str(length))
+                req.add_header("User-Agent", "clipcrow-worker")
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    r.read()
+                    etag = r.headers.get("ETag", "")
+        except urllib.error.HTTPError as e:
+            raise WorkerHttpError(e.code, f"{e.code} from the file storage") from None
+        if not etag:
+            raise WorkerHttpError(0, "the file storage did not confirm the part")
+        return etag
+
+
+class _Slice:
+    """A read-only view of the next ``length`` bytes of an open file, so a part streams from disk and is never held in memory."""
+
+    def __init__(self, f, length: int):
+        self._f, self._left = f, length
+
+    def read(self, n: int = -1) -> bytes:
+        n = self._left if n is None or n < 0 else min(n, self._left)
+        data = self._f.read(n)
+        self._left -= len(data)
+        return data
+
+
 class WorkerHttpError(RuntimeError):
     def __init__(self, status: int, message: str):
         super().__init__(message)
         self.status = status
+
+
+PART_TRIES = 3
+
+
+def send_clip(transport: Transport, name: str, tid: str, mp4: Path, log: Callable[[str], None] = lambda _m: None) -> None:
+    """Hand the finished clip to the server. Preferred: straight to the bucket in parts (no proxy size limit); the server answers 404 when
+    it has no bucket, and then (or when an older server does not know the route) the clip goes through the server as before."""
+    size = mp4.stat().st_size
+    try:
+        plan = transport.post(f"/api/worker/tasks/{tid}/direct-upload", {"worker": name, "size": size}, timeout=60)
+    except WorkerHttpError as e:
+        if e.status in (404, 405, 422):
+            plan = None
+        else:
+            raise
+    if not plan:
+        transport.upload(f"/api/worker/tasks/{tid}/uploads/clip.mp4?worker={name}", mp4)
+        return
+    log(f"task {tid[:8]}: sending {size / 1e6:.0f} MB straight to the file storage")
+    done, offset = [], 0
+    for part in plan["parts"]:
+        length = int(part["length"])
+        for attempt in range(PART_TRIES):
+            try:
+                done.append({"n": int(part["n"]), "etag": transport.put_part(part["url"], mp4, offset, length)})
+                break
+            except (WorkerHttpError, urllib.error.URLError, OSError, TimeoutError):
+                if attempt == PART_TRIES - 1:
+                    raise
+                time.sleep(2 * (attempt + 1))
+        offset += length
+    transport.post(f"/api/worker/tasks/{tid}/direct-done", {"worker": name, "parts": done}, timeout=300)
 
 
 def default_transcribe(model: str) -> tuple[Callable, str]:
@@ -164,7 +235,7 @@ def run_worker(transport: Transport, name: str, *, model: str = "large-v3", tran
     while not stop() and (max_tasks is None or done < max_tasks):
         try:
             reply = transport.post("/api/worker/poll", {"worker": name, "wait": poll_wait, "device": label[:60], "model": model[:40],
-                                                         "can": can, "pin": pin}, timeout=poll_wait + 20)
+                                                         "can": can, "pin": pin, "direct": True}, timeout=poll_wait + 20)
             failures = 0
         except WorkerHttpError as e:
             if e.status in (401, 404):
@@ -294,7 +365,7 @@ def handle_render(transport: Transport, name: str, task: dict, log: Callable[[st
             if lease.lost.is_set():
                 log(f"task {tid[:8]}: the server no longer wants this clip; dropped")
                 return False
-            transport.upload(f"/api/worker/tasks/{tid}/uploads/clip.mp4?worker={name}", Path(mp4))
+            send_clip(transport, name, tid, Path(mp4), log)
         except Exception as e:
             _report_failure(transport, name, tid, e, log)
             return False

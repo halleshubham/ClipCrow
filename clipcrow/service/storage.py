@@ -27,7 +27,7 @@ from .jobs import JOB_ID
 
 log = logging.getLogger("clipcrow.service")
 
-REL = re.compile(r"^(out/(c\d{1,3}\.mp4(\.ai\.json)?|c\d{1,3}\.cover\.png|edl\.json|plan-report\.json|transcript\.json)|source\.[a-z0-9]{2,5})\Z")
+REL = re.compile(r"^(out/(c\d{1,3}\.mp4(\.ai\.json)?|c\d{1,3}\.cover\.png|edl\.json|plan-report\.json|transcript\.json)|source\.[a-z0-9]{2,5}|worker/[0-9a-f]{32}\.mp4)\Z")
 PREFIX = re.compile(r"^[A-Za-z0-9._/-]{0,60}\Z")
 CONTENT_TYPES = {".mp4": "video/mp4", ".json": "application/json", ".mov": "video/quicktime", ".mkv": "video/x-matroska",
                  ".webm": "video/webm", ".png": "image/png", ".m4v": "video/x-m4v"}
