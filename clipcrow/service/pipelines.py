@@ -97,7 +97,7 @@ class RealPipeline:
             from .workers import RemoteRenderer
             render_fn = RemoteRenderer(self.hub, check=hooks.check, say=say)
         return make(video, out, language=job.params.language, llm=AnthropicLLM(), opts=planner_options(job),
-                    hooks=hooks, say=say, multi=job.params.multi, transcribe_fn=transcribe_fn, render_fn=render_fn,
+                    hooks=hooks, say=say, multi=job.params.multi, graphics=job.params.graphics, transcribe_fn=transcribe_fn, render_fn=render_fn,
                     images=self._images() if job.params.ai_images else None,
                     gsap_js=os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"),
                     refine_text=os.environ.get("CLIPCROW_TEXT_REFINE", "1") != "0")      # 0 = keep Whisper's Marathi/Hindi words as they are

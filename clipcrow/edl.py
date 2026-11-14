@@ -138,6 +138,19 @@ class SplitPoint(_Model):
     cy: float = Field(ge=0, le=1)
 
 
+class FitSpan(_Model):
+    """A stretch of clip time where the WHOLE source frame is shown (fitted to the width over a blurred copy) instead of the tracked crop: a slide,
+    a title card or other on-screen graphics that a vertical crop would cut in half. Both ends are hard cuts."""
+    t0: float = Field(ge=0)
+    t1: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _ordered(self):
+        if self.t1 <= self.t0:
+            raise ValueError("a fit span must end after it starts")
+        return self
+
+
 class PunchIn(_Model):
     """A slow push-in on the footage (and the cutout and the text behind it, together) that snaps back at the end.
     ``t`` is clip time. ``anchor_y`` is where the push aims, as a fraction of the frame height (a face sits near 0.4)."""
@@ -165,9 +178,15 @@ class Layout(_Model):
     reframe: list[Keyframe] = Field(default_factory=list, max_length=4000)
     split: list[SplitPoint] = Field(default_factory=list, max_length=2)
     punch_ins: list[PunchIn] = Field(default_factory=list, max_length=12)
+    # ``track`` only: stretches shown whole (see FitSpan), in time order, not overlapping.
+    fit_spans: list[FitSpan] = Field(default_factory=list, max_length=40)
 
     @model_validator(mode="after")
     def _framing(self):
+        if self.fit_spans and self.framing != "track":
+            raise ValueError("fit_spans belong to framing 'track'")
+        if any(b.t0 < a.t1 for a, b in zip(self.fit_spans, self.fit_spans[1:])):
+            raise ValueError("fit_spans must be in time order and must not overlap")
         if self.framing == "track" and not self.reframe:
             raise ValueError("framing 'track' needs reframe keyframes")
         if any(b.t < a.t + a.duration for a, b in zip(self.punch_ins, self.punch_ins[1:])):

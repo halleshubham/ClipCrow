@@ -354,7 +354,7 @@ class JobRunner:
                 with self._edit_lock:
                     edl = load_edl(self.store.edl_path(job_id))
                 sub = edl.model_copy(update={"clips": [c for c in edl.clips if c.id == clip_id]})
-                planned = apply_framing(sub, str(video), multi=replan).clips[0]
+                planned = apply_framing(sub, str(video), multi=replan, graphics=job.params.graphics).clips[0]
                 with self._edit_lock:                            # merge into the CURRENT plan: another edit may have landed
                     edl = load_edl(self.store.edl_path(job_id))
                     clips = []

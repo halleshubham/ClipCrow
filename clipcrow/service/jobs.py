@@ -47,6 +47,7 @@ class Params(_M):
     links: list[str] = Field(default_factory=list, max_length=6)
     ai_images: bool = False
     multi: Literal["switch", "split", "off"] = "switch"
+    graphics: bool = False                  # the source cuts to slides, cards or b-roll: show those whole instead of cropping them
     cover: bool = False                     # a bold title for the first ~250 ms (and a cover PNG)
     logo: bool = False                      # the account's logo in a corner
     outro: bool = False                     # the account's ending video after each clip

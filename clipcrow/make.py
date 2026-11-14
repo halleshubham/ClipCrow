@@ -56,7 +56,7 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
          detector=None, render: bool = True, gsap_js: str | Path | None = None, workers: int | None = None,
          transcribe_fn: Callable | None = None, render_fn: Callable | None = None,
          say: Callable[[str], None] = lambda _m: None, hooks: Hooks | None = None,
-         multi: str = "switch", images=None, capture_fn=None,
+         multi: str = "switch", graphics: bool = False, images=None, capture_fn=None,
          brand: BrandKit | None = None, choice: BrandingChoice | None = None, refine_text: bool = True) -> MakeResult:
     video, out = Path(video), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -131,7 +131,7 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
         hk.stage("assets", "skipped", "no pictures requested")
     hk.check()
     hk.stage("frame", "running", "")
-    edl = apply_framing(edl, str(video), detector=detector, say=say, multi=multi)
+    edl = apply_framing(edl, str(video), detector=detector, say=say, multi=multi, graphics=graphics)
     hk.stage("frame", "done", ", ".join(f"{c.id}: {c.layout.framing}" for c in edl.clips))
     if choice is not None and choice.any():
         edl = apply_brand(edl, brand or BrandKit(), choice, out)

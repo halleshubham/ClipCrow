@@ -552,7 +552,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                             spread=_opt_float(o.get("spread"), 0.5), speaker_name=str(o.get("speaker_name") or "").strip() or None,
                             speaker_title=str(o.get("speaker_title") or "").strip(), cutout=truthy(o.get("cutout")),
                             immersive=truthy(o.get("immersive")), explainer=truthy(o.get("explainer")), links=link_list,
-                            ai_images=want_images, multi=o.get("multi") or "switch",
+                            ai_images=want_images, multi=o.get("multi") or "switch", graphics=truthy(o.get("graphics")),
                             cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), outro=truthy(o.get("outro")))
         except (ValidationError, ValueError, TypeError) as e:
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
@@ -718,7 +718,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          min_clip: Optional[str] = Form(None), max_clip: Optional[str] = Form(None),
                          spread: Optional[str] = Form(None), speaker_name: Optional[str] = Form(None),
                          speaker_title: Optional[str] = Form(""), cutout: Optional[str] = Form(None),
-                         multi: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
+                         multi: Optional[str] = Form(None), graphics: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
                          explainer: Optional[str] = Form(None), links: Optional[str] = Form(None),
                          ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
                          logo: Optional[str] = Form(None), outro: Optional[str] = Form(None),
@@ -729,7 +729,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if declared > limit + 1_000_000:
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
-                                   speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi,
+                                   speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics,
                                    immersive=immersive, explainer=explainer, links=links, ai_images=ai_images, cover=cover, logo=logo, outro=outro,
                                    style=style),
                               brand_owner(request))

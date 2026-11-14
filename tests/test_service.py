@@ -413,3 +413,16 @@ def test_ui_files_are_revalidated_so_a_deploy_never_leaves_old_javascript(tmp_pa
         assert r.headers.get("etag")
     assert c.get("/app.js", headers={"If-None-Match": c.get("/app.js").headers["etag"]}).status_code == 304
     assert c.get("/api/config").headers["cache-control"] == "no-store"
+
+
+def test_the_graphics_option_is_kept_on_the_job_and_reaches_the_pipeline(tmp_path, video_bytes):
+    seen = []
+
+    class Spy(FakePipeline):
+        def run(self, job, video, out, hooks, say):
+            seen.append(job.params.graphics)
+            return super().run(job, video, out, hooks, say)
+    c, _ = client(tmp_path, Spy())
+    on = wait(c, upload(c, video_bytes, graphics="true").json()["id"])
+    off = wait(c, upload(c, video_bytes).json()["id"])
+    assert on["params"]["graphics"] is True and off["params"]["graphics"] is False and seen == [True, False]

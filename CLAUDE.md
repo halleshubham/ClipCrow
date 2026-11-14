@@ -44,6 +44,12 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   batch: only ids and text go to the model, word TIMES stay ours (1:1 keeps them, otherwise spread in proportion), an answer that no longer looks
   like the sentence is dropped, a failure keeps the raw words, and the original is saved as `transcript.raw.json`. It runs only for a transcript the
   ASR made (never a supplied one); `CLIPCROW_TEXT_REFINE=0` turns it off. `clipcrow compare-asr` runs old and new side by side on one stretch.
+- Slides and graphics (`graphics.py`, the "Video has slides, cards or graphics" option, `Params.graphics`, `make --graphics`): an explainer source cuts away
+  from the speaker to cards, charts and pictures that a 9:16 crop cuts in half. Nothing is learned or asked of a model: sampled frames are grouped into
+  shots by a tiny thumbnail, the speaker's shot is the biggest one with a MOVING face, and a shot that is neither it nor another live camera (no face, or
+  a face that never moves: a portrait on a slide) is shown whole as `Layout.fit_spans` (`track` only, ordered, hard cuts at both ends, shorter than
+  `MIN_SPAN` dropped). The camera ignores faces inside a span, coverage is counted over the non-graphic samples, and a push-in never overlaps a span.
+  It is opt-in (default off): without it the pipeline is unchanged. The thresholds are heuristics, tuned on synthetic video: look at a real result.
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
 

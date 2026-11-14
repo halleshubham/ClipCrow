@@ -25,6 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
+from .graphics import graphic_spans, thumbnail
+
 OUT_ASPECT = 9 / 16
 SAMPLE_RATE = 5.0          # detections per second
 KEY_RATE = 10.0            # camera keyframes per second
@@ -55,6 +57,7 @@ class Sample:
     t: float                       # seconds from the start of the clip
     boxes: list[Box] = field(default_factory=list)
     patches: list = field(default_factory=list)   # a small grey mouth-region patch per box (when asked for)
+    thumb: object = None                          # a tiny colour thumbnail of the frame (when asked for: finds slides and graphics)
 
 
 @dataclass
@@ -64,6 +67,7 @@ class Framing:
     coverage: float = 0.0
     split: list[tuple[float, float]] = field(default_factory=list)       # two (cx, cy) fractions for "split"
     people: int = 1
+    fit_spans: list[tuple[float, float]] = field(default_factory=list)   # "track" only: stretches shown whole (a slide the crop would cut)
 
 
 class FaceDetector(Protocol):
@@ -130,7 +134,7 @@ def mouth_patch(frame_bgr, box: Box):
 
 
 def sample_faces(video: str, start: float, end: float, detector: FaceDetector, *,
-                 rate: float = SAMPLE_RATE, patches: bool = False) -> list[Sample]:
+                 rate: float = SAMPLE_RATE, patches: bool = False, thumbs: bool = False) -> list[Sample]:
     import cv2
     cap = cv2.VideoCapture(str(video))
     out: list[Sample] = []
@@ -143,7 +147,7 @@ def sample_faces(video: str, start: float, end: float, detector: FaceDetector, *
             if not ok:
                 continue
             boxes = detector.detect(frame)
-            out.append(Sample(t, boxes, [mouth_patch(frame, b) for b in boxes] if patches else []))
+            out.append(Sample(t, boxes, [mouth_patch(frame, b) for b in boxes] if patches else [], thumbnail(frame) if thumbs else None))
     finally:
         cap.release()
     return out
@@ -323,25 +327,35 @@ def smooth_path(subject: list[tuple[float, Optional[float]]], duration: float, c
 
 def plan_framing(video: str, start: float, end: float, *, detector: FaceDetector | None = None,
                  out_aspect: float = OUT_ASPECT, min_coverage: float = MIN_COVERAGE,
-                 multi: str = "switch") -> Framing:
+                 multi: str = "switch", graphics: bool = False) -> Framing:
     """``multi``: what to do when two or more people are on screen: "switch" (cut to whoever talks),
-    "split" (stack two people) or "off" (follow the main face only, as before)."""
+    "split" (stack two people) or "off" (follow the main face only, as before).
+    ``graphics``: the source has slides, cards or b-roll between shots of the speaker. Those stretches are found (``graphics.graphic_spans``)
+    and shown whole; the camera ignores faces on them (a portrait on a slide is not a speaker)."""
     src_w, src_h = probe_size(video)
     if src_w / src_h <= out_aspect * 1.05:               # already vertical (or nearly): a centre crop is right
         return Framing("cover")
-    samples = sample_faces(video, start, end, detector or HaarDetector(), patches=multi != "off")
+    samples = sample_faces(video, start, end, detector or HaarDetector(), patches=multi != "off", thumbs=graphics)
+    spans = graphic_spans(samples, end - start, src_w, src_h) if graphics else []
+    if spans:
+        if sum(b - a for a, b in spans) >= 0.9 * (end - start):
+            return Framing("fit_blur", coverage=0.0)             # it is all graphics: nothing to track
+        samples = [Sample(s.t, [], [], s.thumb) if any(a <= s.t < b for a, b in spans) else s for s in samples]
     crop_frac = (src_h * out_aspect) / src_w
     people = speaker_tracks(samples, src_w, src_h) if multi != "off" else []
     if len(people) >= 2:
         f = _plan_people(people, samples, end - start, crop_frac, src_w, src_h, multi)
         if f:
+            if f.framing == "track":
+                f.fit_spans = spans
             return f
     subject = pick_subject(samples, src_w, src_h)
-    coverage = sum(1 for _, c in subject if c is not None) / max(1, len(subject))
+    live = max(1, sum(1 for s in samples if not any(a <= s.t < b for a, b in spans)))    # graphics are not "no face found"
+    coverage = sum(1 for _, c in subject if c is not None) / live
     if coverage < min_coverage:
         return Framing("fit_blur", coverage=coverage)    # no face to follow: show the whole frame
     path = smooth_path(subject, end - start, crop_frac)
-    return Framing("track", [(round(t, 3), round(cx, 4)) for t, cx in path], coverage)
+    return Framing("track", [(round(t, 3), round(cx, 4)) for t, cx in path], coverage, fit_spans=spans)
 
 
 def _plan_people(people: list[dict], samples: list[Sample], duration: float, crop_frac: float,

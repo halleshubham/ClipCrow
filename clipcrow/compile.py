@@ -63,12 +63,13 @@ def _even(n: float) -> int:
 
 def prepare_footage(src: Path, start: float, duration: float, fps: int, width: int, height: int, dest: Path,
                     *, framing: str = "cover", keyframes=(), src_size: tuple[int, int] | None = None,
-                    split=()) -> None:
+                    split=(), fit_spans=()) -> None:
     """Cut the clip window out of the source at render size, a keyframe every second (HyperFrames freezes
     on seek when keyframes are further apart), fitted to the canvas by ``framing``:
 
       cover     scale to fill and centre-crop
-      track     crop a 9:16 window whose x follows ``keyframes`` (clip time, cx fraction of source width)
+      track     crop a 9:16 window whose x follows ``keyframes`` (clip time, cx fraction of source width); during each of
+                ``fit_spans`` ((t0, t1) in clip time) the whole frame is shown instead, fitted to the width over a blurred copy
       fit_blur  whole frame fitted to the width over a blurred copy of itself
       split     two people stacked: each half is a crop of the source centred on that person (``split`` is
                 two ``(cx, cy)`` fractions of the source), scaled to half the canvas height
@@ -88,7 +89,15 @@ def prepare_footage(src: Path, start: float, duration: float, fps: int, width: i
         cwd = dest.parent                                    # relative name: no path escaping in the filtergraph
         vf = (f"sendcmd=f=framing.cmd,crop@c=w={cw}:h={sh}:x={xs[0][1]:.0f}:y=0,"
               f"scale={width}:{height}:flags=lanczos,fps={fps}")
-        cmd += ["-vf", vf, *enc, str(dest)]
+        if fit_spans:
+            when = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in fit_spans)
+            fc = (f"[0:v]split=3[a][b][c];[a]{vf}[tracked];"
+                  f"[b]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},boxblur=40:6[bg];"
+                  f"[c]scale={width}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,fps={fps}[whole];"
+                  f"[tracked][whole]overlay=enable='{when}':eof_action=pass[v]")
+            cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "0:a?", *enc, str(dest)]
+        else:
+            cmd += ["-vf", vf, *enc, str(dest)]
     elif framing == "split" and len(split) == 2 and src_size:
         sw, sh = src_size
         half = height // 2
@@ -527,7 +536,8 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
                         framing=clip.layout.framing,
                         keyframes=[(k.t, k.cx) for k in clip.layout.reframe],
                         src_size=(edl.source.width, edl.source.height),
-                        split=[(p.cx, p.cy) for p in clip.layout.split])
+                        split=[(p.cx, p.cy) for p in clip.layout.split],
+                        fit_spans=[(f.t0, f.t1) for f in clip.layout.fit_spans])
         if cutout:
             dest = project / "assets" / "cutout.webm"
             if clip.layout.cutout_uri:

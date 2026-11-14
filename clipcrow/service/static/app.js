@@ -374,7 +374,7 @@ async function newJobView() {
     const options = {
       style: $('style').value,
       language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
-      multi: $('multi').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
+      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', links: $('links').value, ai_images: $('ai_images').checked ? 'true' : '',
       cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '',
@@ -453,6 +453,9 @@ async function newJobView() {
       el('label', { class: brand.outro ? 'check' : 'check muted', for: 'outro' }, el('input', { type: 'checkbox', id: 'outro', disabled: !brand.outro, checked: brand.outro && !!brand.settings.default_outro }),
         el('span', {}, el('strong', { text: 'Ending video after each clip' }), el('br'),
           el('span', { class: 'muted' }, brand.outro ? `Your branding video (${brand.outro_seconds} s), added at the end.` : ['No ending video yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
+      el('label', { class: 'check', for: 'graphics' }, el('input', { type: 'checkbox', id: 'graphics' }),
+        el('span', {}, el('strong', { text: 'Video has slides, cards or graphics' }), el('br'),
+          el('span', { class: 'muted', text: 'For explainers that cut away from the speaker to text cards, charts or pictures. Those moments are shown whole instead of cropped to the middle, so the text is not cut off. Moments with the speaker are still framed on their face.' }))),
       el('label', { class: 'check', for: 'immersive' }, el('input', { type: 'checkbox', id: 'immersive' }),
         el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
           el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back. Suits a person talking to camera.' })))))),
