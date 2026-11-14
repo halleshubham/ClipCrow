@@ -281,21 +281,21 @@ def test_make_without_the_option_leaves_the_video_alone(tmp_path, long_video):
 
 @ffmpeg
 def test_an_ffmpeg_that_renamed_the_filter_file_option_is_retried_with_the_new_name(tmp_path, raw_video, monkeypatch):
-    """ffmpeg 7 replaced -filter_complex_script with -/filter_complex; CI has the newer one, a laptop the older."""
+    """ffmpeg 7 replaced -filter_complex_script with -/filter_complex; CI has the newer one, a laptop the older. Both spellings are tried, in that order."""
     calls = []
-    real = cc._run
 
     def fake(cmd, check, label):
-        calls.append([str(c) for c in cmd])
-        if "-filter_complex_script" in [str(c) for c in cmd]:
+        cmd = [str(c) for c in cmd]
+        calls.append(cmd)
+        if "-filter_complex_script" in cmd:
             raise ValueError("ffmpeg could not cut the video: Unrecognized option 'filter_complex_script'.")
-        return real([c for c in cmd], check, label) if False else real(_swap(cmd), check, label)
-
-    def _swap(cmd):                                    # run it for real on this (older) ffmpeg with the option it knows
-        out = [str(c) for c in cmd]
-        out[out.index("-/filter_complex")] = "-filter_complex_script"
-        return out
+        open(cmd[-1], "wb").write(b"cut")                 # the second spelling "works"
     monkeypatch.setattr(cc, "_run", fake)
-    info = cc.probe(str(raw_video))
-    cc.render_cleaned(raw_video, [(0, 60), (120, 200)], info, tmp_path / "c.mp4")
+    cc.render_cleaned(raw_video, [(0, 60), (120, 200)], cc.probe(str(raw_video)), tmp_path / "c.mp4")
     assert "-filter_complex_script" in calls[0] and "-/filter_complex" in calls[1] and (tmp_path / "c.mp4").is_file()
+
+    def other(cmd, check, label):
+        raise ValueError("ffmpeg could not cut the video: Invalid data found")
+    monkeypatch.setattr(cc, "_run", other)
+    with pytest.raises(ValueError, match="Invalid data"):                      # any other failure is NOT retried under another name
+        cc.render_cleaned(raw_video, [(0, 60)], cc.probe(str(raw_video)), tmp_path / "d.mp4")
