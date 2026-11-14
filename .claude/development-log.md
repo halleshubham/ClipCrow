@@ -5,7 +5,9 @@ The rules that came out of these are in `development-rules.md`; this file is the
 
 ## 2026-11-14
 - **Adoption of the OpenReel ideas, step 1: loudness.** Every finished reel is brought to -14 LUFS (`loudness.py`). Why: one real clip was -22 LUFS and another -14.6, so viewers would reach for the volume.
-  Not yet verified on a real render (tests use synthetic clips). Next on the list: ducking/SFX placed from the EDL's word times, platform length/size checks before posting, a closed set of transitions,
+  Not yet verified on a real render (tests use synthetic clips).
+- **Platform length/size checks: only YouTube Shorts (3 min, vertical) is noted on the Share page.** Searches for Instagram, TikTok, Facebook, X and LinkedIn limits returned third-party guides that
+  disagree widely (Instagram 3-20 min, TikTok 10-60 min, Facebook 90 s to no cap) and no official page, so a check there would be guesswork. Add one only from the platform's own help page, with its date. Next on the list: ducking/SFX placed from the EDL's word times, platform length/size checks before posting, a closed set of transitions,
   caption animation presets.
 - **Optional transcript check/edit** on the job page ("Check or fix the words"): sentences with times, the clips that use them, an "AI corrected" mark with what was first heard; saving re-renders only
   the affected clips. Why: Marathi recognition is still imperfect and captions show the words. A pre-cut review step (pause after recognition, before cleanup and planning) was NOT built: it needs a new job

@@ -1071,6 +1071,7 @@ async function brandView() {
 
 const STATUS_WORD = { queued: 'Waiting…', sent: 'Posted', scheduled: 'Scheduled', failed: 'Failed' };
 const PLATFORM_WORD = { youtube: 'YouTube', instagram: 'Instagram', 'instagram-standalone': 'Instagram', tiktok: 'TikTok', facebook: 'Facebook', x: 'X', linkedin: 'LinkedIn', 'linkedin-page': 'LinkedIn', telegram: 'Telegram' };
+const YT_SHORTS_SECONDS = 180;               // YouTube's help page: vertical videos up to 3 minutes are Shorts (checked 2026-11; other platforms' limits are not known reliably, so only this one is mentioned)
 const MAX_CHANNELS = 6;                      // the server accepts at most this many channels in one post
 
 async function shareView(jobId, clipId) {
@@ -1097,7 +1098,12 @@ async function shareView(jobId, clipId) {
     counter.textContent = `${n} of ${MAX_CHANNELS} chosen`;
     for (const b of boxes) b.box.disabled = !b.box.checked && n >= MAX_CHANNELS;
     const over = [...new Map(chosenBoxes().filter((b) => caption.value.length > b.ch.limit).map((b) => [b.ch.platform, b.ch])).values()];
-    capWarn.textContent = over.length ? `Too long for ${over.map((c) => `${PLATFORM_WORD[c.platform] || c.platform} (${c.limit})`).join(', ')}: the end is cut off there.` : '';
+    const notes = [];
+    if (over.length) notes.push(`Too long for ${over.map((c) => `${PLATFORM_WORD[c.platform] || c.platform} (${c.limit})`).join(', ')}: the end is cut off there.`);
+    if (clip.end - clip.start > YT_SHORTS_SECONDS && chosenBoxes().some((b) => b.ch.platform === 'youtube')) {
+      notes.push(`This clip is ${fmt(clip.end - clip.start)} long. YouTube only treats vertical videos up to 3 minutes as Shorts, so there it will be a regular video.`);
+    }
+    capWarn.textContent = notes.join(' ');
   }
   for (const b of boxes) b.box.addEventListener('change', onPick);
   caption.addEventListener('input', onPick);
