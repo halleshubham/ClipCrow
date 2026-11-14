@@ -304,3 +304,15 @@ def test_requests_carry_a_named_user_agent_because_cloudflare_refuses_urllibs(mo
     monkeypatch.setattr(publish.urllib.request, "urlopen", fake)
     assert publish.SocioBird("https://example.test/api", "k").channels() == []
     assert seen["ua"] == publish.USER_AGENT and "urllib" not in seen["ua"].lower() and seen["auth"] == "k"
+
+
+def test_an_answer_that_is_a_web_page_names_the_address_setting(monkeypatch):
+    import io
+    from clipcrow.service import publish
+
+    class R(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(publish.urllib.request, "urlopen", lambda req, timeout=0: R(b"<!DOCTYPE html><html></html>"))
+    with pytest.raises(publish.PublishError, match="SOCIOBIRD_API_URL"):
+        publish.SocioBird("https://example.test", "k").channels()

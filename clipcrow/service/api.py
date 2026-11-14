@@ -59,6 +59,11 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' 
        "connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 
 
+# A failure of something we call (SocioBird, the payment service, the bucket) is 424, never 502: Cloudflare, which sits in front of a
+# hosted server, replaces an origin's 502/504 with its own page, and the person would never see our message.
+UPSTREAM = 424
+
+
 class Login(BaseModel):
     token: str
 
@@ -254,7 +259,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             try:
                 storage.delete_job(job_id)
             except StorageError:
-                raise HTTPException(502, message)
+                raise HTTPException(UPSTREAM, message)
 
     def view(job: Job) -> dict:
         d = job.model_dump()
@@ -353,7 +358,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             try:
                 razorpay.cancel_subscription(user.subscription, at_cycle_end=False)
             except BillingError:
-                raise HTTPException(502, "Your subscription could not be cancelled just now, so the account was not deleted. "
+                raise HTTPException(UPSTREAM, "Your subscription could not be cancelled just now, so the account was not deleted. "
                                          "Try again in a minute.")
         for j in store.list():
             if j.owner == user.id:
@@ -380,7 +385,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         try:
             return [{"id": c.id, "name": c.name, "platform": c.platform} for c in sb.channels()]
         except PublishError as e:
-            raise HTTPException(502, str(e))
+            raise HTTPException(UPSTREAM, str(e))
 
     @app.get("/api/jobs/{job_id}/clips/{clip_id}/posts", dependencies=[Depends(authed)])
     def clip_posts(job_id: str, clip_id: str, request: Request) -> list[dict]:
@@ -401,7 +406,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 sig = signature(path)
                 store.update(job_id, lambda j: j.remote.__setitem__(f"out/{clip_id}.mp4", sig))
             except StorageError:
-                raise HTTPException(502, "The clip could not be fetched from storage just now. Try again in a minute.")
+                raise HTTPException(UPSTREAM, "The clip could not be fetched from storage just now. Try again in a minute.")
         if not path.is_file() or info.render in ("queued", "rendering"):
             raise HTTPException(409, "This clip is not ready yet.")
         from ..provenance import provenance
@@ -418,7 +423,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             when = validate_when(body.when)
             known = {c.id: c for c in sb.channels()}
         except PublishError as e:
-            raise HTTPException(422 if "date" in str(e) or "time" in str(e) or "year" in str(e) else 502, str(e))
+            raise HTTPException(422 if "date" in str(e) or "time" in str(e) or "year" in str(e) else UPSTREAM, str(e))
         chosen = []
         for cid in body.channels:
             if cid not in known:
@@ -486,7 +491,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         try:
             return {"url": rz.create_subscription(plan.razorpay_plan_id, user.id, plan.id)["url"]}
         except BillingError as e:
-            raise HTTPException(502, str(e))
+            raise HTTPException(UPSTREAM, str(e))
 
     @app.post("/api/billing/credits", dependencies=[Depends(authed)])
     def buy_credits(body: PackChoice, request: Request) -> dict:
@@ -497,7 +502,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         try:
             return {"url": rz.create_payment_link(pack.amount_paise, pack.label, user.id, pack.id)["url"]}
         except BillingError as e:
-            raise HTTPException(502, str(e))
+            raise HTTPException(UPSTREAM, str(e))
 
     @app.post("/api/billing/cancel", dependencies=[Depends(authed)])
     def cancel_subscription(request: Request) -> dict:
@@ -507,7 +512,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         try:
             rz.cancel_subscription(user.subscription, at_cycle_end=True)
         except BillingError as e:
-            raise HTTPException(502, str(e))
+            raise HTTPException(UPSTREAM, str(e))
         return {"ok": True, "note": "Your plan stays active until the end of the period you paid for."}
 
     @app.post("/api/billing/razorpay/webhook")
@@ -643,7 +648,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         try:
             s3id = sb.create_multipart(uid, rel)
         except StorageError as e:
-            raise HTTPException(502, str(e))
+            raise HTTPException(UPSTREAM, str(e))
         rec = Upload(id=uid, owner=owner, filename=Path(body.filename).name[:200], suffix=suffix, size=body.size,
                      part_size=part_size, parts=count, s3_upload_id=s3id, created_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"))
         uploads.save(rec)
@@ -654,7 +659,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 parts.append({"n": n, "length": length, "url": sb.presign_part(uid, rel, s3id, n, length)})
         except StorageError as e:
             abandon(rec, finished=False)
-            raise HTTPException(502, str(e))
+            raise HTTPException(UPSTREAM, str(e))
         return {"id": uid, "part_size": part_size, "parts": parts, "expires_in": 3600}
 
     @app.delete("/api/uploads/{upload_id}", dependencies=[Depends(authed)], status_code=204)
@@ -680,7 +685,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         try:
             size = await asyncio.to_thread(sb.size, rec.id, rec.rel)
         except StorageError as e:
-            raise HTTPException(502, str(e))
+            raise HTTPException(UPSTREAM, str(e))
         if size != rec.size:
             abandon(rec, finished=True)
             raise HTTPException(422, "The uploaded file is not the size that was announced. Start it again.")
@@ -820,7 +825,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
             except StorageError:
                 if not local:
-                    raise HTTPException(502, "The clip could not be fetched from storage just now. Try again in a minute.")
+                    raise HTTPException(UPSTREAM, "The clip could not be fetched from storage just now. Try again in a minute.")
         if not local:
             raise HTTPException(404, "This clip is not ready yet.")
         return FileResponse(path, media_type="video/mp4", filename=name if download else None)

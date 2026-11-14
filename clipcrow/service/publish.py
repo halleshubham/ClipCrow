@@ -110,7 +110,9 @@ class SocioBird:
                 return json.loads(r.read(5_000_000) or b"{}")
         except urllib.error.HTTPError as e:
             raise PublishError(f"SocioBird refused the request ({e.code}).") from None
-        except (urllib.error.URLError, TimeoutError, ValueError):
+        except ValueError:                                                      # it answered, but not with JSON: usually the web page, not the API
+            raise PublishError("SocioBird did not answer like its API. Check SOCIOBIRD_API_URL: it should end in /api.") from None
+        except (urllib.error.URLError, TimeoutError):
             raise PublishError("SocioBird could not be reached.") from None
 
     # --- calls --------------------------------------------------------------------------------------

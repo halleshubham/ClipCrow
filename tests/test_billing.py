@@ -244,7 +244,7 @@ def test_payment_service_errors_are_a_502_with_a_plain_message(tmp_path):
     c = TestClient(create_app(tmp_path / "d", FakePipeline(), accounts=a, catalog=catalog(), razorpay=rz))
     c.post("/api/auth/register", json={"email": "a@example.com", "password": PW})
     r = c.post("/api/billing/subscribe", json={"plan": "pro"})
-    assert r.status_code == 502 and "could not be reached" in r.json()["detail"]
+    assert r.status_code == 424 and "could not be reached" in r.json()["detail"]
 
 
 def test_billing_endpoints_need_a_session_and_the_webhook_needs_billing(tmp_path):
@@ -270,7 +270,7 @@ def test_deleting_an_account_cancels_the_subscription_first_and_stops_if_that_fa
     hook(c, sub_event("subscription.activated", uid), event_id="e1")
     rz.fail = True
     r = c.request("DELETE", "/api/account", json={"password": PW})
-    assert r.status_code == 502 and a.count() == 1                                     # nothing was deleted
+    assert r.status_code == 424 and a.count() == 1                                     # nothing was deleted
     rz.fail = False
     assert c.request("DELETE", "/api/account", json={"password": PW}).status_code == 200
     assert rz.calls[-1] == ("POST", "/subscriptions/sub_1/cancel", {"cancel_at_cycle_end": 0}) and a.count() == 0

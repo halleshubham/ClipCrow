@@ -249,7 +249,7 @@ def test_deleting_a_job_removes_its_bucket_copies_first_and_keeps_the_job_if_tha
     real = storage.delete_job
     monkeypatch.setattr(storage, "delete_job", broken)
     r = c.delete(f"/api/jobs/{jid}")
-    assert r.status_code == 502 and "nothing was deleted" in r.json()["detail"]
+    assert r.status_code == 424 and "nothing was deleted" in r.json()["detail"]
     assert c.get(f"/api/jobs/{jid}").status_code == 200 and any(jid in k for k in objects(storage))
     monkeypatch.setattr(storage, "delete_job", real)
     assert c.delete(f"/api/jobs/{jid}").status_code == 204
@@ -267,7 +267,7 @@ def test_deleting_an_account_purges_the_bucket_before_the_database(tmp_path, sto
     real = storage.delete_job
     monkeypatch.setattr(storage, "delete_job", lambda j: (_ for _ in ()).throw(StorageError("x")))
     r = c.request("DELETE", "/api/account", json={"password": PW})
-    assert r.status_code == 502 and a.count() == 1 and (tmp_path / "data" / "jobs" / jid).exists()     # nothing was deleted
+    assert r.status_code == 424 and a.count() == 1 and (tmp_path / "data" / "jobs" / jid).exists()     # nothing was deleted
     monkeypatch.setattr(storage, "delete_job", real)
     assert c.request("DELETE", "/api/account", json={"password": PW}).status_code == 200
     assert a.count() == 0 and objects(storage) == []
