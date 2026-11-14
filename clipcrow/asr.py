@@ -100,6 +100,24 @@ def collapse_loops(segments: list) -> list:
     return out
 
 
+_PUNCT = str.maketrans("", "", " \t\n.,!?;:।॥-–—\"'()…")
+
+
+def drop_seed_echo(segments: list, seed: str | None) -> list:
+    """With a prompt in front of every window, a model can read the prompt back out over a silent or musical stretch. A segment that is
+    only a piece of the seed (and long enough not to be a real short phrase) is dropped."""
+    if not seed:
+        return segments
+    s = seed.translate(_PUNCT)
+    out = []
+    for seg in segments:
+        n = str(getattr(seg, "text", "")).translate(_PUNCT)
+        if len(n) >= 12 and n in s:
+            continue
+        out.append(seg)
+    return out
+
+
 def transcribe(media: str, language: str | None = None, *, config: AsrConfig | None = None,
                model_loader: Callable | None = None, progress: Callable[[str], None] | None = None) -> Transcript:
     cfg = config or AsrConfig()
@@ -114,11 +132,11 @@ def transcribe(media: str, language: str | None = None, *, config: AsrConfig | N
     if lang in indic.INDIC_LANGS and cfg.indic_model and cfg.indic_model != cfg.model:
         say(f"Indic audio: using {cfg.indic_model}")
         model = load(cfg, cfg.indic_model)
-    if lang in indic.SCRIPT_SEED and "initial_prompt" not in params:      # language was pinned by the caller
-        params["initial_prompt"] = indic.SCRIPT_SEED[lang]
+    for key, value in indic.prompt_params(model, lang).items():          # a pinned language still needs its anchors
+        params.setdefault(key, value)
 
     segments, info = model.transcribe(media, **DECODE, **params)
-    segments = collapse_loops(list(segments))
+    segments = drop_seed_echo(collapse_loops(list(segments)), params.get("hotwords") or params.get("initial_prompt"))
     raw = [{"w": w.word, "s": float(w.start), "e": float(w.end)}
            for seg in segments for w in (seg.words or [])]
     words = merge_fragments(raw)

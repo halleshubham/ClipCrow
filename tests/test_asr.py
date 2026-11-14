@@ -172,3 +172,61 @@ def test_the_pyproject_keeps_pyav_below_the_version_that_broke_faster_whisper():
     from pathlib import Path
     deps = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text())["project"]["optional-dependencies"]["asr"]
     assert any(d.replace(" ", "").startswith("av") and "<19" in d.replace(" ", "") for d in deps), deps
+
+
+# --- the seed must anchor EVERY window, not only the first ------------------------------------------------------------------
+
+class StrictModel:
+    """A faster-whisper that predates ``hotwords`` (no **kwargs): passing it would raise TypeError."""
+    def __init__(self, segments):
+        self.segments, self.kw = segments, None
+
+    def detect_language(self, samples):
+        return ("mr", 0.9)
+
+    def transcribe(self, media, language=None, initial_prompt=None, beam_size=5, vad_filter=True, condition_on_previous_text=False,
+                   word_timestamps=True):
+        self.kw = {"language": language, "initial_prompt": initial_prompt}
+        return iter(self.segments), NS(language="mr")
+
+
+def test_the_seed_is_also_passed_as_hotwords_so_every_window_is_anchored_not_only_the_first():
+    """initial_prompt reaches only the first 30 s window when condition_on_previous_text is False: later windows drifted to Hindi."""
+    m = FakeModel([seg("x", W(" नाही", 0, 1))])
+    asr.transcribe("x.mp4", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    kw = m.transcribe_kwargs
+    assert kw["condition_on_previous_text"] is False
+    assert kw["hotwords"] == kw["initial_prompt"] == indic.SCRIPT_SEED["mr"]
+
+
+def test_a_pinned_language_gets_hotwords_too_and_english_gets_none():
+    m = FakeModel([seg("x", W(" नाही", 0, 1))])
+    asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    assert m.detect_calls == 0 and m.transcribe_kwargs["hotwords"].startswith("नमस्कार")
+    en = FakeModel([seg("hello", W(" hello", 0, 1))], language="en", detect=("en", 0.95))
+    asr.transcribe("x.mp4", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": en}))
+    assert "hotwords" not in en.transcribe_kwargs and "initial_prompt" not in en.transcribe_kwargs
+
+
+def test_an_older_faster_whisper_without_hotwords_still_works():
+    m = StrictModel([seg("x", W(" नाही", 0, 1))])
+    tr = asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    assert tr.words and m.kw["initial_prompt"].startswith("नमस्कार")
+    assert indic.prompt_params(m, "mr").keys() == {"initial_prompt"} and indic.prompt_params(object(), "mr").keys() == {"initial_prompt"}
+    assert indic.prompt_params(m, "de") == {}
+
+
+def test_marathi_prompt_carries_marathi_function_words_not_hindi_ones():
+    seed = indic.SCRIPT_SEED["mr"]
+    assert "नाही" in seed and "आहे" in seed and "नहीं" not in seed and "है" not in seed.split()
+
+
+def test_a_segment_that_is_only_the_prompt_read_back_is_dropped_but_real_speech_is_kept():
+    seed = indic.SCRIPT_SEED["mr"]
+    echo = seg("नमस्कार। हे व्हिडिओ मराठी भाषेत आहे।", W(" नमस्कार", 0, 1))
+    echo2 = seg(" आज आपण मराठीत बोलणार आहोत। ", W(" आज", 1, 2))
+    real = seg("बँकेचे शेअर्स सरकारने विकले नाहीत", W(" बँकेचे", 2, 3))
+    short = seg("नमस्कार", W(" नमस्कार", 3, 4))                    # a real short greeting shares letters with the seed: kept
+    kept = asr.drop_seed_echo([echo, echo2, real, short], seed)
+    assert kept == [real, short]
+    assert asr.drop_seed_echo([echo], None) == [echo]

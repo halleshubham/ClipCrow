@@ -5,13 +5,19 @@ single 30 s window, and without a prior it drifts into the wrong script (Hindi i
 Marathi in Latin). Two fixes, both from the OpenShorts fork this project grew out of:
 
   * vote on the language over up to three windows of the media, and
-  * pass a native-script ``initial_prompt`` so the decoder stays in the right Unicode block.
+  * pass a native-script prompt so the decoder stays in the right Unicode block AND the right language.
+
+``initial_prompt`` alone is not enough for a long recording: ClipCrow decodes with ``condition_on_previous_text=False`` (it avoids repetition
+loops), and then faster-whisper applies ``initial_prompt`` to the FIRST 30 s window only. Everything after that is decoded with no
+anchor, and closely related languages drift: Marathi came out with Hindi spellings (``नही`` for ``नाही``). ``hotwords`` is put in front
+of EVERY window's prompt, so the seed is passed both ways (see ``prompt_params``).
 
 ``decode_params(model, media)`` returns the extra faster-whisper kwargs; any failure returns ``{}``
 so the caller falls back to Whisper's own detection.
 """
 from __future__ import annotations
 
+import inspect
 import subprocess
 
 INDIC_LANGS = {"hi", "mr", "ne", "sa", "ur"}
@@ -19,7 +25,7 @@ INDIC_LANGS = {"hi", "mr", "ne", "sa", "ur"}
 # Longer prompts anchor the decoder better than single words (Hindi vs Urdu needs real context).
 SCRIPT_SEED = {
     "hi": "नमस्ते। यह वीडियो हिंदी भाषा में है। आज हम हिंदी में बात करेंगे।",
-    "mr": "नमस्कार। हे व्हिडिओ मराठी भाषेत आहे। आज आपण मराठीत बोलणार आहोत।",
+    "mr": "नमस्कार। हे व्हिडिओ मराठी भाषेत आहे। आज आपण मराठीत बोलणार आहोत। तुम्ही काय म्हणता? आम्ही सांगतो, ते अजून झाले नाही।",
     "ne": "नमस्ते। यो भिडियो नेपाली भाषामा छ।",
     "sa": "नमस्ते। एतत् संस्कृतभाषायां वीडियो अस्ति।",
     "ur": "السلام علیکم۔ یہ ویڈیو اردو زبان میں ہے۔",
@@ -90,8 +96,29 @@ def vote_language(model, media: str, *, duration=None, window=None):
     return lang, best[lang]
 
 
+def _takes(model, name: str) -> bool:
+    """Does ``model.transcribe`` accept the keyword ``name``? (A faster-whisper older than the option, or a test double, may not.)"""
+    try:
+        params = inspect.signature(model.transcribe).parameters
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return name in params or any(p.kind is p.VAR_KEYWORD for p in params.values())
+
+
+def prompt_params(model, lang: str) -> dict:
+    """The decoder anchors for ``lang``: the seed as ``initial_prompt`` (first window) and, where the installed faster-whisper has
+    it, as ``hotwords`` (every window). ``{}`` for a language with no seed."""
+    seed = SCRIPT_SEED.get(lang)
+    if not seed:
+        return {}
+    out = {"initial_prompt": seed}
+    if _takes(model, "hotwords"):
+        out["hotwords"] = seed
+    return out
+
+
 def decode_params(model, media: str, *, vote=None) -> dict:
-    """``{"language", "initial_prompt"}`` for Indic audio, ``{"language"}`` when confident, else ``{}``."""
+    """``{"language", "initial_prompt"[, "hotwords"]}`` for Indic audio, ``{"language"}`` when confident, else ``{}``."""
     try:
         got = (vote or vote_language)(model, media)
     except Exception:
@@ -102,4 +129,4 @@ def decode_params(model, media: str, *, vote=None) -> dict:
     seed = SCRIPT_SEED.get(lang)
     if seed is None and prob < 0.6:      # unsure about a non-Indic language: let Whisper decide
         return {}
-    return {"language": lang, **({"initial_prompt": seed} if seed else {})}
+    return {"language": lang, **prompt_params(model, lang)}
