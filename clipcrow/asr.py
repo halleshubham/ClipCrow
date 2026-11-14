@@ -14,7 +14,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import indic
+from . import asr_sravaani, indic
 from .planner.transcript import Transcript, TranscriptError, parse_transcript
 
 # Decode settings: no conditioning on previous text (avoids repetition loops), VAD drops silence.
@@ -78,6 +78,7 @@ def release_models() -> None:
     """Drop cached models (frees GPU memory between jobs)."""
     with _lock:
         _models.clear()
+    asr_sravaani.release()
 
 
 def merge_fragments(words: list[dict]) -> list[dict]:
@@ -254,6 +255,15 @@ def transcribe(media: str, language: str | None = None, *, config: AsrConfig | N
     if lang in indic.INDIC_LANGS and cfg.indic_model and cfg.indic_model != cfg.model:
         say(f"Indic audio: using {cfg.indic_model}")
         model = load(cfg, cfg.indic_model)
+    if lang in asr_sravaani.LANGS and asr_sravaani.enabled():
+        try:
+            say(f"recognising {lang} with SraVaani")
+            words = asr_sravaani.transcribe_words(media, say=say)
+            if words:
+                return parse_transcript({"language": lang, "words": words})
+            say("SraVaani heard no speech: using Whisper")
+        except Exception as e:                          # a missing package, no access to the gated repo, no memory: the Whisper path still works
+            say(f"SraVaani unavailable ({type(e).__name__}): using Whisper")
     use_windows = (lang in WINDOWED_LANGS) if windowed is None else (bool(windowed) and bool(lang))
     if use_windows:
         say(f"decoding {lang} in {int(WINDOW_SECONDS)} s windows, no prompt")

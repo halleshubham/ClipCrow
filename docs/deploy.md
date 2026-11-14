@@ -157,3 +157,10 @@ It prints each 15 s slice three times: `old` (whole-file with a script prompt), 
   not covered: also block private ranges at the network edge.
 - Razorpay and SocioBird are written to their documented APIs and tested with fakes; **try them with a test account before real money
   or real channels**.
+
+## Optional recogniser: SraVaani (Marathi / Hindi)
+`CLIPCROW_ASR=sravaani` makes Marathi and Hindi recordings go through SraVaani (ARTPARK-IISc, MIT, runs on a CPU) instead of Whisper; any failure falls
+back to Whisper. It needs `pip install torch transformers sentencepiece soundfile` and the model: either `CLIPCROW_SRAVAANI_DIR=<folder with the
+repo files>` or a Hugging Face token (`HF_TOKEN`) of an account that has been granted access to the gated repo (downloaded at a pinned revision, since
+the repo's Python is run with `trust_remote_code`). It writes every spoken word, stumbles included, and gives its own word times (starts are
+within about 0.1-0.3 s of ElevenLabs Scribe's on a 84 s test; ends are pulled back to where the voice stops). It is not in the container image yet.
