@@ -371,11 +371,12 @@ async function newJobView() {
     if (!file) return fail('Choose a video first.');
     if (file.size > c.max_upload_mb * 1048576) return fail(`That file is larger than the ${c.max_upload_mb} MB limit.`);
     if (!rights.checked) return fail('Confirm that you own this video or have the rights to process it.');
-    const [minClip, maxClip] = $('style').value ? ['', ''] : $('length').value.split('-');   // a style sets the clip length
+    const whole = $('length').value === 'whole';
+    const [minClip, maxClip] = whole || $('style').value ? ['', ''] : $('length').value.split('-');   // a style sets the clip length
     const options = {
       style: $('style').value,
       language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
-      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
+      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', links: $('links').value, ai_images: $('ai_images').checked ? 'true' : '',
       cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '',
@@ -418,7 +419,8 @@ async function newJobView() {
       el('div', {}, el('label', { class: 'field', for: 'clips', text: 'Clips to make' }),
         el('input', { id: 'clips', type: 'number', min: '1', max: '20', placeholder: 'auto' }),
         el('div', { class: 'hint', text: 'Leave empty for about one per two minutes of video.' })),
-      select('length', 'Clip length', [['15-60', '15–60 seconds'], ['30-90', '30–90 seconds']]),
+      select('length', 'Clip length', [['15-60', '15–60 seconds'], ['30-90', '30–90 seconds'], ['90-180', '1½–3 minutes'], ['180-300', '3–5 minutes'], ['300-480', '5–8 minutes'], ['whole', 'The whole video as one reel (up to 15 minutes)']],
+        'Longer lengths suit a cleaned raw recording. “The whole video” makes one reel from everything, with one title and hook.'),
       select('style', 'Style from a reference', [['', 'None'], ...styles.map((x) => [x.id, x.name])],
         styles.length ? 'Uses what was measured in that reference: clip length, caption size, colour and position, and how often the picture pushes in.'
           : 'Measure a reference video on the Styles page, then pick it here.')),
@@ -470,9 +472,15 @@ async function newJobView() {
         el('span', { text: 'I own this video or have the rights to process it.' })),
       el('div', { class: 'row' }, status, cancelBtn, submit))));
   const $ = (id) => form.querySelector('#' + id);
-  $('clean').addEventListener('change', () => { $('clean-opts').hidden = !$('clean').checked; });
+  const lengthChanged = () => { const whole = $('length').value === 'whole'; $('clips').disabled = whole; $('style').disabled = whole; $('length').disabled = !!$('style').value && !whole; };
+  $('length').addEventListener('change', lengthChanged);
+  $('clean').addEventListener('change', () => {
+    $('clean-opts').hidden = !$('clean').checked;
+    if ($('clean').checked && !$('style').value && $('length').value.indexOf('-') > -1 && Number($('length').value.split('-')[1]) <= 90) { $('length').value = 'whole'; lengthChanged(); }       // a cleaned recording is one reel
+    else if (!$('clean').checked && $('length').value === 'whole') { $('length').value = '15-60'; lengthChanged(); }
+  });
   $('explainer').addEventListener('change', () => { $('explainer-opts').hidden = !$('explainer').checked; });
-  $('style').addEventListener('change', () => { $('length').disabled = !!$('style').value; });      // the style sets the clip length
+  $('style').addEventListener('change', lengthChanged);                                              // the style sets the clip length
 
   const aside = el('div', { class: 'aside' },
     el('section', { class: 'card' }, el('h2', { text: 'What happens next' }),

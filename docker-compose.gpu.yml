@@ -56,6 +56,7 @@ services:
       - CLIPCROW_WORKER_TOKEN=${CLIPCROW_WORKER_TOKEN:-}
       - CLIPCROW_WORKER_PICKUP_SECONDS=${CLIPCROW_WORKER_PICKUP_SECONDS:-120}
       - CLIPCROW_WORKER_MAX_UPLOAD_MB=${CLIPCROW_WORKER_MAX_UPLOAD_MB:-300}      # the biggest clip a worker may send back
+      - CLIPCROW_WORKER_MAX_CLIP_SECONDS=${CLIPCROW_WORKER_MAX_CLIP_SECONDS:-100}      # longer clips are rendered on the server (the MP4 would come back through a proxy that caps a request near 100 MB); 0 = no limit
       # --- shutdown: how long a deploy waits for the running job before putting it back in the queue
       - DRAIN_TIMEOUT_SECONDS=${DRAIN_TIMEOUT_SECONDS:-45}
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility

@@ -10,9 +10,17 @@ from ..planner import PlannerOptions
 from .jobs import Job
 
 
+def _worker_clip_limit() -> float:
+    """Clips longer than this many seconds are rendered on the server, not sent to a GPU worker (CLIPCROW_WORKER_MAX_CLIP_SECONDS, 0 = no limit)."""
+    try:
+        return max(0.0, float(os.environ.get("CLIPCROW_WORKER_MAX_CLIP_SECONDS", "100")))
+    except ValueError:
+        return 100.0
+
+
 def planner_options(job: Job) -> PlannerOptions:
     p = job.params
-    opts = PlannerOptions(job_id=job.id, min_clip=p.min_clip, max_clip=p.max_clip, target_clips=p.clips,
+    opts = PlannerOptions(job_id=job.id, min_clip=p.min_clip, max_clip=p.max_clip, target_clips=p.clips, whole=p.whole,
                           spread=p.spread, cutout=p.cutout, immersive=p.immersive, explainer=p.explainer,
                           links=tuple(p.links), ai_images=p.ai_images, speaker_name=p.speaker_name or None,
                           speaker_title=p.speaker_title)
@@ -72,7 +80,7 @@ class RealPipeline:
         renderer = None
         if self.hub is not None:                              # a re-render after an edit can use the GPU worker too
             from .workers import RemoteRenderer
-            renderer = RemoteRenderer(self.hub)
+            renderer = RemoteRenderer(self.hub, max_clip_seconds=_worker_clip_limit())
         return render_one(job, edl, clip_id, out, workdir, media_root, os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"), renderer)
 
     @staticmethod
@@ -95,7 +103,7 @@ class RealPipeline:
         render_fn = None
         if self.hub is not None:                                 # each clip goes to a matching render worker when one is online
             from .workers import RemoteRenderer
-            render_fn = RemoteRenderer(self.hub, check=hooks.check, say=say)
+            render_fn = RemoteRenderer(self.hub, check=hooks.check, say=say, max_clip_seconds=_worker_clip_limit())
         return make(video, out, language=job.params.language, llm=AnthropicLLM(), opts=planner_options(job),
                     hooks=hooks, say=say, multi=job.params.multi, graphics=job.params.graphics, clean=job.params.clean, clean_pace=job.params.clean_pace, transcribe_fn=transcribe_fn, render_fn=render_fn,
                     images=self._images() if job.params.ai_images else None,

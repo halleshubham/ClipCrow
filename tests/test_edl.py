@@ -34,10 +34,12 @@ def test_clip_must_end_after_it_starts_and_inside_the_source():
         mk(clips=[{"id": "c", "source_in": 0, "source_out": 25}])
 
 
-def test_a_clip_longer_than_three_minutes_is_not_a_short():
+def test_a_clip_may_run_fifteen_minutes_but_no_longer():
+    big = {"uri": "s", "duration": 3000, "width": 1, "height": 1}
+    mk(source=big, clips=[{"id": "c", "source_in": 0, "source_out": 480}])             # a cleaned recording: one reel of eight minutes
+    mk(source=big, clips=[{"id": "c", "source_in": 0, "source_out": 900}])
     with pytest.raises(ValidationError):
-        mk(source={"uri": "s", "duration": 900, "width": 1, "height": 1},
-           clips=[{"id": "c", "source_in": 0, "source_out": 400}])
+        mk(source=big, clips=[{"id": "c", "source_in": 0, "source_out": 901}])
 
 
 def test_duplicate_ids_are_rejected():

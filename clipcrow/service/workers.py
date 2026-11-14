@@ -398,6 +398,7 @@ class RemoteRenderer:
     say: Callable[[str], None] = lambda _m: None
     fallback: Optional[Callable] = None
     max_seconds: float = 3600.0
+    max_clip_seconds: float = 100.0         # longer clips are rendered here: the MP4 comes back through a proxy that caps a request near 100 MB (0 = no limit)
 
     def _local(self, *args, **kw):
         fn = self.fallback
@@ -412,6 +413,9 @@ class RemoteRenderer:
         clip = next((c for c in edl.clips if c.id == clip_id), None)
         if clip is None or not self.hub.online("render"):
             return local()                                          # nothing out there (or a bad clip id: the real renderer says so)
+        if self.max_clip_seconds and clip.duration > self.max_clip_seconds:
+            self.say(f"{clip_id}: this clip is long, so it is rendered on the server")
+            return local()
         taskdir = Path(workdir) / "worker-tasks" / uuid.uuid4().hex
         try:
             files, meta = self._bundle(edl, clip, taskdir, media_root, asset_root)

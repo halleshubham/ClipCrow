@@ -297,3 +297,24 @@ def test_skipped_clips_are_reported():
     tr = make_transcript()
     plan = plan_edl(tr, SRC, scripted(best_windows=(1, 2)), PlannerOptions(target_clips=2, workers=1))
     assert any("spread" in d["reason"] for d in plan.report["dropped"])
+
+
+# --- the whole recording as one clip ------------------------------------------------------------------------------
+
+def test_whole_mode_makes_one_clip_of_everything_without_scoring_windows():
+    llm = scripted()
+    tr = make_transcript(n_sentences=90)                                   # six minutes
+    plan = plan_edl(tr, SourceInfo(uri="cleaned.mp4", duration=tr.duration + 1, width=1920, height=1080, fps=30), llm,
+                    PlannerOptions(whole=True, workers=1))
+    assert len(plan.edl.clips) == 1
+    c = plan.edl.clips[0]
+    assert c.source_in < 1.0 and c.source_out > tr.duration - 1.0 and c.duration > 330
+    purposes = [p for p, _ in llm.calls]
+    assert "score" not in purposes and purposes == ["detail:0"]            # one call, for the one window
+
+
+def test_a_long_length_range_still_plans_and_a_clip_may_be_minutes_long():
+    tr = make_transcript(n_sentences=120)                                  # eight minutes
+    plan = plan_edl(tr, SourceInfo(uri="cleaned.mp4", duration=tr.duration + 1, width=1920, height=1080, fps=30), scripted(),
+                    PlannerOptions(min_clip=180, max_clip=300, target_clips=1, workers=1))
+    assert plan.edl.clips and all(180 <= c.duration <= 301 for c in plan.edl.clips)

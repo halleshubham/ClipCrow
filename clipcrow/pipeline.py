@@ -59,7 +59,7 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
             raise EDLError("the compiled project failed HyperFrames check:\n  " + "\n  ".join(problems))
         compiled.warnings.extend(w for w in render.check_warnings(report) if w not in compiled.warnings)
     out = render.render(project, output, quality=edl.render.quality, workers=workers,
-                        browser_path=os.environ.get("CLIPCROW_BROWSER"))
+                        browser_path=os.environ.get("CLIPCROW_BROWSER"), timeout=max(1800, int(clip.duration * 12)))      # a long clip takes longer
     out = Path(out)
     if clip.outro and clip.outro.enabled:
         asset = next(a for a in edl.assets if a.id == clip.outro.asset)

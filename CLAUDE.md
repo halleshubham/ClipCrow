@@ -58,6 +58,11 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   of lines that returns line ids only (caps: 35% of a batch, never the last line); times and cut points are code. More than `MAX_REMOVED` of the recording,
   too few words, or a cue-timed transcript = leave the video alone. Audio is cut sample-exact with 8 ms fades; the frame grid keeps A/V in sync (a test
   checks the two durations). Retention deletes `clean.mp4` with the original.
+  A cleaned recording is usually ONE reel of 3-8 minutes: a clip may run `edl.MAX_CLIP_SECONDS` (15 min), the job form offers 1½-3, 3-5, 5-8 minutes and
+  "the whole video as one reel" (`Params.whole`, `PlannerOptions.whole`: one window, no scoring, the clip IS the recording whatever sentences the model
+  named). Anything that assumed a short must follow the clip's real length: the editor's trim limit (`max_seconds_for`), the render timeout (12 x the
+  clip), and the GPU worker (clips over `CLIPCROW_WORKER_MAX_CLIP_SECONDS`, default 100, render on the server because the MP4 would come back through
+  a proxy that caps a request near 100 MB).
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
 
@@ -88,6 +93,9 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   purges the bucket FIRST and aborts/retries if that fails. A clip is served from the bucket only when the local file is
   missing or (redirect mode) byte-identical (`storage.signature`). Presigned links live at most an hour; the bucket is
   never public.
+- Source size: with direct upload the bytes go browser -> R2 on the bucket's own host, so Cloudflare's ~100 MB request cap does NOT apply to a source video;
+  the only cap is `--max-upload-mb` (default 4096), checked at `POST /api/uploads` (413). Validated live and pinned by tests in `test_direct_upload.py`.
+  Anything routed THROUGH the app host (API bodies, worker uploads) is still capped near 100 MB: do not design a feature that streams big files through it.
 - Direct upload: the part URLs MUST sign `ContentLength` (so a URL cannot store more than announced); the finished object's size
   must equal the announced size; the upload id IS the job id (the object lands at `jobs/<id>/source.<ext>`); options are validated
   BEFORE the multipart upload is completed; the source is probed by presigned URL, never by a person-supplied one; abandoned

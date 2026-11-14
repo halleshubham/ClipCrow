@@ -41,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--cover", action="store_true", help="a bold title (the hook, else the title) for the first ~250 ms, and a cN.cover.png")
     mk.add_argument("--logo", metavar="IMAGE", help="a logo (png/jpg/webp) in a corner of every clip")
     mk.add_argument("--outro", metavar="VIDEO", help="a branding video appended after every clip (first 6 s)")
+    mk.add_argument("--whole", action="store_true", help="make the whole (cleaned) recording ONE clip: no moment picking, up to 15 minutes")
     mk.add_argument("--clean", action="store_true", help="first cut fumbles, fillers, retakes and dead air out of the raw recording")
     mk.add_argument("--clean-pace", choices=["natural", "fast", "tight"], default="natural", help="how short long pauses become")
     mk.add_argument("--graphics", action="store_true", help="the source cuts to slides, cards or b-roll: show those whole instead of cropping them")
@@ -183,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
             if a.ai_images:
                 from .assets.images import GeminiImages
                 images = GeminiImages()
-            opts = PlannerOptions(min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips, cutout=a.cutout, immersive=a.immersive,
+            opts = PlannerOptions(min_clip=a.min_clip, max_clip=a.max_clip, target_clips=a.clips, whole=a.whole, cutout=a.cutout, immersive=a.immersive,
                                   explainer=a.explainer, links=tuple(a.link), ai_images=a.ai_images,
                                   spread=a.spread,
                                   speaker_name=a.speaker_name, speaker_title=a.speaker_title)

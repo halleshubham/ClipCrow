@@ -36,8 +36,9 @@ class _M(BaseModel):
 class Params(_M):
     language: Optional[str] = Field(default=None, pattern=r"^[a-z]{2,3}$")
     clips: Optional[int] = Field(default=None, ge=1, le=20)
-    min_clip: int = Field(default=15, ge=5, le=120)
-    max_clip: int = Field(default=60, ge=10, le=180)
+    min_clip: int = Field(default=15, ge=5, le=900)
+    max_clip: int = Field(default=60, ge=10, le=900)
+    whole: bool = False                     # the whole (cleaned) recording is ONE clip: no moment picking, one title and hook for all of it
     spread: float = Field(default=0.5, ge=0, le=1)
     speaker_name: Optional[str] = Field(default=None, max_length=60)
     speaker_title: str = Field(default="", max_length=60)

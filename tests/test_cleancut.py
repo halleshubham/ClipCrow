@@ -160,11 +160,16 @@ def raw_video(tmp_path_factory):
     return p
 
 
+def uniq(k):
+    """A four-letter Devanagari token unlike every other one (so synthetic sentences are not near-repeats of each other)."""
+    return chr(0x0915 + k % 30) + chr(0x0915 + (k * 7 + 3) % 30) + "ा" + chr(0x0915 + (k // 30 * 11 + 5) % 30)
+
+
 def long_talk():
     """~2 min of Marathi sentences, with an 'अं', a stutter and a 4 s pause, for the planner."""
     items = []
     for i in range(36):
-        sent = [f"शब्द{i}a", f"शब्द{i}b", "आज", "आपण", f"गोष्ट{i}", "बोलू।"]
+        sent = [uniq(i * 6 + k) for k in range(5)] + [uniq(i * 6 + 5) + "।"]
         if i == 5:
             sent.insert(2, "अं")
         if i == 9:
@@ -217,7 +222,7 @@ def test_the_cleaned_video_is_shorter_in_sync_and_its_transcript_matches(tmp_pat
 def test_too_much_to_cut_or_too_little_speech_leaves_the_video_alone(tmp_path, raw_video):
     few = parse_transcript({"language": "en", "words": [{"w": "hi", "s": 0, "e": 0.3}] * 3 + [{"w": "x", "s": 1, "e": 1.2}]})
     assert cc.clean_video(raw_video, few, tmp_path, audio_loader=lambda p: np.zeros(16000, np.float32)) is None
-    clean = parse_transcript({"language": "en", "words": [w.model_dump() for w in seq(*[f"word{i}" for i in range(40)], step=0.4)]})
+    clean = parse_transcript({"language": "en", "words": [w.model_dump() for w in seq(*[uniq(i) for i in range(40)], step=0.4)]})
     said = []
     assert cc.clean_video(raw_video, clean, tmp_path / "b", audio_loader=lambda p: np.zeros(16000, np.float32), say=said.append) is None and said
     assert not (tmp_path / "clean.mp4").exists()
@@ -299,3 +304,108 @@ def test_an_ffmpeg_that_renamed_the_filter_file_option_is_retried_with_the_new_n
     monkeypatch.setattr(cc, "_run", other)
     with pytest.raises(ValueError, match="Invalid data"):                      # any other failure is NOT retried under another name
         cc.render_cleaned(raw_video, [(0, 60)], cc.probe(str(raw_video)), tmp_path / "d.mp4")
+
+
+# --- repeats that were changed, extended or respelled -----------------------------------------------------------------
+
+def line(*tokens, start=0.0, step=0.4):
+    return seq(*tokens, start=start, step=step)
+
+
+def two_lines(first, second, pause=1.2):
+    a = line(*first)
+    b = line(*second, start=a[-1].e + pause)
+    return a + b
+
+
+def cut_range(words, lang="mr"):
+    return [(c.first, c.last) for c in cc.detect(words, lang) if c.apply and c.first is not None and c.kind != "filler"]
+
+
+def test_a_sentence_said_again_with_one_word_changed_drops_the_earlier_try():
+    w = two_lines("आज आपण बँकेच्या खाजगीकरणाबद्दल बोलणार आहोत।".split(), "आज आपण बँकांच्या खाजगीकरणाबद्दल बोलणार आहोत।".split())
+    assert (0, 5) in cut_range(w)                                                        # all six words of the first try, none of the second
+
+
+def test_a_sentence_restated_with_words_added_drops_the_earlier_try():
+    w = two_lines("सरकार बँक विकणार आहे।".split(), "सरकार नफ्यातली बँक विकणार आहे म्हणून लोक चिंतेत आहेत।".split())
+    assert (0, 3) in cut_range(w)
+
+
+def test_recogniser_spelling_drift_does_not_hide_a_repeat():
+    w = two_lines("मी तुम्हाला नाही सांगणार होतो हे".split(), "मी तुम्हाला नही सांगणार होतो हे सगळं".split())
+    assert (0, 5) in cut_range(w)
+
+
+def test_a_phrase_restated_inside_one_sentence_with_a_change_drops_the_first_try():
+    w = line("हे", "बँक", "सरकारी", "मालकीची", "आहे", "हे", "बँक", "सरकारच्या", "मालकीची", "आहे", "म्हणून", "महत्त्वाची")
+    assert any(f == 0 for f, _ in cut_range(w))
+
+
+def test_parallel_sentences_said_on_purpose_are_not_retakes():
+    w = line("आम्ही", "लढू।", start=0.0) + line("आम्ही", "जिंकू।", start=2.0) + line("आम्ही", "टिकू।", start=4.0)
+    assert cut_range(w) == []                                                          # too short: emphasis
+    lst = (line(*"आज आपण बँकेबद्दल बोलूया आणि".split(), start=0) + line(*"आज आपण विम्याबद्दल बोलूया आणि".split(), start=3)
+           + line(*"आज आपण कर्जाबद्दल बोलूया आणि".split(), start=6))
+    assert cut_range(lst) == []                                                        # three alike lines in a row are a list
+
+
+def test_a_short_recap_or_a_much_later_callback_is_not_a_retake():
+    long = "बँकांचे खाजगीकरण केल्यावर सामान्य लोकांच्या ठेवींचे काय होईल हा प्रश्न आहे".split()
+    recap = "म्हणजे ठेवींचे काय".split()
+    assert cut_range(two_lines(long, recap)) == []
+    late = two_lines("आज आपण बँकेच्या खाजगीकरणाबद्दल बोलणार आहोत।".split(), "आज आपण बँकेच्या खाजगीकरणाबद्दल बोलणार आहोत।".split(), pause=30.0)
+    assert (0, 4) not in cut_range(late)
+
+
+def test_the_editing_pass_is_told_that_a_reworded_second_try_replaces_the_first():
+    assert "reworded" in cc.JUDGE_SYSTEM and "EARLIER line" in cc.JUDGE_SYSTEM
+
+
+# --- long reels ------------------------------------------------------------------------------------------------------
+
+def test_the_editor_may_trim_a_long_clip_but_not_stretch_it_and_shorts_keep_their_limit():
+    from clipcrow.edl import EDL
+    from clipcrow.service.editor import ClipEdit, apply_edit, clip_view
+    from tests.conftest import base_edl
+    d = base_edl(clips=[{"id": "c1", "source_in": 0, "source_out": 400}], source={"uri": "s.mp4", "duration": 900, "width": 1080, "height": 1920, "fps": 30})
+    edl = EDL.model_validate(d)
+    assert clip_view(edl, "c1", source_duration=900)["max_seconds"] == 400
+    out, _ = apply_edit(edl, "c1", ClipEdit(source_out=380), source_duration=900)
+    assert out.clips[0].source_out == 380
+    with pytest.raises(ValueError, match="at most 400"):
+        apply_edit(edl, "c1", ClipEdit(source_out=450), source_duration=900)
+    short = EDL.model_validate(base_edl(clips=[{"id": "c1", "source_in": 0, "source_out": 20}], source={"uri": "s.mp4", "duration": 900, "width": 1080, "height": 1920, "fps": 30}))
+    assert clip_view(short, "c1", source_duration=900)["max_seconds"] == 90
+
+
+def test_the_job_accepts_long_lengths_and_the_whole_video_option(tmp_path, video_bytes):
+    from tests.test_service import FakePipeline, client, upload, wait
+    c, _ = client(tmp_path, FakePipeline())
+    long = wait(c, upload(c, video_bytes, min_clip="180", max_clip="480").json()["id"])
+    assert long["params"]["min_clip"] == 180 and long["params"]["max_clip"] == 480
+    whole = wait(c, upload(c, video_bytes, whole="true").json()["id"])
+    assert whole["params"]["whole"] is True
+    assert upload(c, video_bytes, max_clip="1200").status_code == 422                  # more than 15 minutes is refused
+
+
+def test_a_long_clip_is_rendered_on_the_server_not_sent_through_the_proxy(tmp_path):
+    from types import SimpleNamespace
+    from clipcrow.edl import EDL
+    from clipcrow.service.workers import RemoteRenderer
+    from tests.conftest import base_edl
+    edl = EDL.model_validate(base_edl(clips=[{"id": "c1", "source_in": 0, "source_out": 300}], source={"uri": "s.mp4", "duration": 900, "width": 1080, "height": 1920, "fps": 30}))
+    ran, said = [], []
+    hub = SimpleNamespace(online=lambda kind: True)
+    rr = RemoteRenderer(hub, say=said.append, fallback=lambda *a, **k: ran.append("local") or ("out.mp4", None))
+    rr(edl, "c1", tmp_path / "c1.mp4", workdir=tmp_path, media_root=tmp_path)
+    assert ran == ["local"] and said and "long" in said[0]
+
+
+def test_the_worker_clip_limit_comes_from_the_environment(monkeypatch):
+    from clipcrow.service.pipelines import _worker_clip_limit
+    assert _worker_clip_limit() == 100.0
+    monkeypatch.setenv("CLIPCROW_WORKER_MAX_CLIP_SECONDS", "0")
+    assert _worker_clip_limit() == 0.0
+    monkeypatch.setenv("CLIPCROW_WORKER_MAX_CLIP_SECONDS", "nonsense")
+    assert _worker_clip_limit() == 100.0

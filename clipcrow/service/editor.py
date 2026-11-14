@@ -132,6 +132,11 @@ def _brand_edit(edl: EDL, clip: Clip, d: dict, edit: ClipEdit) -> list[str]:
     return changed
 
 
+def max_seconds_for(clip) -> float:
+    """Shorts stay within 90 s; a long clip (a whole cleaned recording) may be trimmed but not made longer than it is."""
+    return max(MAX_SECONDS, clip.duration)
+
+
 def apply_edit(edl: EDL, clip_id: str, edit: ClipEdit, *, source_duration: float) -> tuple[EDL, Optional[str]]:
     """The edited EDL and, when the framing must be planned again, the multi-speaker mode to plan with.
 
@@ -153,8 +158,9 @@ def apply_edit(edl: EDL, clip_id: str, edit: ClipEdit, *, source_duration: float
     if trimmed:
         if t_out - t_in < MIN_SECONDS:
             raise ValueError(f"A clip needs at least {MIN_SECONDS:.0f} seconds.")
-        if t_out - t_in > MAX_SECONDS:
-            raise ValueError(f"A clip can be at most {MAX_SECONDS:.0f} seconds.")
+        limit = max_seconds_for(clip)
+        if t_out - t_in > limit:
+            raise ValueError(f"A clip can be at most {limit:.0f} seconds.")
         if t_out > source_duration + 0.05:
             raise ValueError(f"The end is past the end of the video ({source_duration:.0f} s).")
         d["source_in"], d["source_out"] = round(t_in, 3), round(t_out, 3)
@@ -264,7 +270,7 @@ def clip_view(edl: EDL, clip_id: str, *, source_duration: float) -> dict:
              for i, w in enumerate(edl.transcript) if hi >= w.s and w.e >= lo]
     return {
         "id": clip.id, "title": clip.title, "source_in": clip.source_in, "source_out": clip.source_out,
-        "source_duration": source_duration, "min_seconds": MIN_SECONDS, "max_seconds": MAX_SECONDS,
+        "source_duration": source_duration, "min_seconds": MIN_SECONDS, "max_seconds": max_seconds_for(clip),
         "hook": getattr(ov.get("hook"), "text", ""),
         "stat": getattr(ov.get("stat_pill"), "text", ""),
         "speaker_name": getattr(ov.get("lower_third"), "title", ""),

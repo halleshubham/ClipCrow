@@ -49,6 +49,7 @@ class PlannerOptions:
     max_clip: int = 60
     target_clips: Optional[int] = None      # None: about one per two minutes of source
     max_clips: int = 10
+    whole: bool = False                     # the whole recording is ONE clip (a cleaned raw video): no scoring, one title and hook for all of it
     cutout: bool = False                    # a person cutout will exist: allow text behind the speaker
     immersive: bool = False                 # slow push-ins at sentence starts (timing is code, not the model)
     explainer: bool = False                 # pictures over the footage: screenshots of the links below, AI images
@@ -102,11 +103,14 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
         report["warnings"].append("word times are interpolated from subtitle cues: cuts are sentence-accurate, "
                                   "caption highlighting is approximate")
 
-    windows = build_windows(tr.sentences, window_seconds=max(90, int(opts.max_clip * 1.5)))
-    say(f"{len(tr.sentences)} sentences, {len(windows)} windows")
+    if opts.whole:
+        windows = [Window(0, 0, len(tr.sentences) - 1, tr.sentences[0].start, tr.sentences[-1].end)]
+    else:
+        windows = build_windows(tr.sentences, window_seconds=max(90, int(opts.max_clip * 1.5)))
+    say(f"{len(tr.sentences)} sentences, {len(windows)} windows" if not opts.whole else f"{len(tr.sentences)} sentences, one clip for the whole recording")
 
     # --- pass 1: score windows --------------------------------------------------
-    batches = [windows[i:i + opts.score_batch] for i in range(0, len(windows), opts.score_batch)]
+    batches = [] if opts.whole else [windows[i:i + opts.score_batch] for i in range(0, len(windows), opts.score_batch)]
 
     def score_batch(batch: list[Window]):
         items = [(w.id, "\n".join(prompts.fmt_sentence(s) for s in w.sentences(tr.sentences))) for w in batch]
@@ -118,7 +122,7 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
             return []
         return res.windows
 
-    scores: dict[int, float] = {}
+    scores: dict[int, float] = {0: 1.0} if opts.whole else {}                  # nothing to rank when there is one clip
     for ws in _map(score_batch, batches, opts.workers):
         for s in ws:
             scores[s.id] = window_score(s)
@@ -129,7 +133,7 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
                                   "score": round(scores.get(w.id, 0.0), 3)})
 
     # --- pick windows ---------------------------------------------------------------
-    n = target_count(tr.duration, opts)
+    n = 1 if opts.whole else target_count(tr.duration, opts)
     pool = math.ceil(n * 1.5) + 1
     ranked = sorted(windows, key=lambda w: scores.get(w.id, 0.0), reverse=True)
     mid = lambda w: (w.start + w.end) / 2  # noqa: E731
@@ -150,8 +154,9 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
 
     def detail(w: Window) -> list[PlannedClip]:
         sents = w.sentences(tr.sentences)
-        prompt = prompts.detail_prompt(sents, window_id=w.id, min_s=opts.min_clip, max_s=opts.max_clip,
-                                       max_clips=2, language=lang, behind=use_behind)
+        lo, hi = (1, tr.duration + 60) if opts.whole else (opts.min_clip, opts.max_clip)
+        prompt = prompts.detail_prompt(sents, window_id=w.id, min_s=int(lo), max_s=int(hi),
+                                       max_clips=1 if opts.whole else 2, language=lang, behind=use_behind)
         try:
             res = llm.generate(prompts.SYSTEM, prompt, DetailResult, purpose=f"detail:{w.id}")
             if any(wrong_script(c.title, lang) or wrong_script(c.hook_text, lang) for c in res.clips):
@@ -161,8 +166,10 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
             report["warnings"].append(f"window {w.id} skipped: {e}")
             return []
         out = []
-        for raw in res.clips:
-            clip, why = finalize(raw, w, tr, min_s=opts.min_clip, max_s=opts.max_clip,
+        for raw in (res.clips[:1] if opts.whole else res.clips):
+            if opts.whole:                                    # the clip IS the recording, whatever sentences the model named
+                raw = raw.model_copy(update={"first_sentence": w.first, "last_sentence": w.last})
+            clip, why = finalize(raw, w, tr, min_s=lo, max_s=hi,
                                  window_score=scores.get(w.id, 0.0), language=lang, use_behind=use_behind)
             if clip is None:
                 report["dropped"].append({"window": w.id, "reason": why})

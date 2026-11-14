@@ -301,6 +301,9 @@ class Outro(_Model):
     max_seconds: float = Field(default=6.0, gt=0, le=30)
 
 
+MAX_CLIP_SECONDS = 900      # a clip may run 15 minutes: shorts are 15-90 s, but a cleaned recording is one reel of 3-8 minutes
+
+
 class Clip(_Model):
     id: SafeId
     source_in: float = Field(ge=0)
@@ -322,8 +325,8 @@ class Clip(_Model):
     def _window(self):
         if self.source_out <= self.source_in:
             raise ValueError(f"clip {self.id!r}: source_out must be after source_in")
-        if self.duration > 180:
-            raise ValueError(f"clip {self.id!r}: {self.duration:.0f}s is not a short")
+        if self.duration > MAX_CLIP_SECONDS:
+            raise ValueError(f"clip {self.id!r}: {self.duration:.0f}s is longer than the {MAX_CLIP_SECONDS // 60} minutes a clip may run")
         if any(p.t + p.duration > self.duration + 0.01 for p in self.layout.punch_ins):
             raise ValueError(f"clip {self.id!r}: a punch-in runs past the end of the clip")
         ids = [o.id for o in self.overlays]

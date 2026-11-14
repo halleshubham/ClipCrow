@@ -42,6 +42,14 @@ MAX_MINUTES = 90                 # the audio is held in memory while it is cut
 JUDGE_BATCH = 80                 # sentences per model call
 JUDGE_MAX_SHARE = 0.35           # the model may drop at most this share of a batch
 LEAD_IN, TAIL, FADE_MS, MIN_KEEP = 0.25, 0.6, 8, 0.12
+SAME_WORD = 0.85                 # two spellings this alike count as the same word
+PHRASE_WINDOW = 10               # a phrase restated within this many words is a false start
+RESTATED = 0.78                  # share of two lines that is the same words, in order, for the earlier one to be an abandoned take
+CONTAINED = 0.80                 # ... or this much of the EARLIER line is found again in the later one (restated with additions)
+PARALLEL = (0.60, 0.90)          # three lines in a row this alike (but not near-identical) are a list said on purpose ("आज आपण X बद्दल ... आज आपण Y बद्दल ...")
+REDO_WITHIN = 8.0                # seconds: a redo starts soon after the abandoned try ended; a similar line much later is a callback, not a retake
+MIN_RETAKE_WORDS = 4             # shorter lines repeat for emphasis ("आम्ही लढू। आम्ही जिंकू।"), not as retakes
+RECAP_FLOOR = 0.5                # a later line shorter than this share of the earlier one is a recap, not a redo
 
 EMPHATIC = {"very", "really", "no", "bye", "ha", "yeah", "yes", "okay", "go", "more", "much", "many", "far", "long", "over", "again", "round",
             "knock", "bang", "dot", "tick", "la", "na"}
@@ -141,6 +149,26 @@ def refine_edges(words: list[Word], db, thr: float) -> list[tuple[float, float]]
 
 # --- detection ---------------------------------------------------------------------------------
 
+def same_word(a: str, b: str) -> bool:
+    """Equal, or spelled so alike that a recogniser could have written either (नाही / नहीं-style drift, an ending that changed)."""
+    return a == b or (len(a) >= 3 and len(b) >= 3 and difflib.SequenceMatcher(None, a, b).ratio() >= SAME_WORD)
+
+
+def overlap(a: list[str], b: list[str]) -> tuple[int, float]:
+    """(words matched in order, share of the two lists they cover) with alike-spelled words counting as equal."""
+    canon: list[str] = []
+
+    def key(t: str) -> str:
+        for c in canon:
+            if same_word(c, t):
+                return c
+        canon.append(t)
+        return t
+    ka, kb = [key(t) for t in a], [key(t) for t in b]
+    hit = sum(m.size for m in difflib.SequenceMatcher(None, ka, kb, autojunk=False).get_matching_blocks())
+    return hit, 2 * hit / max(1, len(a) + len(b))
+
+
 def lines_of(words: list[Word]) -> list[tuple[int, int]]:
     """Sentence-like lines: end punctuation, a pause over 0.8 s, or 28 words."""
     out, start = [], 0
@@ -190,31 +218,42 @@ def detect(words: list[Word], lang: str, *, db=None, thr: float | None = None) -
                             text=f"{words[i].w} {words[i + 1].w}", apply=marked))
             if marked:
                 done.add(i)
-    for i in range(N - 3):                                                   # 3 false start: a 3-5 word phrase restated within 8 words drops the first try
-        for n in (5, 4, 3):
-            pat = nw[i:i + n]
-            if len(pat) < n or not all(pat):
-                continue
-            hit = next((j for j in range(i + n, min(N - n + 1, i + n + 8))
-                        if nw[j:j + n] == pat and not any(k in done for k in range(i, j))), None)
-            if hit is not None:
-                cuts.append(Cut("false_start", f"phrase restarted at word {hit}", i, hit - 1, text=" ".join(w.w for w in words[i:hit + n])))
-                done.update(range(i, hit))
-                break
     lines = lines_of(words)
-    for x, (a, b) in enumerate(lines):                                       # 4 retake: a line whose opening matches one of the next 3 lines is an earlier take
-        head = [t for t in nw[a:b + 1] if t and not is_filler(t)][:6]
-        if len(head) < 4:
+    protected: set[int] = set()                                              # words of a run of parallel lines: never "restarts"
+    toks = [[t for t in nw[a:b + 1] if t and not is_filler(t)] for a, b in lines]
+    for x in range(len(lines) - 2):
+        if all(len(toks[k]) >= MIN_RETAKE_WORDS for k in (x, x + 1, x + 2)) and \
+                all(PARALLEL[0] <= overlap(toks[k], toks[k + 1])[1] < PARALLEL[1] for k in (x, x + 1)):
+            protected.update(range(lines[x][0], lines[x + 2][1] + 1))
+    for i in range(N - 3):                                                   # 3 false start: a 3-6 word phrase restated (even changed) soon after drops the first try
+        for n in (6, 5, 4, 3):
+            pat = nw[i:i + n]
+            if len(pat) < n or not all(pat) or i in protected:
+                continue
+            need = n if n == 3 else n - 1                                     # one changed word is allowed in a phrase of four or more
+            hit = next((j for j in range(i + n, min(N - n + 1, i + n + PHRASE_WINDOW))
+                        if nw[j:j + n] and all(nw[j:j + n]) and sum(same_word(x, y) for x, y in zip(pat, nw[j:j + n])) >= need
+                        and not any(k in done for k in range(i, j))), None)
+            if hit is not None:
+                start = next((k for k in range(i + n, hit + 1) if same_word(nw[k], pat[0])), hit)      # an inserted word can shift the match: cut up to the restatement's FIRST word
+                cuts.append(Cut("false_start", f"phrase restated at word {start}", i, start - 1, text=" ".join(w.w for w in words[i:hit + n])))
+                done.update(range(i, start))
+                break
+    for x, (a, b) in enumerate(lines):                                       # 4 retake: a line that the next few lines say again (reworded, extended, respelled)
+        mine = [t for t in nw[a:b + 1] if t and not is_filler(t)]
+        if len(mine) < MIN_RETAKE_WORDS or a in protected:
             continue
-        for c, d in lines[x + 1:x + 4]:
-            h2 = [t for t in nw[c:d + 1] if t and not is_filler(t)][:6]
-            r = difflib.SequenceMatcher(None, head, h2).ratio()
-            if (r >= 0.7 or head[:4] == h2[:4]) and not all(k in done for k in range(a, c)):
-                strong = r >= 0.8 or head[:5] == h2[:5]
-                cuts.append(Cut("retake", f"an earlier take of the line at word {c} (match {r:.2f})", a, c - 1,
-                                text=" ".join(w.w for w in words[a:c])[:200], apply=strong))
-                if strong:
-                    done.update(range(a, c))
+        for c, d in lines[x + 1:x + 5]:
+            later = [t for t in nw[c:d + 1] if t and not is_filler(t)]
+            if len(later) < MIN_RETAKE_WORDS or len(later) < RECAP_FLOOR * len(mine):
+                continue
+            hit, share = overlap(mine, later)
+            if (share >= RESTATED or hit / len(mine) >= CONTAINED) and not all(k in done for k in range(a, c)):
+                if words[c].s - words[b].e > REDO_WITHIN:
+                    break
+                cuts.append(Cut("retake", f"an earlier take of the line at word {c} ({hit} of {len(mine)} words said again)", a, c - 1,
+                                text=" ".join(w.w for w in words[a:c])[:200]))
+                done.update(range(a, c))
                 break
     if db is not None and thr is not None:                                   # 5 voice in a gap with no word: a hesitation the recogniser dropped
         for i in range(N - 1):
@@ -240,7 +279,8 @@ class Drops(BaseModel):
 
 JUDGE_SYSTEM = """You are a video editor cleaning a raw {language} talking recording. You get numbered consecutive lines of what was said.
 Return the ids of lines to REMOVE:
-- an abandoned attempt the speaker immediately says again, better. Keep the LAST complete take. Retakes often restart with different opening words.
+- an abandoned attempt the speaker says again, better. Keep the LAST complete take. The second try is often reworded, extended, shortened or starts with
+  different words; if a later line says the same thing again with some changes, the EARLIER line is the one to remove.
 - the restart phrase itself ("sorry, again", "one more time", "थांबा, पुन्हा सांगतो", "सॉरी, फिर से").
 - off-camera chatter before or after the real talk ("is it recording?", "चालू आहे का?", "ठीक है, चलो").
 Rules: a repeated idea said for emphasis is not a retake. Never remove the only place a fact appears. Never remove a line only because it is short.

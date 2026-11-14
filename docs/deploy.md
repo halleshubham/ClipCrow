@@ -59,6 +59,18 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
 5. R2 holds job outputs, **not the database**: back up the `/data` volume (it contains `clipcrow.db` with accounts and the minutes
    ledger).
 
+### How big a recording can be (validated)
+
+With direct upload on, the browser sends the video to R2 in 64 MB parts through presigned URLs on the bucket's own host
+(`<account>.r2.cloudflarestorage.com`), so those bytes never pass the app or Cloudflare's proxy (which caps one request near 100 MB on the free
+plan). Checked on the live server on 2026-11-14: a 3 GB upload started with 48 parts, every URL on the R2 host, and was cancelled cleanly; a 5 GB one
+was refused with "larger than the 4096 MB limit". So the only size cap for a source video is ClipCrow's own `clipcrow serve --max-upload-mb`
+(default 4096; the bucket allows far more: 10 000 parts x 64 MB). A raw 1080p hour is roughly 3-6 GB, so raise it if you upload long raw recordings.
+
+What is still capped near 100 MB is anything that goes THROUGH the app host: ordinary API requests, and a GPU worker sending a rendered clip back.
+That is why clips longer than `CLIPCROW_WORKER_MAX_CLIP_SECONDS` (default 100 s) render on the server. Sending worker results through the bucket as well
+(presigned PUT) would lift that limit; it is not built yet.
+
 ### Testing direct uploads without Cloudflare
 
 An S3-compatible server on localhost is enough: `pip install 'moto[server]'`, start `ThreadedMotoServer`, create a bucket, set its CORS
@@ -108,6 +120,12 @@ render to it:
 - **`--shm-size=2g` is required for rendering:** headless Chrome crashes on Docker's default 64 MB of shared memory (the compose files
   set the same for the server). Keep the `clipcrow-models` volume: the worker caches source videos there.
 - The person-cutout step runs wherever the render runs. Whether HyperFrames uses the GPU for it is not verified.
+
+### Long reels and the worker
+
+A clip over `CLIPCROW_WORKER_MAX_CLIP_SECONDS` (default 100) is rendered on the server even when a worker is online: its MP4 is large (about 0.85 MB
+per second) and would come back through Cloudflare, which caps a request at 100 MB on the free plan. Set it to `0` if your worker reaches the server
+without such a limit.
 
 ### Checking Marathi / Hindi accuracy on your own audio
 

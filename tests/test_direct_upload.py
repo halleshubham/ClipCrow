@@ -336,3 +336,32 @@ def test_the_cors_rule_the_browser_needs(storage):
     for bad in ("*", "https://*.example.com", "ftp://x", "https://x.example.com/path", "app.example.com"):
         with pytest.raises(ValueError):
             storage.set_cors([bad])
+
+
+# --- size: the bucket takes the bytes, so only the server's own limit applies ---------------------------------------------------
+
+def test_a_file_far_over_the_proxy_request_cap_is_accepted_and_its_bytes_go_to_the_bucket_not_the_app(tmp_path, storage):
+    """Cloudflare in front of the app caps one request at ~100 MB. A direct upload sends its parts to the bucket's own host, so a 3 GB recording starts
+    fine: 64 MB parts, every presigned URL on the bucket's host (never the app's), and nothing is held by the app. Only ``max_upload_mb`` limits the size."""
+    from urllib.parse import urlparse
+    c, _ = make(tmp_path, storage, max_upload_mb=4096)
+    size = 3 * 1024 * MB
+    r = c.post("/api/uploads", json={"filename": "raw.mp4", "size": size, "rights": True})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["part_size"] == 64 * MB and len(body["parts"]) == 48 and sum(p["length"] for p in body["parts"]) == size
+    hosts = {urlparse(p["url"]).netloc for p in body["parts"]}
+    assert len(hosts) == 1 and hosts != {"testserver"}                       # the bucket's host, not the app's
+    assert c.delete(f"/api/uploads/{body['id']}").status_code == 204         # cancel: nothing was stored
+
+
+def test_the_servers_own_limit_is_the_only_size_cap_for_a_direct_upload(tmp_path, storage):
+    c, _ = make(tmp_path, storage, max_upload_mb=4096)
+    assert c.post("/api/uploads", json={"filename": "raw.mp4", "size": 5 * 1024 * MB, "rights": True}).status_code == 413
+    small, _ = make(tmp_path / "s", storage, max_upload_mb=100)
+    assert small.post("/api/uploads", json={"filename": "raw.mp4", "size": 150 * MB, "rights": True}).status_code == 413
+
+
+def test_the_part_count_stays_within_what_the_bucket_allows_at_the_largest_size(tmp_path, storage):
+    """S3 and R2 allow 10 000 parts: the biggest file the server will accept at the default part size must fit."""
+    assert 4096 * MB / api_mod.PART_SIZE <= 10000 and api_mod.PART_SIZE >= 5 * MB
