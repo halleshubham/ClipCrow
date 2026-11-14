@@ -72,6 +72,10 @@ function showBanner() {
 }
 
 // ---- views ----------------------------------------------------------------------------------
+function authLogo() {
+  return el('img', { class: 'auth-logo', src: '/logo.png', alt: 'ClipCrow', width: 240, height: 200 });
+}
+
 function loginView() {
   if (state.config.accounts) return accountLoginView();
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
@@ -85,6 +89,7 @@ function loginView() {
       route();
     } catch (ex) { err.textContent = ex.message; err.hidden = false; }
   } },
+    authLogo(),
     el('h1', { text: 'Sign in' }),
     el('div', {}, el('label', { class: 'field', for: 'token', text: 'Access token' }), input),
     err,
@@ -121,7 +126,7 @@ function accountLoginView() {
       location.hash = '#/';
       route();
     } catch (ex) { err.textContent = ex.message; err.hidden = false; }
-  } }, title,
+  } }, authLogo(), title,
     el('div', {}, el('label', { class: 'field', for: 'email', text: 'Email' }), email),
     el('div', {}, el('label', { class: 'field', for: 'password', text: 'Password' }), pw, hint),
     err, el('div', { class: 'row' }, submit, toggle));

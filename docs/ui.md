@@ -18,6 +18,7 @@ was always there. Read this before adding or changing anything a person sees.
 5. **No job data in markup.** Build nodes with `el()` and set text with `textContent`; no `innerHTML`, no inline handlers, no inline styles (a test enforces it).
 6. **Plain words.** Say what the thing does for the person, not how it works. Errors say what to do next. Marathi and Hindi copy stays Devanagari.
 7. **Icons** are CSS masks (`.ico-*`), so there is no inline SVG markup and no `http://` in `app.js`.
+8. **The logo** is the crow with scissors (`static/logo.png`, `logo-mark.png`, the favicons), made by `scripts/make_logo_assets.py` from `docs/assets/logo-source.webp`: never edit the PNGs by hand, change the source and run the script. Its bird and wordmark are DARK, so on this dark theme it always sits on a light tile (`--logo-tile`): `.brand-mark` in the header, `.auth-logo` on the sign-in cards. Do not place it straight on `--surface` or `--ground`.
 
 ## Adding a control: checklist
 - Is there a class for it already? Use it. Otherwise add the CSS next to its relatives in `style.css`, with tokens, and a hover, focus and disabled state.

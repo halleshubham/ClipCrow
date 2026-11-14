@@ -9,6 +9,7 @@
   --ground: #0C0D11; --surface: #14161C; --surface-2: #1A1D25; --raised: #21242F;
   --line: #262A36; --line-strong: #3A3F51;
   --ink: #EEF0F6; --ink-2: #C9CDDA; --muted: #98A0B4;
+  --logo-tile: #F5F4F0;                                                   /* the logo's own background: a dark bird needs a light tile on a dark page */
   --backdrop-neutral: #888888; --video-bg: #000000;                       /* a mid grey behind a logo, so a light or a dark logo both show */
   --accent: #FFD54A; --accent-hi: #FFE07A; --accent-ink: #181405; --accent-text: #FFD54A;
   --accent-soft: rgba(255, 213, 74, .12); --accent-line: rgba(255, 213, 74, .38);
@@ -58,7 +59,7 @@ a:hover { color: var(--accent-text); }
   background: var(--glass); backdrop-filter: saturate(160%) blur(14px); -webkit-backdrop-filter: saturate(160%) blur(14px);
   border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 750; font-size: 17px; letter-spacing: -.01em; text-decoration: none; color: var(--ink); }
-.brand svg { color: var(--accent); }
+.brand-mark { height: 30px; width: auto; padding: 3px 5px; border-radius: 8px; background: var(--logo-tile); }
 .lead + .drop, h1 + .drop { margin-top: 4px; }
 .brand:hover { color: var(--ink); }
 nav { display: flex; gap: 2px; font-size: 14px; font-weight: 550; overflow-x: auto; scrollbar-width: none; }
@@ -279,6 +280,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .fine { font-size: 13px; }
 .authwrap { min-height: 60vh; display: grid; place-items: center; }
 .authwrap .card { width: 100%; max-width: 420px; padding: 32px; }
+.auth-logo { display: block; width: 100%; max-width: 240px; height: auto; margin: 0 auto; padding: 12px 16px; border-radius: var(--r-sm); background: var(--logo-tile); }
 
 /* icons: a mask over currentColor, so they follow the text colour in both themes */
 .i { display: inline-block; flex: none; width: 22px; height: 22px; background-color: currentColor; -webkit-mask: var(--m) center / contain no-repeat; mask: var(--m) center / contain no-repeat; }

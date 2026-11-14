@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/logo-card.png" alt="ClipCrow: AI reels cutter and editor" width="420"></p>
+
 # ClipCrow
 
 EDL in, short video out. A planner (an LLM or a person) writes an **Edit Decision List**; clipcrow
