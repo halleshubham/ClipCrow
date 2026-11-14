@@ -35,6 +35,7 @@ class CaptionsEdit(_M):
     highlight_color: Optional[HexColor] = None
     top_px: Optional[int] = Field(default=None, ge=0, le=1800)
     font_family: Optional[str] = None
+    animation: Optional[Literal["pop", "fade", "slide", "karaoke"]] = None
 
 
 class ClipEdit(_M):
@@ -289,7 +290,7 @@ def clip_view(edl: EDL, clip_id: str, *, source_duration: float) -> dict:
         "speaker_name": getattr(ov.get("lower_third"), "title", ""),
         "speaker_title": getattr(ov.get("lower_third"), "subtitle", ""),
         "captions": {"enabled": cap.enabled, "max_words": cap.max_words, "color": cap.color,
-                     "highlight_color": cap.highlight_color, "top_px": cap.top_px, "font_family": cap.font_family},
+                     "highlight_color": cap.highlight_color, "top_px": cap.top_px, "font_family": cap.font_family, "animation": cap.animation},
         "fonts": sorted(fonts.KNOWN),
         "framing": clip.layout.framing, "people": len(clip.layout.split) or None,
         "punch_ins": bool(clip.layout.punch_ins),

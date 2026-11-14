@@ -867,6 +867,7 @@ async function clipEditorView(jobId, clipId) {
   f.cap_enabled = el('input', { id: 'cap_enabled', type: 'checkbox' }); f.cap_enabled.checked = cap.enabled;
   choose('cap_words', [1, 2, 3, 4, 5, 6, 7, 8].map((n) => [String(n), `${n} word${n > 1 ? 's' : ''} at a time`]), String(cap.max_words));
   choose('cap_font', view.fonts.map((x) => [x, x]), cap.font_family);
+  choose('cap_anim', [['pop', 'Pop (words bounce in)'], ['karaoke', 'Highlight the word being said'], ['fade', 'Fade (calm)'], ['slide', 'Slide up']], cap.animation || 'pop');
   f.cap_color = el('input', { id: 'cap_color', type: 'color', value: cap.color });
   f.cap_hl = el('input', { id: 'cap_hl', type: 'color', value: cap.highlight_color });
   const capPos = el('output', { text: String(cap.top_px) });
@@ -897,6 +898,7 @@ async function clipEditorView(jobId, clipId) {
     if (f.cap_enabled.checked !== cap.enabled) c.enabled = f.cap_enabled.checked;
     if (Number(f.cap_words.value) !== cap.max_words) c.max_words = Number(f.cap_words.value);
     if (f.cap_font.value !== cap.font_family) c.font_family = f.cap_font.value;
+    if (f.cap_anim.value !== (cap.animation || 'pop')) c.animation = f.cap_anim.value;
     if (f.cap_color.value.toLowerCase() !== cap.color.toLowerCase()) c.color = f.cap_color.value.toUpperCase();
     if (f.cap_hl.value.toLowerCase() !== cap.highlight_color.toLowerCase()) c.highlight_color = f.cap_hl.value.toUpperCase();
     if (Number(f.cap_top.value) !== cap.top_px) c.top_px = Number(f.cap_top.value);
@@ -969,7 +971,7 @@ async function clipEditorView(jobId, clipId) {
         group('Cut points', el('div', { class: 'grid2', style: { marginTop: 0 } }, field('Start (seconds)', f.source_in), field('End (seconds)', f.source_out)),
           length, pickRow, wordBox),
         group('Captions', el('label', { class: 'check', for: 'cap_enabled' }, f.cap_enabled, el('span', { text: 'Show captions' })),
-          el('div', { class: 'grid2', style: { marginTop: '12px' } }, field('Words per line', f.cap_words), field('Font', f.cap_font),
+          el('div', { class: 'grid2', style: { marginTop: '12px' } }, field('Words per line', f.cap_words), field('Font', f.cap_font), field('Motion', f.cap_anim),
             field('Text colour', f.cap_color), field('Highlight colour', f.cap_hl)),
           el('div', { style: { marginTop: '12px' } }, el('label', { class: 'field', for: 'cap_top' }, 'Height on screen ', capPos, ' px from the top'), f.cap_top)),
         view.pictures.length > 0 && group('Pictures over the video',

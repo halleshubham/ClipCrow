@@ -211,6 +211,7 @@ class CaptionStyle(_Model):
     size_scale: float = Field(default=1.0, ge=0.6, le=1.6)   # multiplies the fitted size (a style may set it)
     uppercase: bool = False                              # Latin only: Devanagari has no case
     emphasis_words: list[int] = Field(default_factory=list)  # indices into transcript.words
+    animation: Literal["pop", "fade", "slide", "karaoke"] = "pop"   # how a caption group moves; "pop" is the original look (same pixels as before this field existed)
 
 
 class _OverlayBase(_Model):

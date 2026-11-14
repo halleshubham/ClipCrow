@@ -210,7 +210,39 @@ def _captions_scene(clip: Clip, groups: list[CaptionGroup], family: str, face: s
         body.append(f'    <div id="g{n}" class="grp clip" data-start="{_num(g.start)}" '
                     f'data-duration="{_num(g.end - g.start)}" style="font-size:{_caption_size(chars, st.size_scale)}px">{spans}</div>')
         timeline.append([f"g{n}", round(g.start, 3), round(g.end, 3), [round(x.start, 3) for x in g.words]])
-    script = f"""    const G = {json.dumps(timeline)};
+    script = _caption_script(st.animation, timeline, st.color, st.highlight_color, [[x.index in emph for x in g.words] for g in groups])
+    return _scene("captions", w, h, css, "\n".join(body), script)
+
+
+def _caption_script(animation: str, timeline: list, color: str, highlight: str, hot: list | None = None) -> str:
+    """The GSAP for the caption groups. ``pop`` is the original motion, byte for byte; the others are a closed set (colours are validated hex)."""
+    G = json.dumps(timeline)
+    out = '      tl.to("#" + id, { opacity: 0, duration: 0.12, ease: "power2.in" }, Math.max(s, e - 0.12));\n' \
+          '      tl.set("#" + id, { opacity: 0, visibility: "hidden" }, e);'
+    if animation == "fade":                                 # calm: the group fades in and out, the words do not move
+        return f"""    const G = {G};
+    G.forEach(([id, s, e, times]) => {{
+      tl.fromTo("#" + id, {{ opacity: 0 }}, {{ opacity: 1, duration: 0.2, ease: "power1.out" }}, s);
+{out}
+    }});"""
+    if animation == "slide":                                # the group rises into place, the words do not move
+        return f"""    const G = {G};
+    G.forEach(([id, s, e, times]) => {{
+      tl.fromTo("#" + id, {{ opacity: 0, y: 70 }}, {{ opacity: 1, y: 0, duration: 0.22, ease: "power3.out" }}, s);
+{out}
+    }});"""
+    if animation == "karaoke":                              # the whole group is there; the word being said lights up (an emphasised word goes back to its highlight colour)
+        return f"""    const G = {G}, BASE = {json.dumps(color)}, HOT = {json.dumps(highlight)}, EMPH = {json.dumps(hot or [[False] * len(t[3]) for t in timeline])};
+    G.forEach(([id, s, e, times], gi) => {{
+      tl.fromTo("#" + id, {{ opacity: 0, y: 24 }}, {{ opacity: 1, y: 0, duration: 0.18, ease: "power2.out" }}, s);
+      times.forEach((t, i) => {{
+        const w = "#" + id + "w" + i, on = Math.max(t, s), off = i + 1 < times.length ? Math.max(times[i + 1], on + 0.05) : Math.max(e - 0.12, on + 0.05);
+        tl.to(w, {{ color: HOT, scale: 1.12, duration: 0.08, ease: "power2.out" }}, on);
+        tl.to(w, {{ color: EMPH[gi][i] ? HOT : BASE, scale: 1, duration: 0.08, ease: "power2.in" }}, off);
+      }});
+{out}
+    }});"""
+    return f"""    const G = {G};
     G.forEach(([id, s, e, times]) => {{
       tl.fromTo("#" + id, {{ opacity: 0, y: 24 }}, {{ opacity: 1, y: 0, duration: 0.18, ease: "power2.out" }}, s);
       times.forEach((t, i) => tl.fromTo("#" + id + "w" + i, {{ scale: 0.7, opacity: 0.3 }},
@@ -218,7 +250,6 @@ def _captions_scene(clip: Clip, groups: list[CaptionGroup], family: str, face: s
       tl.to("#" + id, {{ opacity: 0, duration: 0.12, ease: "power2.in" }}, Math.max(s, e - 0.12));
       tl.set("#" + id, {{ opacity: 0, visibility: "hidden" }}, e);
     }});"""
-    return _scene("captions", w, h, css, "\n".join(body), script)
 
 
 def _behind_scene(items, family: str, face: str, w: int, h: int) -> str:

@@ -82,6 +82,8 @@ History, incidents and open items are in `development-log.md`: add an entry ther
   lower third = soft whoosh, hook = pop, push-in = click), never the model's choice and never on a caption word; one cue per `MIN_GAP` (2 s) with `PRIORITY` deciding; each file is gained so its PEAK lands
   at `Sfx.level_db` (default -10 dBFS) from the peak in `sfx/manifest.json`; a cue starts `LEAD` before its event, never before 0. One ffmpeg pass (`adelay`, `volume`, `amix normalize=0`), picture
   copied, the speech keeps its channel layout; no audio / no cue / any failure leaves the clip as it was. Order in `render_clip`: cues, outro join, loudness. The editor flips `enabled`, the level stays.
+- Caption motion (`CaptionStyle.animation`: pop | fade | slide | karaoke, editor select "Motion"): a CLOSED set compiled by `compile._caption_script`. `pop` is the original motion and its script must stay
+  byte for byte what it was (a test pins it: same pixels for every clip made before the field existed). Karaoke tweens `color` of the word being said and sends an emphasised word back to the highlight colour.
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
 
