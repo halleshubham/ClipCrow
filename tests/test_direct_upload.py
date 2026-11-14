@@ -296,6 +296,9 @@ def test_a_missing_object_at_run_time_fails_the_job_with_a_plain_message_and_ref
     finally:
         storage.get_file = real
     assert job["status"] == "failed" and "file storage" in job["error"] and "Traceback" not in job["error"]
+    end = time.time() + 5                                  # the refund runs just after the status flips
+    while c.get("/api/me").json()["used_minutes"] != 0 and time.time() < end:
+        time.sleep(0.05)
     assert c.get("/api/me").json()["used_minutes"] == 0                             # failed: the minutes came back
 
 
