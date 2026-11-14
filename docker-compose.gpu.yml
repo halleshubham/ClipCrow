@@ -55,6 +55,7 @@ services:
       # --- a GPU worker on another machine (your own PC) does the speech recognition: see docs/deploy.md. Empty = off.
       - CLIPCROW_WORKER_TOKEN=${CLIPCROW_WORKER_TOKEN:-}
       - CLIPCROW_WORKER_PICKUP_SECONDS=${CLIPCROW_WORKER_PICKUP_SECONDS:-120}
+      - CLIPCROW_WORKER_MAX_UPLOAD_MB=${CLIPCROW_WORKER_MAX_UPLOAD_MB:-300}      # the biggest clip a worker may send back
       # --- shutdown: how long a deploy waits for the running job before putting it back in the queue
       - DRAIN_TIMEOUT_SECONDS=${DRAIN_TIMEOUT_SECONDS:-45}
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility

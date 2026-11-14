@@ -44,7 +44,8 @@ from .publish import PublishError, SocioBird, caption_html, settings_for, valida
 from .retention import Sweeper, env_days, expires_at
 from .storage import Mirror, S3Storage, StorageError, signature
 from .uploads import OPEN_LIMIT, Upload, UploadStore
-from .workers import HeartbeatIn, PollIn, ResultIn, TASK_ID, WorkerHub
+from .workers import HeartbeatIn, PollIn, ResultIn, TASK_ID, WorkerHub, _clean_name
+from ..render import HYPERFRAMES_VERSION
 from .runner import JobRunner, Pipeline
 from .style_store import StyleStore
 from ..styles import MAX_REFERENCE_BYTES, StyleError, StyleSettings, derive, measure
@@ -161,7 +162,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     brands = BrandStore(data_dir)
     runner.brands = brands
     styles = StyleStore(data_dir)
-    hub = WorkerHub(worker_token, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds) if worker_token else None
+    hub = WorkerHub(worker_token, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds, render_pin=HYPERFRAMES_VERSION,
+                    max_upload_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_UPLOAD_MB", "300") or 300) * 1024 * 1024)) if worker_token else None
     if hub is not None:
         pipeline.hub = hub                                  # RealPipeline sends speech recognition to a worker when one is online
     style_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-style")
@@ -274,7 +276,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 "signup": bool(accounts) and allow_signup, "email": email, "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(sociobird) and (not accounts or sociobird_shared),
                 "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready(),
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
-                "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online())}}
+                "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online()),
+                               "render": bool(hub and hub.online("render"))}}
 
     @app.post("/api/login")
     def login(body: Login, request: Request) -> JSONResponse:
@@ -931,10 +934,15 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     @app.post("/api/worker/poll", dependencies=[Depends(worker_auth)])
     async def worker_poll(body: PollIn) -> dict:
-        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model)
+        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model, tuple(body.can), body.pin)
         if task is None:
             return {"task": None}
-        return {"task": {"id": task.id, "kind": "transcribe", "language": task.language, "lease_seconds": hub.lease_seconds}}
+        out = {"id": task.id, "kind": task.kind, "lease_seconds": hub.lease_seconds, "meta": task.meta}
+        if task.kind == "transcribe":
+            out["language"] = task.language                          # (an older worker reads it from here)
+        else:
+            out["files"] = {name: path.stat().st_size for name, path in task.files.items() if path.is_file()}
+        return {"task": out}
 
     @app.get("/api/worker/tasks/{task_id}/audio", dependencies=[Depends(worker_auth)])
     def worker_audio(task_id: str, worker: str):
@@ -943,6 +951,39 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(404, "No such task.")
         return FileResponse(path, media_type="audio/mp4")
 
+    @app.get("/api/worker/tasks/{task_id}/files/{name:path}", dependencies=[Depends(worker_auth)])
+    def worker_file(task_id: str, name: str, worker: str):
+        """A file of the task's manifest. The name is only ever a dictionary key, never joined to a path."""
+        path = hub.file_for(task_id_or_404(task_id), name, worker) if _clean_name(name) else None
+        if path is None or not path.is_file():
+            raise HTTPException(404, "No such file.")
+        return FileResponse(path, media_type="application/octet-stream")
+
+    @app.put("/api/worker/tasks/{task_id}/uploads/{name}", dependencies=[Depends(worker_auth)])
+    async def worker_upload(task_id: str, name: str, request: Request, worker: str) -> dict:
+        target = hub.upload_path(task_id_or_404(task_id), worker, name)
+        if target is None:
+            raise HTTPException(404, "No such upload.")
+        declared = int(request.headers.get("content-length") or 0)
+        if declared > hub.max_upload_bytes:
+            raise HTTPException(413, "That upload is larger than this server accepts.")
+        part = target.with_name(target.name + ".part")
+        size = 0
+        try:
+            with part.open("wb") as f:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > hub.max_upload_bytes:
+                        raise HTTPException(413, "That upload is larger than this server accepts.")
+                    await asyncio.to_thread(f.write, chunk)
+            os.replace(part, target)
+        finally:
+            part.unlink(missing_ok=True)
+        if not hub.commit_upload(task_id, worker, name, target):
+            target.unlink(missing_ok=True)
+            raise HTTPException(404, "That task is no longer yours.")
+        return {"ok": True, "size": size}
+
     @app.post("/api/worker/tasks/{task_id}/heartbeat", dependencies=[Depends(worker_auth)])
     def worker_heartbeat(task_id: str, body: HeartbeatIn) -> dict:
         return {"ok": hub.heartbeat(task_id_or_404(task_id), body.worker)}
@@ -950,8 +991,13 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     @app.post("/api/worker/tasks/{task_id}/result", dependencies=[Depends(worker_auth)])
     def worker_result(task_id: str, body: ResultIn) -> dict:
         task_id_or_404(task_id)
+        kind = hub.kind_of(task_id, body.worker)
+        if kind is None:
+            return {"ok": False}
         if body.error:
             return {"ok": hub.finish(task_id, body.worker, error=body.error)}
+        if kind == "render":
+            return {"ok": hub.finish(task_id, body.worker, result={"warnings": body.warnings})}
         if not body.words:
             return {"ok": hub.finish(task_id, body.worker, error="the worker found no speech")}
         return {"ok": hub.finish(task_id, body.worker, result={"language": body.language, "words": [w.model_dump() for w in body.words]})}

@@ -92,6 +92,11 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   the job falls back to the server's own recognition when none is online, none picks the task up in `CLIPCROW_WORKER_PICKUP_SECONDS`, the
   lease lapses (heartbeats), or it reports an error. Audio is served only to the worker holding the lease; the copy is deleted afterwards.
   The worker reads its token from the environment, never argv. Task ids are 32 hex, checked with `re.fullmatch`.
+  A RENDER task (`RemoteRenderer`) ships the EDL, the source and the clip's assets by manifest NAMES (a dict lookup on the server, `safe_join`
+  on the worker: never a path built from a name), only to a worker whose HyperFrames pin equals ours. What comes back is untrusted media:
+  `validate_clip` probes container, codec, size, duration and bytes before anything is replaced, and the cover and the provenance sidecar are
+  made by the server, never uploaded by a worker. Any failure falls back to a local render. Name patterns use `fullmatch` (a `$` regex lets
+  a trailing newline through). `Transport` methods raise `NotImplementedError`, so a test double without `upload` fails loudly.
 - Clip edits are `service.editor.ClipEdit`, a closed set of fields applied by the pure `apply_edit`; never accept a raw
   EDL or a path from the browser. The AI's `decided` list is not rewritten by a person: add a note instead.
   All edl.json writes go through the runner's edit lock; a render finishes only the latest edit (`_gen`).

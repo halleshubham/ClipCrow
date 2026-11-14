@@ -90,7 +90,22 @@ requests, so the machine opens no port and needs no tunnel.
 4. **Privacy.** Audio goes only to a worker that holds the lease on that task, and only your machine. If other people use your server,
    their audio would be processed on that machine: only run a worker you control, and say so in your terms.
 
-Rendering stays on the server for now.
+### The worker can render clips too
+
+With the ClipCrow image (it has Node, Chrome, FFmpeg, the fonts and GSAP) the worker also offers to render. At start it runs the same
+tool checks as `clipcrow selftest` and prints `rendering: ready` or why not (`--no-render` turns it off). The server then sends each clip's
+render to it:
+- The worker downloads the clip's EDL, the source video and the assets, only by names the server listed for that task. A source video is
+  cached per job (so a job's other clips and later edits do not download it again) and the cache is trimmed to `--cache-gb` (20 by default).
+- It renders with HyperFrames and uploads the MP4. A render task goes only to a worker whose HyperFrames version equals the server's pin
+  (`render.HYPERFRAMES_VERSION`), so the pixels are the same wherever they were made: **use the same image tag on both**.
+- The server never trusts the file: it probes it (a real MP4, H.264, exactly the EDL's size, about the clip's length, under
+  `CLIPCROW_WORKER_MAX_UPLOAD_MB`, 300 by default) before it replaces anything, and makes the cover image and provenance itself.
+  A clip that fails any check, a worker that crashes, stalls (no heartbeat) or takes over an hour: the server renders it itself.
+- Framing (face tracking) and planning still run on the server. Re-renders after an edit use the worker too.
+- **Cloudflare:** the clip goes back through your domain, and Cloudflare's proxy limits a request body (100 MB on the free plan). Typical
+  clips are 10 to 40 MB; for longer ones use a DNS-only record for the domain, or raise the limit on your plan.
+- The person-cutout step runs wherever the render runs. Whether HyperFrames uses the GPU for it is not verified.
 
 ## 5. Things that will bite you
 

@@ -211,3 +211,43 @@ def test_a_style_s_caption_look_reaches_the_rendered_pixels(tmp_path):
     assert green, "the style's caption colour never reached the pixels"
     top = min(y for y, _ in green)
     assert top < shots["plain"].height * 0.45, f"styled captions should sit high in the frame, found first green at y={top}"
+
+
+def test_a_real_render_through_a_worker_passes_the_servers_checks(tmp_path, monkeypatch):
+    """The whole path with the real renderer on the worker: bundle -> download -> HyperFrames -> upload -> probe -> place."""
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from clipcrow.service.api import create_app
+    from clipcrow.service.workers import RemoteRenderer
+    from clipcrow.worker import run_worker
+    from tests.test_service import FakePipeline
+    from tests.test_worker import TOKEN, FakeTransport, gpu_transcribe
+
+    monkeypatch.setenv("CLIPCROW_GSAP", str(ROOT / "vendor" / "gsap.min.js"))
+    pipe = FakePipeline()
+    app = create_app(tmp_path / "data", pipe, worker_token=TOKEN)
+    edl = load_edl(ROOT / "examples" / "demo.edl.json")
+    media = ROOT / "examples" / "assets"
+    out = {}
+    t = threading.Thread(target=lambda: out.update(n=run_worker(
+        FakeTransport(app), "gpu1", transcribe=gpu_transcribe, label="fake", can_render=True, cache=tmp_path / "wcache",
+        max_tasks=1, poll_wait=0.5, log=lambda m: out.setdefault("log", []).append(m))), daemon=True)
+    t.start()
+    end = time.time() + 30
+    while not pipe.hub.online("render") and time.time() < end:
+        time.sleep(0.1)
+    assert pipe.hub.online("render")
+
+    def must_not_fall_back(*a, **k):
+        raise AssertionError("the server rendered it itself: the worker's clip was rejected or never arrived")
+    msgs = []
+    rr = RemoteRenderer(pipe.hub, say=msgs.append, fallback=must_not_fall_back, max_seconds=600)
+    mp4, compiled = rr(edl, "c2", tmp_path / "out" / "c2.mp4", workdir=tmp_path / "w", media_root=media, gsap_js=None, asset_root=tmp_path / "out")
+    t.join(30)
+    video = next(s for s in probe(mp4) if s["codec_type"] == "video")
+    assert (video["width"], video["height"]) == (1080, 1920) and abs(float(video["duration"]) - 6.8) < 0.15, (probe(mp4), msgs)
+    assert any(s["codec_type"] == "audio" for s in probe(mp4))
+    assert (tmp_path / "out" / "c2.mp4.ai.json").is_file() and out.get("n") == 1, out.get("log")

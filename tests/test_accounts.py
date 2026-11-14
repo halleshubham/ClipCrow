@@ -1,6 +1,7 @@
 """Accounts, per-user jobs, the minutes ledger and retention."""
 import json
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -231,6 +232,9 @@ def test_cancelling_a_queued_job_refunds_it(tmp_path, video_bytes):
     c.post(f"/api/jobs/{first}/cancel")
     gate.set()
     wait(c, first)
+    end = time.time() + 10                                      # the status flips just before the refund is booked: wait for it
+    while c.get("/api/me").json()["used_minutes"] != 0 and time.time() < end:
+        time.sleep(0.05)
     assert c.get("/api/me").json()["used_minutes"] == 0
 
 

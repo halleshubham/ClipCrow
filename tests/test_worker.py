@@ -136,7 +136,7 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 def test_the_routes_do_not_exist_without_a_worker_token(tmp_path):
     c = TestClient(create_app(tmp_path / "data", FakePipeline()))
     assert c.post("/api/worker/poll", json={"worker": "w", "wait": 0}, headers=AUTH).status_code == 404
-    assert c.get("/api/config").json()["gpu_worker"] == {"enabled": False, "online": False}
+    assert c.get("/api/config").json()["gpu_worker"] == {"enabled": False, "online": False, "render": False}
 
 
 def test_a_wrong_or_missing_token_is_refused_and_a_right_one_polls(tmp_path):
@@ -148,7 +148,7 @@ def test_a_wrong_or_missing_token_is_refused_and_a_right_one_polls(tmp_path):
     assert c.get("/api/worker/tasks/" + "a" * 32 + "/audio?worker=gpu1").status_code == 401
     r = c.post("/api/worker/poll", json=body, headers=AUTH)
     assert r.status_code == 200 and r.json() == {"task": None}
-    assert c.get("/api/config").json()["gpu_worker"] == {"enabled": True, "online": True}
+    assert c.get("/api/config").json()["gpu_worker"] == {"enabled": True, "online": True, "render": False}      # transcription only
 
 
 def test_a_workers_token_is_not_a_login_and_a_login_is_not_a_worker_token(tmp_path):
@@ -202,6 +202,11 @@ class FakeTransport(Transport):
         if r.status_code >= 400:
             raise WorkerHttpError(r.status_code, str(r.status_code))
         Path(dest).write_bytes(r.content)
+
+    def upload(self, path, src, *, timeout=900.0):
+        r = self.c.put(path, content=Path(src).read_bytes(), headers=self.h)
+        if r.status_code >= 400:
+            raise WorkerHttpError(r.status_code, str(r.status_code))
 
 
 def gpu_transcribe(media, language=None, progress=None):

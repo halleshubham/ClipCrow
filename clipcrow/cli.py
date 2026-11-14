@@ -57,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     wk.add_argument("--server", required=True, help="the server's address, e.g. https://clipcrow.example.com")
     wk.add_argument("--name", default=os.environ.get("HOSTNAME", "worker")[:40] or "worker", help="a name shown on the server")
     wk.add_argument("--model", default="large-v3", help="faster-whisper model (large-v3 needs about 4-5 GB of GPU memory)")
+    wk.add_argument("--no-render", action="store_true", help="do speech recognition only, even if this machine could also render clips")
+    wk.add_argument("--cache-gb", type=float, default=20.0, help="disk the worker may use to keep source videos between a job's clips")
     st = sub.add_parser("selftest", help="can this machine render? checks the tools and renders a tiny Devanagari clip")
     st.add_argument("--no-render", action="store_true", help="check the tools only")
     u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
@@ -135,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if a.cmd == "worker":
             from .worker import main as worker_main
-            return worker_main(a.server, a.name, a.model)
+            return worker_main(a.server, a.name, a.model, render=not a.no_render, cache_gb=a.cache_gb)
         if a.cmd == "selftest":
             from .selftest import run as selftest
             return 0 if selftest(skip_render=a.no_render) else 1

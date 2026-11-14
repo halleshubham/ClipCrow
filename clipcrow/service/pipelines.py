@@ -28,9 +28,11 @@ def planner_options(job: Job) -> PlannerOptions:
     return opts
 
 
-def render_one(job: Job, edl, clip_id: str, out: Path, workdir: Path, media_root: Path, gsap_js) -> list[str]:
-    """Render one clip to ``out`` (via a temporary file, so a video being played is never half-written)."""
+def render_one(job: Job, edl, clip_id: str, out: Path, workdir: Path, media_root: Path, gsap_js, render_fn=None) -> list[str]:
+    """Render one clip to ``out`` (via a temporary file, so a video being played is never half-written).
+    ``render_fn`` replaces ``pipeline.render_clip`` (a RemoteRenderer, which falls back to it)."""
     from ..pipeline import render_clip
+    render_clip = render_fn or render_clip
     tmp = out.with_name(out.stem + ".new.mp4")
     mp4, compiled = render_clip(edl, clip_id, tmp, workdir=workdir, media_root=media_root, gsap_js=gsap_js,
                                 asset_root=out.parent)
@@ -67,7 +69,11 @@ class RealPipeline:
         return GeminiImages()
 
     def render_clip(self, job: Job, edl, clip_id: str, out: Path, workdir: Path, media_root: Path) -> list[str]:
-        return render_one(job, edl, clip_id, out, workdir, media_root, os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"))
+        renderer = None
+        if self.hub is not None:                              # a re-render after an edit can use the GPU worker too
+            from .workers import RemoteRenderer
+            renderer = RemoteRenderer(self.hub)
+        return render_one(job, edl, clip_id, out, workdir, media_root, os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"), renderer)
 
     @staticmethod
     def reference_look(path: str, duration: float) -> dict | None:
@@ -86,7 +92,11 @@ class RealPipeline:
         if self.hub is not None and self.hub.online():           # a GPU worker is out there: let it listen, fall back if it cannot
             from .workers import RemoteTranscriber
             transcribe_fn = RemoteTranscriber(self.hub, video.parent, check=hooks.check)
+        render_fn = None
+        if self.hub is not None:                                 # each clip goes to a matching render worker when one is online
+            from .workers import RemoteRenderer
+            render_fn = RemoteRenderer(self.hub, check=hooks.check, say=say)
         return make(video, out, language=job.params.language, llm=AnthropicLLM(), opts=planner_options(job),
-                    hooks=hooks, say=say, multi=job.params.multi, transcribe_fn=transcribe_fn,
+                    hooks=hooks, say=say, multi=job.params.multi, transcribe_fn=transcribe_fn, render_fn=render_fn,
                     images=self._images() if job.params.ai_images else None,
                     gsap_js=os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"))

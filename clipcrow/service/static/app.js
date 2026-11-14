@@ -471,7 +471,7 @@ async function newJobView() {
         ['Transcribe: word-by-word timing, in the spoken language.', 'Plan: AI picks self-contained moments and writes the hook and title.',
           'Frame: a vertical crop that follows the speaker.', 'Render: captions, hook, stat and name card burned in.'].map((t) => el('li', { text: t })))),
     c.gpu_worker && c.gpu_worker.enabled && el('section', { class: 'card' }, el('h2', { text: 'Speech recognition' }),
-      el('p', { class: 'small', style: { margin: 0 }, text: c.gpu_worker.online ? 'A GPU worker is online: transcription should be fast.' : 'No GPU worker is online right now, so the server transcribes on its CPU, which is slower. Start the worker and it takes over by itself.' })),
+      el('p', { class: 'small', style: { margin: 0 }, text: c.gpu_worker.online ? (c.gpu_worker.render ? 'A GPU worker is online: transcription is fast and clips are rendered on it too.' : 'A GPU worker is online: transcription should be fast.') : 'No GPU worker is online right now, so the server transcribes on its CPU, which is slower. Start the worker and it takes over by itself.' })),
     el('section', { class: 'callout' }, el('h2', { text: 'How AI is used' }),
       el('p', { class: 'small', style: { margin: 0 }, text: 'AI chooses the cut points, titles, hooks and emphasised words. Your footage stays real. Nothing AI-generated is added, and every job keeps a record of what the AI decided.' })));
   app.replaceChildren(el('div', { class: 'layout' }, form, aside));
