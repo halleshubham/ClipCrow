@@ -57,13 +57,35 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
          transcribe_fn: Callable | None = None, render_fn: Callable | None = None,
          say: Callable[[str], None] = lambda _m: None, hooks: Hooks | None = None,
          multi: str = "switch", graphics: bool = False, images=None, capture_fn=None,
-         brand: BrandKit | None = None, choice: BrandingChoice | None = None, refine_text: bool = True) -> MakeResult:
+         brand: BrandKit | None = None, choice: BrandingChoice | None = None, refine_text: bool = True,
+         clean: bool = False, clean_pace: str = "natural") -> MakeResult:
+    """``clean``: cut hesitation sounds, stutters, retakes and long dead air out of the raw recording first (``cleancut``). The cleaned video
+    (``out/clean.mp4``) becomes the source for everything after: planning, framing, rendering and later re-renders."""
     video, out = Path(video), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     report: dict = {}
     hk = hooks or Hooks()
     brand, choice = brand or hk.brand, choice or hk.choice
     hk.check()
+
+    def cleaned(tr):
+        """(video, transcript, note) after the cleanup, or the inputs unchanged when it is off or leaves the recording alone."""
+        nonlocal llm
+        if not clean:
+            return video, tr, ""
+        from .cleancut import clean_video
+        if llm is None:
+            from .planner import AnthropicLLM
+            llm = AnthropicLLM()
+        say("cutting fumbles and dead air out of the recording")
+        try:
+            res = clean_video(video, tr, out, pace=clean_pace, llm=llm, say=say, check=hk.check)
+        except (ValueError, OSError) as e:                       # an unreadable file, a failed cut: the original still works
+            say(f"the cleanup was skipped: {e}")
+            return video, tr, ""
+        if res is None:
+            return video, tr, ""
+        return res.video, res.transcript, ", " + res.summary
 
     if edl_path:
         edl = load_edl(edl_path)
@@ -74,7 +96,8 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
         if transcript_path:
             tr = load_transcript(transcript_path, language)
             say(f"using the transcript {transcript_path}")
-            hk.stage("transcribe", "skipped", "transcript provided")
+            video, tr, note = cleaned(tr)
+            hk.stage("transcribe", "skipped", "transcript provided" + note)
         else:
             hk.stage("transcribe", "running", "")
             if transcribe_fn is None:
@@ -88,6 +111,11 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
                 {"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in tr.words]},
                 ensure_ascii=False, indent=1), encoding="utf-8")
             detail = f"{len(tr.words)} words, language {tr.language}"
+            before = video
+            video, tr, note = cleaned(tr)
+            if video != before:                                   # the timeline changed: keep the one the recogniser heard
+                (out / "transcript.original.json").write_text((out / "transcript.json").read_text(encoding="utf-8"), encoding="utf-8")
+                detail = f"{len(tr.words)} words kept, language {tr.language}" + note
             if refine_text and tr.language in REFINE_LANGS:
                 if llm is None:
                     from .planner import AnthropicLLM

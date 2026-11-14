@@ -375,7 +375,7 @@ async function newJobView() {
     const options = {
       style: $('style').value,
       language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
-      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', speaker_name: $('speaker').value, speaker_title: $('role').value,
+      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', links: $('links').value, ai_images: $('ai_images').checked ? 'true' : '',
       cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '',
@@ -454,6 +454,10 @@ async function newJobView() {
       el('label', { class: brand.outro ? 'check' : 'check muted', for: 'outro' }, el('input', { type: 'checkbox', id: 'outro', disabled: !brand.outro, checked: brand.outro && !!brand.settings.default_outro }),
         el('span', {}, el('strong', { text: 'Ending video after each clip' }), el('br'),
           el('span', { class: 'muted' }, brand.outro ? `Your branding video (${brand.outro_seconds} s), added at the end.` : ['No ending video yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
+      el('label', { class: 'check', for: 'clean' }, el('input', { type: 'checkbox', id: 'clean' }),
+        el('span', {}, el('strong', { text: 'Raw recording: cut fumbles and dead air' }), el('br'),
+          el('span', { class: 'muted', text: 'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.' }))),
+      el('div', { id: 'clean-opts', hidden: true }, select('clean_pace', 'How tight', [['natural', 'Natural: keep short pauses (talks, courses, interviews)'], ['fast', 'Fast: tighter (YouTube talking head)'], ['tight', 'Tight: jump-cut style (Reels and Shorts)']])),
       el('label', { class: 'check', for: 'graphics' }, el('input', { type: 'checkbox', id: 'graphics' }),
         el('span', {}, el('strong', { text: 'Video has slides, cards or graphics' }), el('br'),
           el('span', { class: 'muted', text: 'For explainers that cut away from the speaker to text cards, charts or pictures. Those moments are shown whole instead of cropped to the middle, so the text is not cut off. Moments with the speaker are still framed on their face.' }))),
@@ -466,6 +470,7 @@ async function newJobView() {
         el('span', { text: 'I own this video or have the rights to process it.' })),
       el('div', { class: 'row' }, status, cancelBtn, submit))));
   const $ = (id) => form.querySelector('#' + id);
+  $('clean').addEventListener('change', () => { $('clean-opts').hidden = !$('clean').checked; });
   $('explainer').addEventListener('change', () => { $('explainer-opts').hidden = !$('explainer').checked; });
   $('style').addEventListener('change', () => { $('length').disabled = !!$('style').value; });      // the style sets the clip length
 

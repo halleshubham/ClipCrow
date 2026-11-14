@@ -50,6 +50,14 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   a face that never moves: a portrait on a slide) is shown whole as `Layout.fit_spans` (`track` only, ordered, hard cuts at both ends, shorter than
   `MIN_SPAN` dropped). The camera ignores faces inside a span, coverage is counted over the non-graphic samples, and a push-in never overlaps a span.
   It is opt-in (default off): without it the pipeline is unchanged. The thresholds are heuristics, tuned on synthetic video: look at a real result.
+- Fumble-free cut (`cleancut.py`, option "Raw recording: cut fumbles and dead air", `Params.clean`, `make --clean`): adapted from the `fumble-free-cut` skill. It
+  runs BEFORE planning: hesitation sounds, repeats (Hindi/Marathi reduplication like धीरे धीरे is only a suggestion, never applied), false starts, retake
+  lines, voice in a gap with no word, and long pauses shrunk to the pace; the result is `out/clean.mp4` and the transcript remapped onto it, and EVERY
+  later step (plan, framing, render, worker, re-renders, the editor's length limits) uses that video: `JobStore.working_video`, never `source_path`, for
+  anything on the plan's timeline. Only what the skill applies by default is applied (no person reviews it). The editorial pass is one model call per batch
+  of lines that returns line ids only (caps: 35% of a batch, never the last line); times and cut points are code. More than `MAX_REMOVED` of the recording,
+  too few words, or a cue-timed transcript = leave the video alone. Audio is cut sample-exact with 8 ms fades; the frame grid keeps A/V in sync (a test
+  checks the two durations). Retention deletes `clean.mp4` with the original.
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
 

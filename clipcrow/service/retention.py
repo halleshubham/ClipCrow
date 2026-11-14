@@ -53,6 +53,7 @@ def sweep(store: JobStore, days_for: Callable[[Job], tuple[int, int]], *, now: O
             src = store.source_path(job.id)
             if src is not None:
                 src.unlink(missing_ok=True)
+            (store.dir(job.id) / "out" / "clean.mp4").unlink(missing_ok=True)       # the cleaned cut is made from the original: it goes with it
 
             def mark(j, gone=remote_src):
                 j.source_removed = True

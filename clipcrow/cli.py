@@ -41,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--cover", action="store_true", help="a bold title (the hook, else the title) for the first ~250 ms, and a cN.cover.png")
     mk.add_argument("--logo", metavar="IMAGE", help="a logo (png/jpg/webp) in a corner of every clip")
     mk.add_argument("--outro", metavar="VIDEO", help="a branding video appended after every clip (first 6 s)")
+    mk.add_argument("--clean", action="store_true", help="first cut fumbles, fillers, retakes and dead air out of the raw recording")
+    mk.add_argument("--clean-pace", choices=["natural", "fast", "tight"], default="natural", help="how short long pauses become")
     mk.add_argument("--graphics", action="store_true", help="the source cuts to slides, cards or b-roll: show those whole instead of cropping them")
     mk.add_argument("--multi", choices=["switch", "split", "off"], default="switch",
                     help="two or more people on screen: cut to whoever talks, stack two, or follow one face")
@@ -192,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             res = make(a.video, a.out, language=a.language, transcript_path=a.transcript, edl_path=a.edl, opts=opts,
                        llm=AnthropicLLM(a.model) if need_llm else None,
                        score_llm=AnthropicLLM(a.score_model) if need_llm and a.score_model else None,
-                       render=not a.no_render, gsap_js=a.gsap, workers=a.workers, multi=a.multi, graphics=a.graphics, images=images, brand=kit, choice=choice,
+                       render=not a.no_render, gsap_js=a.gsap, workers=a.workers, multi=a.multi, graphics=a.graphics, clean=a.clean, clean_pace=a.clean_pace, images=images, brand=kit, choice=choice,
                        say=lambda m: print(f"  {m}", file=sys.stderr))
             print(f"{len(res.edl.clips)} clip(s) -> {a.out}" + (f"; rendered {len(res.videos)}" if res.videos else ""))
             return 0

@@ -232,6 +232,14 @@ class JobRunner:
             if src is None:
                 raise ValueError("the uploaded video is missing")
             self.pipeline.run(job, src, store.dir(job_id) / "out", hooks, say)
+            work = store.working_video(job_id)
+            if work is not None and work != src:                 # the cleanup cut a new video: the editor's limits are ITS length
+                try:
+                    from ..planner.source import probe_source
+                    info = probe_source(work)
+                    job.source = {"duration": info.duration, "width": info.width, "height": info.height}
+                except Exception:                                # a probe problem must not fail a finished job
+                    log.exception("could not probe the cleaned video of %s", job_id)
             job.status = "done"
         except Cancelled:
             if job_id in self._requeue:                         # stopped by a deploy, not by a person
@@ -345,7 +353,7 @@ class JobRunner:
         try:
             self._mark(job_id, clip_id, render="rendering")
             job = self.store.get(job_id)
-            video = self.store.source_path(job_id)
+            video = self.store.working_video(job_id)
             if video is None:
                 raise ValueError("the uploaded video is missing")
             replan = self._replan.pop(key, None)
