@@ -18,7 +18,8 @@ from tests.test_service import FakePipeline, upload, video_bytes, wait  # noqa: 
 
 PW = "correct horse battery"
 CHANNELS = [{"id": "ch-yt", "name": "My YouTube", "identifier": "youtube"}, {"id": "ch-ig", "name": "My Insta", "identifier": "instagram"},
-            {"id": "ch-tt", "name": "My TikTok", "identifier": "tiktok"}, {"id": "ch-x", "name": "My X", "identifier": "x"},
+            {"id": "ch-tt", "name": "My TikTok", "identifier": "tiktok"}, {"id": "ch-x", "name": "My X", "identifier": "x", "customer": {"id": "c1", "name": "Thet Marathi"}},
+            {"id": "ch-dev", "name": "My blog", "identifier": "devto"}, {"id": "ch-wa", "name": "Group", "identifier": "botsab"},
             {"id": "ch-off", "name": "Off", "identifier": "youtube", "disabled": True}]
 
 
@@ -47,7 +48,7 @@ def test_settings_are_exactly_what_each_platforms_schema_requires():
 
 
 @pytest.mark.parametrize("platform,kw,text", [("youtube", {"title": "a"}, "at least 2"), ("youtube", {"title": "ab", "privacy": "x"}, "public, unlisted"),
-                                              ("x", {"title": "ab"}, "not supported")])
+                                              ("devto", {"title": "ab"}, "not supported")])
 def test_bad_settings_are_refused_with_a_message(platform, kw, text):
     with pytest.raises(PublishError, match=text):
         settings_for(platform, **kw)
@@ -78,7 +79,8 @@ def test_the_client_filters_channels_and_builds_the_requests_it_documents(tmp_pa
         return [{"postId": "p1", "integration": "ch-yt"}]
     sb = SocioBird("https://api.sociobird.example/", "KEY", request=fake)
     chans = sb.channels()
-    assert [(c.id, c.platform) for c in chans] == [("ch-yt", "youtube"), ("ch-ig", "instagram"), ("ch-tt", "tiktok")]   # x and disabled are out
+    assert [(c.id, c.platform) for c in chans] == [("ch-yt", "youtube"), ("ch-ig", "instagram"), ("ch-tt", "tiktok"), ("ch-x", "x")]   # dev.to, WhatsApp and disabled are out
+    assert [c.brand for c in chans] == ["", "", "", "Thet Marathi"]                                   # the brand is SocioBird's "customer"
     f = tmp_path / "c.mp4"
     f.write_bytes(b"0" * 1000)
     media = sb.upload(f)
@@ -316,3 +318,26 @@ def test_an_answer_that_is_a_web_page_names_the_address_setting(monkeypatch):
     monkeypatch.setattr(publish.urllib.request, "urlopen", lambda req, timeout=0: R(b"<!DOCTYPE html><html></html>"))
     with pytest.raises(publish.PublishError, match="SOCIOBIRD_API_URL"):
         publish.SocioBird("https://example.test", "k").channels()
+
+
+def test_facebook_x_linkedin_and_telegram_settings_follow_their_schemas():
+    assert settings_for("facebook", title="x") == {"__type": "facebook", "post_type": "post"}
+    x = settings_for("x", title="x", ai_generated=True)
+    assert x == {"__type": "x", "who_can_reply_post": "everyone", "made_with_ai": True}
+    assert settings_for("linkedin-page", title="x")["post_as_images_carousel"] is False and settings_for("linkedin", title="x")["__type"] == "linkedin"
+    assert settings_for("telegram", title="x") == {"__type": "telegram"}
+
+
+def test_each_platforms_caption_limit_applies():
+    from clipcrow.service.publish import LIMITS
+    assert LIMITS["x"] == 280 and LIMITS["telegram"] == 4096 and LIMITS["facebook"] > 60000
+    assert caption_html("a" * 500, "x").count("a") == 280
+
+
+def test_the_channel_list_carries_brand_and_limit(tmp_path, video_bytes):
+    from tests.test_service import client
+    fake = SocioBird("https://api.sociobird.example/", "KEY", request=lambda m, p, **kw: CHANNELS)
+    c, _ = client(tmp_path, sociobird=fake)
+    rows = c.get("/api/publish/channels").json()
+    x = next(r for r in rows if r["platform"] == "x")
+    assert x["brand"] == "Thet Marathi" and x["limit"] == 280 and next(r for r in rows if r["platform"] == "youtube")["brand"] == ""

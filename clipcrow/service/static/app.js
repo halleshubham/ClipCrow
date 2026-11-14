@@ -947,7 +947,8 @@ async function brandView() {
 // ---- sharing ---------------------------------------------------------------------------------------
 
 const STATUS_WORD = { queued: 'Waiting…', sent: 'Posted', scheduled: 'Scheduled', failed: 'Failed' };
-const PLATFORM_WORD = { youtube: 'YouTube', instagram: 'Instagram', 'instagram-standalone': 'Instagram', tiktok: 'TikTok' };
+const PLATFORM_WORD = { youtube: 'YouTube', instagram: 'Instagram', 'instagram-standalone': 'Instagram', tiktok: 'TikTok', facebook: 'Facebook', x: 'X', linkedin: 'LinkedIn', 'linkedin-page': 'LinkedIn', telegram: 'Telegram' };
+const MAX_CHANNELS = 6;                      // the server accepts at most this many channels in one post
 
 async function shareView(jobId, clipId) {
   const [job, channels, usage] = await Promise.all([api(`/jobs/${jobId}`), api('/publish/channels'), api(`/jobs/${jobId}/usage`).catch(() => ({ disclosure_recommended: false }))]);
@@ -958,13 +959,42 @@ async function shareView(jobId, clipId) {
   const list = el('div', { class: 'stack', style: { gap: '8px' } });
   const boxes = channels.map((ch) => ({ ch, box: el('input', { type: 'checkbox', id: `ch-${ch.id}`, 'data-ch': ch.id }) }));
   const title = el('input', { id: 'sh-title', type: 'text', maxlength: '100', class: 'deva', value: clip.title });
-  const caption = el('textarea', { id: 'sh-caption', rows: '4', class: 'deva', maxlength: '2000' });
+  const caption = el('textarea', { id: 'sh-caption', rows: '4', class: 'deva', maxlength: '5000' });
+  const capWarn = el('div', { class: 'hint', role: 'status' });
   caption.value = [clip.title, clip.hook].filter(Boolean).join('\n');
   const privacy = el('select', { id: 'sh-privacy' }, [['public', 'Public'], ['unlisted', 'Unlisted (YouTube; followers only on TikTok)'], ['private', 'Private']].map(([v, t]) => el('option', { value: v, text: t })));
   const when = el('input', { id: 'sh-when', type: 'datetime-local' });
   const kids = el('input', { id: 'sh-kids', type: 'checkbox' });
   const ai = el('input', { id: 'sh-ai', type: 'checkbox' });
   const send = el('button', { class: 'btn primary', type: 'button', text: 'Post' });
+  const counter = el('span', { class: 'chip plain', text: `0 of ${MAX_CHANNELS} chosen` });
+  const chosenBoxes = () => boxes.filter((b) => b.box.checked);
+  function onPick() {                                       // at most MAX_CHANNELS at once; warn where the caption is longer than a platform allows
+    const n = chosenBoxes().length;
+    counter.textContent = `${n} of ${MAX_CHANNELS} chosen`;
+    for (const b of boxes) b.box.disabled = !b.box.checked && n >= MAX_CHANNELS;
+    const over = [...new Map(chosenBoxes().filter((b) => caption.value.length > b.ch.limit).map((b) => [b.ch.platform, b.ch])).values()];
+    capWarn.textContent = over.length ? `Too long for ${over.map((c) => `${PLATFORM_WORD[c.platform] || c.platform} (${c.limit})`).join(', ')}: the end is cut off there.` : '';
+  }
+  for (const b of boxes) b.box.addEventListener('change', onPick);
+  caption.addEventListener('input', onPick);
+  const byBrand = new Map();                                // brand -> channels; channels with no brand go last
+  for (const b of boxes) { const k = b.ch.brand || ''; if (!byBrand.has(k)) byBrand.set(k, []); byBrand.get(k).push(b); }
+  const brandNames = [...byBrand.keys()].sort((a, c) => (a === '') - (c === '') || a.localeCompare(c));
+  const brandBlock = (name) => {
+    const rows = byBrand.get(name).sort((a, c) => (PLATFORM_WORD[a.ch.platform] || '').localeCompare(PLATFORM_WORD[c.ch.platform] || '') || a.ch.name.localeCompare(c.ch.name));
+    const all = el('button', { class: 'btn small', type: 'button', text: 'Choose all' });
+    all.addEventListener('click', () => {
+      const every = rows.every((b) => b.box.checked);
+      for (const b of rows) { if (every) b.box.checked = false; else if (!b.box.checked && chosenBoxes().length < MAX_CHANNELS) b.box.checked = true; }
+      all.textContent = rows.every((b) => b.box.checked) ? 'Clear' : 'Choose all';
+      onPick();
+    });
+    return el('div', { class: 'brand-group' },
+      el('div', { class: 'brand-head' }, el('h3', { translate: 'no', text: name || 'Other channels' }), el('span', { class: 'chip plain', text: String(rows.length) }), el('span', { class: 'grow' }), all),
+      el('div', { class: 'brand-channels' },
+        ...rows.map(({ ch, box }) => el('label', { class: 'check', for: box.id }, box, el('span', {}, el('strong', { translate: 'no', text: ch.name }), el('br'), el('span', { class: 'muted', text: PLATFORM_WORD[ch.platform] || ch.platform }))))));
+  };
 
   function paint(rows) {
     list.replaceChildren(...rows.map((r) => el('div', { class: 'row small' },
@@ -984,7 +1014,7 @@ async function shareView(jobId, clipId) {
   }
   send.addEventListener('click', async () => {
     err.hidden = true;
-    const chosen = boxes.filter((b) => b.box.checked).map((b) => b.ch.id);
+    const chosen = chosenBoxes().map((b) => b.ch.id);
     if (!chosen.length) { err.textContent = 'Choose at least one channel.'; err.hidden = false; return; }
     const body = { channels: chosen, title: title.value, caption: caption.value, privacy: privacy.value, made_for_kids: kids.checked, ai_confirmed: ai.checked };
     if (when.value) body.when = new Date(when.value).toISOString();
@@ -999,11 +1029,12 @@ async function shareView(jobId, clipId) {
   app.replaceChildren(el('div', { class: 'stack' },
     el('div', { class: 'row' }, el('div', { class: 'grow' }, el('h1', { text: 'Share clip' }), el('div', { class: 'small muted', translate: 'no', text: clip.title })),
       el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
-    channels.length === 0 ? el('div', { class: 'card empty', text: 'No YouTube, Instagram or TikTok channels are connected in SocioBird yet.' }) : el('div', { class: 'card stack' },
-      el('fieldset', { class: 'stack', style: { border: 0, padding: 0, margin: 0 } }, el('legend', { class: 'field', text: 'Post to' }),
-        ...boxes.map(({ ch, box }) => el('label', { class: 'check', for: box.id }, box, el('span', {}, el('strong', { translate: 'no', text: ch.name }), el('br'), el('span', { class: 'muted', text: PLATFORM_WORD[ch.platform] || ch.platform }))))),
-      field('Title', title, 'YouTube and TikTok show it; Instagram uses the caption.'),
-      field('Caption', caption, 'Plain text. Hashtags and links are fine.'),
+    channels.length === 0 ? el('div', { class: 'card empty', text: 'No channels we can post to are connected in SocioBird yet.' }) : el('div', { class: 'card stack' },
+      el('fieldset', { class: 'stack', style: { border: 0, padding: 0, margin: 0 } },
+        el('legend', { class: 'field', text: 'Post to' }), el('div', { class: 'row' }, counter, el('span', { class: 'small muted', text: 'Channels are grouped by brand, as in SocioBird.' })),
+        ...brandNames.map(brandBlock)),
+      field('Title', title, 'YouTube and TikTok show it; the other platforms use the caption.'),
+      el('div', {}, field('Caption', caption, 'Plain text. Hashtags and links are fine. X allows 280 characters.'), capWarn),
       el('div', { class: 'grid2', style: { marginTop: 0 } }, field('Who can see it', privacy), field('Post at (your time, optional)', when, 'Leave empty to post now.')),
       el('label', { class: 'check', for: 'sh-kids' }, kids, el('span', {}, el('strong', { text: 'This video is made for kids' }), el('br'), el('span', { class: 'muted', text: 'YouTube asks every creator to declare this.' }))),
       usage.disclosure_recommended && el('label', { class: 'check', for: 'sh-ai' }, ai, el('span', {}, el('strong', { text: 'I will label this video as AI content' }), el('br'),

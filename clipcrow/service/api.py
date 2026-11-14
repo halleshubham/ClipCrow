@@ -40,7 +40,7 @@ from .brand import MAX_LOGO_BYTES, MAX_OUTRO_BYTES, BrandStore
 from .editor import ClipEdit, clip_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Catalog, load_catalog
-from .publish import PublishError, SocioBird, caption_html, settings_for, validate_when
+from .publish import LIMITS, PublishError, SocioBird, caption_html, settings_for, validate_when
 from .retention import Sweeper, env_days, expires_at
 from .storage import Mirror, S3Storage, StorageError, signature
 from .uploads import OPEN_LIMIT, Upload, UploadStore
@@ -383,7 +383,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     def publish_channels() -> list[dict]:
         sb = need_publishing()
         try:
-            return [{"id": c.id, "name": c.name, "platform": c.platform} for c in sb.channels()]
+            return [{"id": c.id, "name": c.name, "platform": c.platform, "brand": c.brand, "limit": LIMITS.get(c.platform, 2000)}
+                    for c in sb.channels()]
         except PublishError as e:
             raise HTTPException(UPSTREAM, str(e))
 

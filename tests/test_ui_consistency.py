@@ -33,3 +33,15 @@ def test_no_literal_colours_in_the_script_or_below_the_tokens_in_the_stylesheet(
     body = re.sub(r"url\(\"data:[^\"]*\"\)", "", body)               # inline SVG icons carry their own colours
     found = re.findall(r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b", body)
     assert not found, f"literal colours outside the tokens: {found[:5]}: define a token for both themes"
+
+
+def test_the_script_parses():
+    """A syntax error in app.js blanks the whole UI and no Python test would notice."""
+    import shutil
+    import subprocess
+    import pytest
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("needs node")
+    r = subprocess.run([node, "--check", str(STATIC / "app.js")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[:400]
