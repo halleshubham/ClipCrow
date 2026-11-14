@@ -74,6 +74,9 @@ def settings_for(platform: str, *, title: str, privacy: str = "public", made_for
     raise PublishError("That platform is not supported yet.")
 
 
+USER_AGENT = "ClipCrow/1.0 (+https://github.com/halleshubham/ClipCrow)"
+
+
 class SocioBird:
     def __init__(self, base_url: str, api_key: str, *, request: Callable[..., dict] | None = None):
         if not (base_url and api_key):
@@ -90,7 +93,7 @@ class SocioBird:
 
     # --- transport ----------------------------------------------------------------------------------
     def _http(self, method: str, path: str, *, json_body: dict | None = None, file: tuple[str, bytes, str] | None = None) -> dict | list:
-        headers = {"Authorization": self._key}
+        headers = {"Authorization": self._key, "User-Agent": USER_AGENT}      # Cloudflare in front of SocioBird refuses urllib's own (error 1010)
         data = None
         if file is not None:
             name, content, ctype = file

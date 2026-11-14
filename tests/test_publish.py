@@ -286,3 +286,21 @@ def test_the_post_log_goes_with_the_job(tmp_path, video_bytes):
     assert (tmp_path / "data" / "jobs" / jid / "out" / "posts.json").is_file()
     assert c.delete(f"/api/jobs/{jid}").status_code == 204
     assert not (tmp_path / "data" / "jobs" / jid).exists()
+
+
+def test_requests_carry_a_named_user_agent_because_cloudflare_refuses_urllibs(monkeypatch):
+    import io
+    from clipcrow.service import publish
+    seen = {}
+
+    class R(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake(req, timeout=0):
+        seen["ua"] = req.get_header("User-agent")
+        seen["auth"] = req.get_header("Authorization")
+        return R(b"[]")
+    monkeypatch.setattr(publish.urllib.request, "urlopen", fake)
+    assert publish.SocioBird("https://example.test/api", "k").channels() == []
+    assert seen["ua"] == publish.USER_AGENT and "urllib" not in seen["ua"].lower() and seen["auth"] == "k"

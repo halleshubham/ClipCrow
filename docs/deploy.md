@@ -36,7 +36,7 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
      plan numbers are placeholders and there are no prices in the code.
    - *Razorpay:* `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`; in the Razorpay dashboard add the webhook
      `https://<your domain>/api/billing/razorpay/webhook` for `subscription.*` and `payment_link.paid`.
-   - *Posting:* `SOCIOBIRD_API_URL`, `SOCIOBIRD_API_KEY` (and `CLIPCROW_SOCIOBIRD_SHARED=1` if accounts are on).
+   - *Posting:* `SOCIOBIRD_API_URL` (the API root, `https://go.sociobird.app/api`: ClipCrow adds `/public/v1/...`), `SOCIOBIRD_API_KEY` (and `CLIPCROW_SOCIOBIRD_SHARED=1` if accounts are on).
    - *R2:* see section 3.
 4. **Deploy.** The first start takes a minute (health check `start_period` is 90 s). Then, in the container terminal:
    `clipcrow selftest` should print `ok` for every line, ending with a real render.
