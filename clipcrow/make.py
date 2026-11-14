@@ -110,13 +110,8 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
             (out / "transcript.json").write_text(json.dumps(
                 {"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in tr.words]},
                 ensure_ascii=False, indent=1), encoding="utf-8")
-            detail = f"{len(tr.words)} words, language {tr.language}"
-            before = video
-            video, tr, note = cleaned(tr)
-            if video != before:                                   # the timeline changed: keep the one the recogniser heard
-                (out / "transcript.original.json").write_text((out / "transcript.json").read_text(encoding="utf-8"), encoding="utf-8")
-                detail = f"{len(tr.words)} words kept, language {tr.language}" + note
-            if refine_text and tr.language in REFINE_LANGS:
+            detail, fixed = f"{len(tr.words)} words, language {tr.language}", ""
+            if refine_text and tr.language in REFINE_LANGS:        # first: the cuts below are decided on the CORRECTED text, not on Whisper's Hindi-flavoured spelling
                 if llm is None:
                     from .planner import AnthropicLLM
                     llm = AnthropicLLM()
@@ -127,8 +122,16 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
                     (out / "transcript.raw.json").write_text(json.dumps(
                         {"language": raw_tr.language, "words": [w.model_dump(exclude_none=True) for w in raw_tr.words]},
                         ensure_ascii=False, indent=1), encoding="utf-8")
-                    detail += f", {n} sentence(s) corrected"
+                    fixed = f", {n} sentence(s) corrected"
+                    detail += fixed
                     say(f"{n} sentence(s) corrected; the original is in transcript.raw.json")
+            before = video
+            video, tr_cut, note = cleaned(tr)
+            if video != before:                                   # the timeline changed: keep the one the recogniser heard
+                (out / "transcript.original.json").write_text(json.dumps(
+                    {"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in tr.words]}, ensure_ascii=False, indent=1), encoding="utf-8")
+                tr = tr_cut
+                detail = f"{len(tr.words)} words kept, language {tr.language}{fixed}{note}"
             (out / "transcript.json").write_text(json.dumps(
                 {"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in tr.words]},
                 ensure_ascii=False, indent=1), encoding="utf-8")

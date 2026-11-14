@@ -106,7 +106,7 @@ def test_the_model_can_only_drop_lines_it_was_shown_within_the_caps_and_never_th
         return cc.Drops(drop=[cc.Drop(id=2, why="restart"), cc.Drop(id=2, why="dup"), cc.Drop(id=99), cc.Drop(id=9), cc.Drop(id=4), cc.Drop(id=5), cc.Drop(id=6)])
     cuts = cc.judge_retakes(words, "mr", FakeLLM(respond))
     assert seen["purpose"] == "retake-judge" and seen["prompt"].startswith("0: वाक्य0")
-    assert [c.first for c in cuts] == [2, 4, 5]                    # 99 and the last line refused, 2 once, the cap is 35% of 10 = 3
+    assert [c.first for c in cuts] == [2, 4, 5, 6]                 # 99 and the last line refused, 2 once, and the cap is half of the batch (5)
     assert all(c.kind == "judged" for c in cuts)
 
 
@@ -409,3 +409,151 @@ def test_the_worker_clip_limit_comes_from_the_environment(monkeypatch):
     assert _worker_clip_limit() == 0.0
     monkeypatch.setenv("CLIPCROW_WORKER_MAX_CLIP_SECONDS", "nonsense")
     assert _worker_clip_limit() == 100.0
+
+
+# --- what the audit of a real job found ---------------------------------------------------------------------------------
+# A 84 s raw recording: an intro stating the rule, a first take of the explanation, a 3 s pause, a better second take. Whisper returned no words for 21 s
+# of voiced audio, the cleanup treated "no words" as dead air and deleted it, and the restart sat ~30 words back, out of reach of every repeat rule.
+
+def story():
+    intro = [uniq(100 + k) for k in range(14)]
+    opener = ["आपल्याला", "माहिती", "आहे", "पुण्यासारख्या"]
+    take1 = opener + [uniq(200 + k) for k in range(12)]
+    take2 = ["आपल्याला", "माहिती", "आहे", "पुण्यासारख्या"] + [uniq(300 + k) for k in range(20)]
+    return seq(*intro, *take1, ("pause", 3.3), *take2, step=0.4), len(intro), len(intro) + len(take1)
+
+
+def test_a_passage_said_again_after_a_pause_drops_the_whole_first_try_and_keeps_the_intro():
+    words, a, p = story()
+    cuts = [c for c in cc.detect(words, "mr") if c.apply and c.first is not None]
+    assert any(c.kind == "restart" and c.first == a and c.last == p - 1 for c in cuts)       # exactly the first take: the intro (the rule) stays
+    assert not any(c.first < a <= (c.last or 0) for c in cuts)
+
+
+def test_a_restart_needs_a_real_pause_and_the_same_opening():
+    words, a, p = story()
+    shorter = list(words)
+    shift = 3.0
+    shorter = [Word(w=x.w, s=x.s - (shift if i >= p else 0), e=x.e - (shift if i >= p else 0)) for i, x in enumerate(words)]      # the gap is now 0.3 s
+    assert not any(c.kind == "restart" for c in cc.detect(shorter, "mr"))
+    other = list(words)
+    other[p] = Word(w="भलतेच", s=words[p].s, e=words[p].e)
+    other[p + 1] = Word(w="काहीतरी", s=words[p + 1].s, e=words[p + 1].e)
+    assert not any(c.kind == "restart" for c in cc.detect(other, "mr"))
+
+
+def test_voiced_audio_with_no_words_is_kept_not_shrunk_as_dead_air():
+    words = [W("a", 0.0, 0.4), W("b", 0.5, 0.9), W("c", 9.0, 9.4), W("d", 9.5, 9.9)]
+    db = np.full(1100, -80.0)
+    db[0:100] = -20.0                                   # the first words
+    db[200:800] = -20.0                                 # 6 s of speech nobody wrote down
+    db[900:1000] = -20.0
+    thr = cc.speech_threshold(db)
+    keeps = cc.compute_keeps(words, [], db, thr, "tight", 11.0, 30.0)
+    kept = sum(b - a for a, b in keeps) / 30.0
+    assert any(a <= 2.1 * 30 and b >= 7.9 * 30 for a, b in keeps) and kept > 7.0       # the six seconds are inside kept ranges
+    assert cc.missed_speech(words, set(), db, thr) and cc.missed_speech(words, {1}, db, thr) == []        # next to a cut word it goes with that take
+
+
+def test_real_silence_between_words_is_still_shortened():
+    words = [W("a", 0.0, 0.4), W("b", 0.5, 0.9), W("c", 9.0, 9.4), W("d", 9.5, 9.9)]
+    db = np.full(1100, -80.0)
+    db[0:100] = -20.0
+    db[900:1000] = -20.0
+    keeps = cc.compute_keeps(words, [], db, cc.speech_threshold(db), "tight", 11.0, 30.0)
+    assert sum(b - a for a, b in keeps) / 30.0 < 4.0
+
+
+def test_the_editing_pass_is_shown_the_pauses():
+    words, a, p = story()
+    seen = {}
+
+    def respond(purpose, prompt, schema):
+        seen["prompt"] = prompt
+        return cc.Drops(drop=[])
+    cc.judge_retakes(words, "mr", FakeLLM(respond))
+    assert "[pause 3.3s]" in seen["prompt"] and "stopped and started again" in cc.JUDGE_SYSTEM or "FIRST" in cc.JUDGE_SYSTEM
+
+
+@ffmpeg
+def test_make_corrects_the_text_before_it_decides_the_cuts(tmp_path, long_video):
+    from clipcrow.make import make
+    from clipcrow.planner import PlannerOptions
+    from tests.test_planner import scripted
+    llm = scripted()
+    make(long_video, tmp_path / "o", llm=llm, opts=PlannerOptions(target_clips=1, workers=1), render=False, clean=True,
+         transcribe_fn=lambda media, language=None, progress=None: long_talk())
+    purposes = [p for p, _ in llm.calls]
+    assert "text-refine" in purposes and "retake-judge" in purposes and purposes.index("text-refine") < purposes.index("retake-judge")
+
+
+# --- a closing said twice in other words; a name that merely comes back -----------------------------------------------------
+
+def closing_story():
+    """intro | take 1: an opening sentence then a sentence S | pause | a short aborted attempt | pause | take 2, which says S again in other words."""
+    shared = [uniq(500 + k) for k in range(12)]
+    intro = [uniq(400 + k) for k in range(15)]
+    take1 = [uniq(420 + k) for k in range(6)] + ["।"] + shared[:6] + [uniq(430)] + shared[6:] + ["।"]
+    aborted = shared[:4] + [uniq(440 + k) for k in range(6)]
+    take2 = [uniq(450 + k) for k in range(2)] + shared[:6] + [uniq(460)] + shared[6:] + [uniq(470 + k) for k in range(4)]
+    clean = lambda ts: [t for t in ts if t != "।"]
+    words = seq(*intro, ("pause", 1.0), *clean(take1), ("pause", 2.0), *aborted, ("pause", 3.0), *take2, step=0.4)
+    return words, len(intro), len(intro) + len(clean(take1)) + len(aborted), len(words)
+
+
+def test_a_sentence_the_next_passage_says_again_in_other_words_drops_the_earlier_try_through_the_aborted_attempt():
+    words, intro_n, take1_end, n = closing_story()
+    cuts = [c for c in cc.detect(words, "mr") if c.apply and c.first is not None and c.kind == "retake"]
+    assert cuts and cuts[0].first >= intro_n and cuts[0].last >= take1_end - 1             # the intro stays; the restated sentence and the aborted try go
+    assert cuts[0].last < n - 18                                                           # and the second take is untouched
+
+
+def test_a_name_that_comes_back_after_a_pause_is_not_a_restart():
+    name = ["Global", "Hunger", "Index"]
+    a = [uniq(600 + k) for k in range(10)]
+    words = seq(*a, *name, "चे", "आकडे", "पहा", ("pause", 1.5), "पण", *name, "हा", "फक्त", "तुमचे", "तो", "हे", "पाहतो", step=0.4)
+    assert not any(c.kind == "restart" and c.apply for c in cc.detect(words, "mr"))
+
+
+def test_a_closing_that_only_mentions_the_same_topic_is_kept():
+    a = [uniq(700 + k) for k in range(20)]
+    b = [uniq(720 + k) for k in range(20)]                      # a different passage altogether
+    words = seq(*a, ("pause", 2.0), *b, step=0.4)
+    assert [c for c in cc.detect(words, "mr") if c.apply and c.kind in ("retake", "restart")] == []
+
+
+def test_the_editing_pass_is_told_about_unfinished_fragments_and_whole_first_attempts():
+    assert "unfinished" in cc.JUDGE_SYSTEM and "FIRST" in cc.JUDGE_SYSTEM
+
+
+def test_the_cleanup_report_lists_every_cut_with_times_in_the_original_and_the_speech_it_kept(tmp_path):
+    words, a, p = story()
+    video = tmp_path / "v30.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=15:d=26", "-f", "lavfi", "-i", "sine=f=300:d=26",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(video)], check=True)
+    tr = parse_transcript({"language": "mr", "words": [w.model_dump() for w in words]})
+    res = cc.clean_video(video, tr, tmp_path / "o", pace="natural", audio_loader=lambda m: np.zeros(26 * 16000, np.float32))
+    assert res is not None
+    rep = json.loads((tmp_path / "o" / "cleanup.json").read_text(encoding="utf-8"))
+    applied = [c for c in rep["cuts"] if c["applied"]]
+    assert applied and all(isinstance(c["start"], float) and isinstance(c["end"], float) and c["end"] >= c["start"] for c in applied)
+    assert "missed_speech" in rep
+
+
+def test_the_cleanup_route_shows_what_was_cut_to_the_owner_only(tmp_path, video_bytes):
+    from tests.test_service import FakePipeline, client, upload, wait
+    c, app = client(tmp_path, FakePipeline())
+    job = wait(c, upload(c, video_bytes).json()["id"])
+    assert c.get(f"/api/jobs/{job['id']}/cleanup").status_code == 404                                  # a job with no cleanup has no report
+    out = tmp_path / "data" / "jobs" / job["id"] / "out"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "cleanup.json").write_text(json.dumps({"pace": "natural", "before_seconds": 84.0, "after_seconds": 61.0, "by_kind": {"retake": 1},
+        "missed_speech": [[1.0, 3.5]], "timemap": [], "cuts": [
+            {"kind": "retake", "reason": "r", "text": "पहिला प्रयत्न", "applied": True, "start": 26.7, "end": 44.8},
+            {"kind": "stutter", "reason": "r", "text": "तो तो", "applied": False, "start": 5.0, "end": 5.4},
+            {"kind": "filler", "reason": "r", "text": "x", "applied": True, "start": None, "end": None}]}), encoding="utf-8")
+    r = c.get(f"/api/jobs/{job['id']}/cleanup")
+    assert r.status_code == 200
+    body = r.json()
+    assert [x["kind"] for x in body["cuts"]] == ["retake"] and body["cuts"][0]["start"] == 26.7 and body["missed_speech"] == [[1.0, 3.5]]
+    assert c.get("/api/jobs/zzzzzzzzzzzz/cleanup").status_code == 404

@@ -30,9 +30,9 @@ from typing import Callable
 from pydantic import BaseModel
 
 from .edl import Word
+from .energy import HOP, energy_db, speech_threshold, voiced_runs  # noqa: F401  (re-exported: the tests and callers use them from here)
 from .planner.transcript import Transcript, parse_transcript
 
-HOP = 0.01                       # seconds per energy frame
 PACES = {"natural": dict(max_pause=0.60, keep_pause=0.40),     # pauses up to max_pause stay; longer ones shrink to keep_pause
          "fast": dict(max_pause=0.40, keep_pause=0.28),
          "tight": dict(max_pause=0.25, keep_pause=0.18)}
@@ -40,7 +40,16 @@ MAX_REMOVED = 0.45               # more than this share of the recording cut = t
 MIN_WORDS = 20                   # too little speech to judge
 MAX_MINUTES = 90                 # the audio is held in memory while it is cut
 JUDGE_BATCH = 80                 # sentences per model call
-JUDGE_MAX_SHARE = 0.35           # the model may drop at most this share of a batch
+JUDGE_MAX_SHARE = 0.5            # the model may drop at most this share of a batch (a whole first take can be almost half of it)
+MISSED_RUN = 0.6                 # voiced audio this long with no recognised word is speech the recogniser missed: it is kept, never cut as "dead air"
+RESTART_PAUSE = 0.9              # seconds of silence after which a speaker may start a passage again
+LOOKBACK_WORDS = 70              # how far back the earlier try of a restarted passage may begin
+PASSAGE_MIN_WORDS = 8            # a passage (what is said between two long pauses) shorter than this is not compared
+PASSAGE_SHARE = 0.5              # a later passage that contains this much of an earlier one's content words (or shares this much of the two) redoes it
+PASSAGE_AHEAD = 3                # ... and starts within this many passages of it
+SENTENCE_MIN = 8                 # a sentence is compared with the next passage's sentences when it has this many content words
+SENTENCE_SHARE = 0.45            # ... and the next passage has one that shares this much of the two (reworded, not word for word)
+REDO_PASSAGES = 2                # the redo is the next passage, or the one after an aborted attempt
 LEAD_IN, TAIL, FADE_MS, MIN_KEEP = 0.25, 0.6, 8, 0.12
 SAME_WORD = 0.85                 # two spellings this alike count as the same word
 PHRASE_WINDOW = 10               # a phrase restated within this many words is a false start
@@ -95,38 +104,6 @@ class Cut:
 
 
 # --- audio energy -----------------------------------------------------------------------------
-
-def energy_db(audio) -> "np.ndarray":
-    """Loudness per 10 ms of 16 kHz mono float samples, in dB."""
-    import numpy as np
-    h = int(16000 * HOP)
-    n = len(audio) // h
-    fr = np.asarray(audio[: n * h], dtype=np.float32).reshape(n, h)
-    return 20 * np.log10(np.sqrt((fr ** 2).mean(1)) + 1e-9)
-
-
-def speech_threshold(db) -> float:
-    import numpy as np
-    floor, peak = np.percentile(db, 10), np.percentile(db, 95)
-    return float(floor + max(6.0, min(18.0, (peak - floor) * 0.35)))
-
-
-def voiced_runs(db, thr: float, t0: float, t1: float, min_gap: float = 0.06) -> list[tuple[float, float]]:
-    a, b = max(0, int(t0 / HOP)), min(len(db), int(t1 / HOP))
-    runs: list[list[float]] = []
-    cur = None
-    for k in range(a, b):
-        if db[k] > thr:
-            if cur and k * HOP - cur[1] <= min_gap:
-                cur[1] = (k + 1) * HOP
-            else:
-                if cur:
-                    runs.append(cur)
-                cur = [k * HOP, (k + 1) * HOP]
-    if cur:
-        runs.append(cur)
-    return [(s, e) for s, e in runs]
-
 
 def refine_edges(words: list[Word], db, thr: float) -> list[tuple[float, float]]:
     """Tighten a recogniser's sloppy word edges against the audio: extend a start back (<= 120 ms) and an end forward (<= 200 ms) while it is still voiced."""
@@ -255,13 +232,77 @@ def detect(words: list[Word], lang: str, *, db=None, thr: float | None = None) -
                                 text=" ".join(w.w for w in words[a:c])[:200]))
                 done.update(range(a, c))
                 break
+    for p in range(4, N - 3):                                                # 3b restart after a pause: the speaker stops, then says the passage again from its opening
+        if words[p].s - words[p - 1].e < RESTART_PAUSE or p in protected or p - 1 in protected:
+            continue
+        after = [t for t in nw[p:p + 6] if t]
+        if len(after) < 5:
+            continue
+        best = None
+        for i in range(max(0, p - LOOKBACK_WORDS), p - 4):
+            if not same_word(after[0], nw[i]):                              # a restart begins with the same words: a name that merely comes back is not one
+                continue
+            hit, _ = overlap(after, [t for t in nw[i:i + 9] if t])
+            if hit >= 4 and not any(k in done for k in range(i, p)) and (best is None or hit >= best[0]):
+                best = (hit, i)
+        if best is not None and p - best[1] <= 2 * (N - p):                  # the earlier try is not longer than what follows it twice over
+            i = best[1]
+            cuts.append(Cut("restart", f"the passage starting at word {i} is said again after a {words[p].s - words[p - 1].e:.1f} s pause", i, p - 1,
+                            text=" ".join(w.w for w in words[i:p])[:240]))
+            done.update(range(i, p))
+    chunks, start = [], 0                                                    # 3c a whole passage said again, reworded: the speaker stops, pauses and tries once more
+    for i in range(1, N):
+        if words[i].s - words[i - 1].e >= RESTART_PAUSE:
+            chunks.append((start, i - 1))
+            start = i
+    chunks.append((start, N - 1))
+    content = [[t for t in nw[a:b + 1] if len(t) >= 3 and not is_filler(t)] for a, b in chunks]
+    for x, (a, b) in enumerate(chunks):
+        if len(content[x]) < PASSAGE_MIN_WORDS or a in protected or all(k in done for k in range(a, b + 1)):
+            continue
+        redone = None
+        for y in range(x + 1, min(x + 1 + PASSAGE_AHEAD, len(chunks))):
+            if len(content[y]) < 0.6 * len(content[x]):                      # a short follow-up is a recap, not a redo
+                continue
+            hit, share = overlap(content[x], content[y])
+            if share >= PASSAGE_SHARE or hit / len(content[x]) >= PASSAGE_SHARE + 0.1:
+                redone = y
+        if redone is None:
+            continue
+        end = chunks[redone - 1][1]
+        between_ok = all(len(content[k]) <= 14 or overlap(content[k], content[redone])[1] >= 0.3 for k in range(x + 1, redone))
+        if not between_ok:                                                   # something else was said in between: only the earlier try goes
+            end = b
+        cuts.append(Cut("retake", f"the passage at word {a} is said again, reworded, after a pause", a, end, text=" ".join(w.w for w in words[a:end + 1])[:240]))
+        done.update(range(a, end + 1))
+    line_chunk = [next(c for c, (ca, cb) in enumerate(chunks) if ca <= a <= cb) for a, _ in lines]                  # which passage each line is in
+    line_content = [[t for t in nw[a:b + 1] if len(t) >= 3 and not is_filler(t)] for a, b in lines]
+    for x, (a, b) in enumerate(lines):                                       # 3d a sentence the NEXT passage says again in other words: the earlier try goes from there
+        if len(line_content[x]) < SENTENCE_MIN or a in protected or any(k in done for k in range(a, b + 1)):
+            continue
+        for y in range(x + 1, len(lines)):
+            gap = line_chunk[y] - line_chunk[x]
+            if gap < 1:
+                continue
+            if gap > REDO_PASSAGES:
+                break
+            if len(line_content[y]) < SENTENCE_MIN:
+                continue
+            _, share = overlap(line_content[x], line_content[y])
+            if share >= SENTENCE_SHARE:
+                end = chunks[line_chunk[y]][0] - 1                           # up to where the redo begins
+                if end >= a and (end - a + 1) <= 0.45 * N:
+                    cuts.append(Cut("retake", f"said again, reworded, after a pause (share {share:.2f})", a, end,
+                                    text=" ".join(w.w for w in words[a:end + 1])[:240]))
+                    done.update(range(a, end + 1))
+                break
     if db is not None and thr is not None:                                   # 5 voice in a gap with no word: a hesitation the recogniser dropped
         for i in range(N - 1):
             g0, g1 = words[i].e + 0.05, words[i + 1].s - 0.05
             if g1 - g0 < 0.25:
                 continue
             for s, e in voiced_runs(db, thr, g0, g1):
-                if 0.15 <= e - s <= 1.0:
+                if 0.15 <= e - s < MISSED_RUN:                       # a longer burst may be real words the recogniser missed: it is kept (see compute_keeps)
                     cuts.append(Cut("hidden_filler", f"voice between words {i} and {i + 1} with no word", t0=round(s - 0.03, 3), t1=round(e + 0.03, 3)))
     return cuts
 
@@ -282,6 +323,10 @@ Return the ids of lines to REMOVE:
 - an abandoned attempt the speaker says again, better. Keep the LAST complete take. The second try is often reworded, extended, shortened or starts with
   different words; if a later line says the same thing again with some changes, the EARLIER line is the one to remove.
 - the restart phrase itself ("sorry, again", "one more time", "थांबा, पुन्हा सांगतो", "सॉरी, फिर से").
+- a whole passage said twice: when the speaker stops, pauses ("[pause 3.3s]" before a line) and says the passage again from its opening, remove the FIRST
+  attempt, all of its lines, up to the pause. A long pause before a line that repeats an earlier opening is the clearest sign.
+- an unfinished sentence the speaker abandons mid-way and starts over (it ends in the middle of a thought, is followed by a pause or a new sentence, and
+  nothing in it is needed). Remove only the fragment, never the sentence that starts over.
 - off-camera chatter before or after the real talk ("is it recording?", "चालू आहे का?", "ठीक है, चलो").
 Rules: a repeated idea said for emphasis is not a retake. Never remove the only place a fact appears. Never remove a line only because it is short.
 When you are not sure, keep the line. Most lines are kept: return an empty list when nothing needs to go."""
@@ -296,7 +341,11 @@ def judge_retakes(words: list[Word], lang: str, llm, *, say: Callable[[str], Non
     system = JUDGE_SYSTEM.format(language=LANGUAGE_NAME.get(lang, "spoken"))
     for i in range(0, len(lines), JUDGE_BATCH):
         batch = list(range(i, min(i + JUDGE_BATCH, len(lines))))
-        user = "\n".join(f"{k}: {' '.join(w.w for w in words[lines[k][0]:lines[k][1] + 1])}" for k in batch)
+        def gap(k: int) -> str:                                               # a long pause is the clearest sign that the speaker stopped and started again
+            a = lines[k][0]
+            g = words[a].s - words[a - 1].e if a else 0.0
+            return f"[pause {g:.1f}s] " if g >= 0.8 else ""
+        user = "\n".join(f"{k}: {gap(k)}{' '.join(w.w for w in words[lines[k][0]:lines[k][1] + 1])}" for k in batch)
         try:
             got = llm.generate(system, user, Drops, purpose="retake-judge")
         except Exception as e:                                                 # a refusal, a timeout: the rule-based cuts still stand
@@ -314,6 +363,22 @@ def judge_retakes(words: list[Word], lang: str, llm, *, say: Callable[[str], Non
 
 
 # --- what to keep --------------------------------------------------------------------------------
+
+def missed_speech(words: list[Word], cutw: set[int], db, thr: float | None) -> list[tuple[float, float]]:
+    """Voiced stretches between two KEPT neighbouring words that have no word of their own (the recogniser missed speech there). Where the neighbour is a cut
+    word the stretch belongs to a take that is being removed on purpose, so it is left to go with it."""
+    if db is None or thr is None:
+        return []
+    out = []
+    for i in range(len(words) - 1):
+        if i in cutw or i + 1 in cutw:
+            continue
+        g0, g1 = words[i].e + 0.1, words[i + 1].s - 0.1
+        if g1 - g0 < MISSED_RUN:
+            continue
+        out += [(s, e) for s, e in voiced_runs(db, thr, g0, g1, min_gap=0.4) if e - s >= MISSED_RUN]
+    return out
+
 
 def compute_keeps(words: list[Word], cuts: list[Cut], db, thr: float, pace: str, duration: float, fps: float) -> list[tuple[int, int]]:
     """Frame ranges ``[a, b)`` of the source to keep, on the frame grid: words not cut, with long pauses shrunk to the pace's length."""
@@ -365,6 +430,17 @@ def compute_keeps(words: list[Word], cuts: list[Cut], db, thr: float, pace: str,
         else:
             merged.append([s, e, i])
     keeps = [(s, e) for s, e, _ in merged]
+    missed = missed_speech(words, cutw, db, thr)
+    for a, b in missed:                                                      # speech with no words: never "dead air"
+        keeps.append((max(0.0, a - 0.12), min(duration, b + 0.12)))
+    keeps.sort()
+    joined: list[list[float]] = []
+    for s, e in keeps:
+        if joined and s <= joined[-1][1] + 0.02:
+            joined[-1][1] = max(joined[-1][1], e)
+        else:
+            joined.append([s, e])
+    keeps = [(s, e) for s, e in joined]
     for ts, te in sorted(tcuts):                                             # subtract voiced hesitations the recogniser dropped
         nxt = []
         for s, e in keeps:
@@ -555,6 +631,9 @@ def clean_video(video: Path, tr: Transcript, out: Path, *, pace: str = "natural"
     if saved < 0.5 and not by:
         say("nothing to clean up; the video is used as it is")
         return None
+    missed = missed_speech(tr.words, cutw, db, thr)
+    if missed:
+        say(f"{len(missed)} stretch(es) of speech had no recognised words ({sum(b - a for a, b in missed):.0f} s): kept as they are, without captions")
     out.mkdir(parents=True, exist_ok=True)
     dst = out / "clean.mp4"
     tmap = render_cleaned(Path(video), keeps, info, dst, check=check)
@@ -564,8 +643,10 @@ def clean_video(video: Path, tr: Transcript, out: Path, *, pace: str = "natural"
         return None
     new = parse_transcript({"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in words]})
     report = {"pace": pace, "before_seconds": round(info["duration"], 2), "after_seconds": round(kept_s, 2), "by_kind": by, "timemap": tmap,
-              "cuts": [{"kind": c.kind, "reason": c.reason, "text": c.text, "first": c.first, "last": c.last, "t0": c.t0, "t1": c.t1, "applied": c.apply}
-                       for c in cuts]}
+              "missed_speech": [[round(a, 2), round(b, 2)] for a, b in missed],
+              "cuts": [{"kind": c.kind, "reason": c.reason, "text": c.text, "first": c.first, "last": c.last, "t0": c.t0, "t1": c.t1, "applied": c.apply,
+                        "start": round(tr.words[c.first].s, 2) if c.first is not None else c.t0,
+                        "end": round(tr.words[c.last].e, 2) if c.first is not None else c.t1} for c in cuts]}
     (out / "cleanup.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
     parts = [f"{n} {k.replace('_', ' ')}" for k, n in sorted(by.items(), key=lambda kv: -kv[1])]
     summary = f"cleaned: {_clock(info['duration'])} -> {_clock(kept_s)}" + (f" ({', '.join(parts)})" if parts else " (long pauses shortened)")

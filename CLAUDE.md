@@ -58,6 +58,15 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   of lines that returns line ids only (caps: 35% of a batch, never the last line); times and cut points are code. More than `MAX_REMOVED` of the recording,
   too few words, or a cue-timed transcript = leave the video alone. Audio is cut sample-exact with 8 ms fades; the frame grid keeps A/V in sync (a test
   checks the two durations). Retention deletes `clean.mp4` with the original.
+  What three real jobs taught (keep these true): (1) NEVER treat "no recognised word" as silence: `missed_speech` keeps voiced stretches (>= `MISSED_RUN`) between kept words,
+  and `asr.fill_holes` listens again with relaxed settings (no no-speech / log-prob discard) to every voiced stretch the first pass returned nothing for; Whisper throws
+  low-confidence Marathi windows away as silence. (2) The text is CORRECTED FIRST (`textfix.refine`) and the cuts are decided on the corrected text, because
+  Whisper's raw Marathi is too garbled for any repeat rule or for the model. (3) Raw recordings contain retakes of whole passages, reworded: `restart` (a long
+  pause, then the opening of an earlier passage), the passage/sentence rules (an earlier try that the next passage says again, share >= `SENTENCE_SHARE`, up to
+  `REDO_PASSAGES` ahead) and the editing pass, which is shown the pauses. Guards: a run of three alike lines is a list, short lines are emphasis, a recap much
+  shorter than the line is not a redo, a name that merely comes back is not a restart (the opening must align as a phrase). (4) The job page lists every cut with
+  its original time (`GET /api/jobs/{id}/cleanup`, `cleanup.json`): a person must be able to check the cuts. The model for the editing pass, the text correction
+  and the planner is `$CLIPCROW_MODEL` (default `claude-opus-5-5`); each step and its model show in the job's AI usage table.
   A cleaned recording is usually ONE reel of 3-8 minutes: a clip may run `edl.MAX_CLIP_SECONDS` (15 min), the job form offers 1½-3, 3-5, 5-8 minutes and
   "the whole video as one reel" (`Params.whole`, `PlannerOptions.whole`: one window, no scoring, the clip IS the recording whatever sentences the model
   named). Anything that assumed a short must follow the clip's real length: the editor's trim limit (`max_seconds_for`), the render timeout (12 x the

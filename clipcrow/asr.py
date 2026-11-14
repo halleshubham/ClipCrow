@@ -161,6 +161,56 @@ def _decode_kwargs(model, lang: str) -> dict:
     return kw
 
 
+HOLE_SECONDS = 1.5               # a stretch this long with sound but no recognised word is a hole, not a pause
+HOLE_VOICED = 0.8                # ... when at least this many seconds of it are voiced
+HOLE_WINDOW = 6.0                # a hole is listened to again in windows this long
+RELAXED = {"temperature": [0.0, 0.4], "no_speech_threshold": None, "log_prob_threshold": None, "compression_ratio_threshold": 2.4}
+
+
+def _holes(segs: list, audio, total: float) -> list[tuple[float, float]]:
+    """Stretches of the recording that sound like speech but came back with no words (Whisper throws a low-confidence window away as silence)."""
+    from .energy import SAMPLE_RATE as SR, energy_db, speech_threshold, voiced_runs
+    if len(audio) < SR:
+        return []
+    db = energy_db(audio)
+    thr = speech_threshold(db)
+    edges = sorted((w.start, w.end) for sg in segs for w in sg.words)
+    cursor, out = 0.0, []
+    for s, e in edges + [(total, total)]:
+        if s - cursor >= HOLE_SECONDS and sum(b - a for a, b in voiced_runs(db, thr, cursor, s, min_gap=0.3)) >= HOLE_VOICED:
+            out.append((cursor, s))
+        cursor = max(cursor, e)
+    return out
+
+
+def fill_holes(model, audio, segs: list, kw: dict, say: Callable[[str], None] = lambda _m: None) -> list:
+    """Listen again, with the settings that do not discard hesitant speech, to every hole the first pass left. Marathi is where this matters: the model is
+    unsure, the first pass sees "no speech", and the speech is gone from the transcript (and, later, from the video)."""
+    total = len(audio) / SAMPLE_RATE
+    holes = _holes(segs, audio, total)
+    if not holes:
+        return segs
+    relaxed = {**kw, **{k: v for k, v in RELAXED.items() if k in kw}}
+    found = 0
+    for a, b in holes:
+        t, b = max(0.0, a - 0.2), min(total, b + 0.2)
+        while t < b:
+            e = min(t + HOLE_WINDOW, b)
+            chunk = audio[int(t * SAMPLE_RATE):int(e * SAMPLE_RATE)]
+            if len(chunk) >= 0.3 * SAMPLE_RATE:
+                got, _info = model.transcribe(chunk, **relaxed)
+                for seg in got:
+                    words = [_W(w.word, float(w.start) + t, float(w.end) + t) for w in (seg.words or [])
+                             if not any(x.start <= float(w.start) + t < x.end for sg in segs for x in sg.words)]       # never twice
+                    if words:
+                        segs.append(_Seg(str(seg.text), words))
+                        found += len(words)
+            t = e
+    segs.sort(key=lambda sg: sg.words[0].start)
+    say(f"{len(holes)} stretch(es) of speech the first pass missed were listened to again: {found} word(s) found")
+    return segs
+
+
 def transcribe_windowed(model, media: str, lang: str, *, say: Callable[[str], None] = lambda _m: None,
                         audio_loader: Callable | None = None) -> list:
     """Decode ``media`` in independent ``WINDOW_SECONDS`` windows; segments come back with absolute word times."""
@@ -181,7 +231,7 @@ def transcribe_windowed(model, media: str, lang: str, *, say: Callable[[str], No
         start, n = end, n + 1
         if n % 10 == 0:
             say(f"transcribed {int(start)} of {int(total)} s")
-    return out
+    return fill_holes(model, audio, out, kw, say)
 
 
 def transcribe(media: str, language: str | None = None, *, config: AsrConfig | None = None,

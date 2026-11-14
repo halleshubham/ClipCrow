@@ -298,3 +298,52 @@ def test_load_audio_reads_real_media_as_16k_mono_float(tmp_path, monkeypatch):
     assert a.dtype == np.float32 and abs(len(a) - 2 * 16000) < 400 and float(np.abs(a).max()) > 0.1
     with pytest.raises(TranscriptError):
         asr.load_audio(str(tmp_path / "missing.wav"))
+
+
+# --- speech the first pass threw away ---------------------------------------------------------------------------------------
+
+class HoleModel:
+    """Strict settings (a no-speech threshold) discard the hesitant middle of the recording; relaxed ones return a word for every window."""
+    def __init__(self, first=(1.0, 1.5)):
+        self.calls, self.first = [], first
+
+    def detect_language(self, samples):
+        return ("mr", 0.9)
+
+    def transcribe(self, audio, **kw):
+        relaxed = kw.get("no_speech_threshold", 0.9) is None
+        self.calls.append(relaxed)
+        n = len(self.calls)
+        if relaxed or n == 1:
+            w = NS(word=f" शब्द{n}", start=self.first[0] if n == 1 else 1.0, end=self.first[1] if n == 1 else 1.5)
+            return iter([NS(text=w.word, words=[w])]), NS(language="mr")
+        return iter([]), NS(language="mr")
+
+
+def voiced_audio(seconds, voiced):
+    t = np.arange(int(seconds * 16000)) / 16000
+    x = np.random.RandomState(1).normal(0, 0.001, len(t)).astype(np.float32)
+    for a, b in voiced:
+        m = (t >= a) & (t < b)
+        x[m] += (0.3 * np.sin(2 * np.pi * 220 * t[m])).astype(np.float32)
+    return x
+
+
+def test_speech_with_no_words_is_listened_to_again_with_settings_that_keep_hesitant_speech(monkeypatch):
+    audio = voiced_audio(40, [(0, 6), (10, 30)])                 # 20 s of speech in the middle that the first pass returns nothing for
+    monkeypatch.setattr(asr, "load_audio", lambda media: audio)
+    m = HoleModel()
+    said = []
+    tr = asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}), progress=said.append)
+    assert True in m.calls                                           # relaxed passes ran
+    assert any(w.s > 9.5 for w in tr.words)                          # words now exist where the first pass found none
+    assert any("listened to again" in s for s in said)
+    assert [w.s for w in tr.words] == sorted(w.s for w in tr.words)
+
+
+def test_real_silence_is_not_a_hole(monkeypatch):
+    audio = voiced_audio(40, [(0, 6)])
+    monkeypatch.setattr(asr, "load_audio", lambda media: audio)
+    m = HoleModel(first=(0.1, 6.0))                                  # the first pass wrote down everything that was said
+    asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    assert True not in m.calls                                       # nothing was spoken after 6 s: no second look

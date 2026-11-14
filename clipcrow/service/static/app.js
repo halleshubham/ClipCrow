@@ -50,7 +50,8 @@ async function api(path, opts = {}) {
 
 const purposeLabel = (p) => {
   const [kind, n] = p.split(':');
-  return { score: 'Score the sections', detail: `Pick clips, section ${Number(n) + 1}`, repair: `Fix the script, section ${Number(n) + 1}` }[kind] || p;
+  return { score: 'Score the sections', detail: n === undefined ? 'Write the title and hook' : `Pick clips, section ${Number(n) + 1}`, repair: `Fix the script, section ${Number(n) + 1}`,
+    'retake-judge': 'Judge which takes to cut', 'text-refine': 'Correct the Marathi/Hindi text' }[kind] || p;
 };
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -533,6 +534,26 @@ async function jobView(jobId) {
   const clipsSection = el('section', { hidden: true }, el('h2', { text: 'Clips' }), timeline, el('div', { style: { height: '20px' } }), clipsGrid);
   const usageBody = el('div', { class: 'small muted', text: 'The usage record appears once the plan is ready.' });
   const usage = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'AI usage and disclosure' }), el('div', { style: { marginTop: '12px' } }, usageBody));
+  const cutBody = el('div', { class: 'small muted', text: 'Loading…' });
+  const cutCard = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'What was cut from your recording' }), el('div', { style: { marginTop: '12px' } }, cutBody));
+  let cutLoaded = false;
+  const KIND = { filler: 'Hesitation sound', stutter: 'Stutter', false_start: 'False start', retake: 'Earlier take', restart: 'Earlier take', judged: 'Judged by the AI', hidden_filler: 'Noise with no word' };
+  async function loadCuts() {
+    if (cutLoaded || job.status !== 'done' || !job.params.clean) return;
+    cutLoaded = true;
+    try {
+      const r = await api(`/jobs/${jobId}/cleanup`);
+      cutCard.hidden = false;
+      const rows = r.cuts.map((c) => el('tr', {}, el('td', { class: 'num', text: `${fmt(c.start)}–${fmt(c.end)}` }), el('td', { text: KIND[c.kind] || c.kind }),
+        el('td', { class: 'deva', translate: 'no', text: c.text || c.reason })));
+      cutBody.className = '';
+      cutBody.replaceChildren(
+        el('p', { class: 'small', text: `${fmt(r.before_seconds)} became ${fmt(r.after_seconds)}. Times are in your original recording. Pauses were also shortened (${r.pace}).` }),
+        r.missed_speech.length ? el('p', { class: 'small', text: `Speech the recogniser could not write down was kept as it is, without captions: ${r.missed_speech.map(([a, b]) => `${fmt(a)}–${fmt(b)}`).join(', ')}.` }) : null,
+        rows.length ? el('table', {}, el('thead', {}, el('tr', {}, ['Original time', 'What', 'Removed'].map((h) => el('th', { text: h })))), el('tbody', {}, rows))
+          : el('p', { class: 'small muted', text: 'No words were removed; only long pauses were shortened.' }));
+    } catch (_) { cutLoaded = false; cutCard.hidden = true; }
+  }
   const cards = new Map();
 
   function renderStages() {
@@ -664,6 +685,7 @@ async function jobView(jobId) {
     renderTimeline();
     renderClips();
     loadUsage();
+    loadCuts();
   }
 
   const needsPolling = () => ['queued', 'running'].includes(job.status) || job.clips.some(busy)
@@ -685,7 +707,7 @@ async function jobView(jobId) {
       el('section', { class: 'card' }, stages),
       clipsSection,
       logCard,
-      usage));
+      cutCard, usage));
   update();
   timer = setTimeout(poll, 1500);
   return { cleanup() { dead = true; clearTimeout(timer); } };

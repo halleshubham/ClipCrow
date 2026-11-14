@@ -796,6 +796,22 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     def get_job(job_id: str, request: Request) -> dict:
         return view(job_or_404(job_id, request))
 
+    @app.get("/api/jobs/{job_id}/cleanup", dependencies=[Depends(authed)])
+    def get_cleanup(job_id: str, request: Request) -> dict:
+        """What the raw-recording cleanup cut, in the ORIGINAL recording's seconds, so a person can check each removal."""
+        job_or_404(job_id, request)
+        path = store.dir(job_id) / "out" / "cleanup.json"
+        try:
+            rep = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise HTTPException(404, "This job has no cleanup report.")
+        cuts = [{"kind": str(c.get("kind", ""))[:20], "reason": str(c.get("reason", ""))[:200], "text": str(c.get("text", ""))[:300],
+                 "start": c.get("start"), "end": c.get("end")}
+                for c in rep.get("cuts", []) if c.get("applied") and isinstance(c.get("start"), (int, float)) and isinstance(c.get("end"), (int, float))]
+        return {"pace": rep.get("pace"), "before_seconds": rep.get("before_seconds"), "after_seconds": rep.get("after_seconds"),
+                "by_kind": rep.get("by_kind", {}), "cuts": sorted(cuts, key=lambda c: c["start"]), "missed_speech": rep.get("missed_speech", []),
+                "timemap": rep.get("timemap", [])}
+
     @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(authed)])
     def cancel_job(job_id: str, request: Request) -> dict:
         job_or_404(job_id, request)
