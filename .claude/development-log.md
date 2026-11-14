@@ -1,0 +1,34 @@
+# Development log
+
+What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
+The rules that came out of these are in `development-rules.md`; this file is the story behind them.
+
+## 2026-11-14
+- **Pictures are the person's own.** The web service no longer opens web pages for an explainer (no capture, no SSRF surface there). A person adds screenshots (`POST /api/pictures`), the
+  model is SHOWN them and places each by number. Why: server-side capture was slow, fragile and a security surface; a person knows which page matters. CLI `--link` still captures.
+- **Sound library.** 8 short cues generated once with ElevenLabs (`scripts/make_sfx.py`, `clipcrow/sfx/`). Not wired into the render yet. First `click` came back silent (peak -49 dB): regenerated
+  with a clearer prompt; the test now rejects silent sounds. Research brief (vendor pages only, no retention data): add keyword emphasis, sparse cut/zoom ticks, whooshes on cover/card/logo, a number
+  reveal, then a ducked music bed (licence risk), a progress bar, zoom variety. Skip glitch, shake, grain, speed ramps.
+- **New logo** everywhere (header tile, sign-in, favicons, README) from `docs/assets/logo-source.webp` by `scripts/make_logo_assets.py`. The art is dark, so it sits on a light tile in the dark UI.
+- **GPU worker sends the clip straight to the bucket** (presigned multipart): clips of any length render on the GPU. Deployed (server first, then `docker pull` on the PC). Untested against real R2 until
+  the first long clip; the fallback is a server render.
+- **SraVaani** (ARTPARK-IISc, MIT, CPU) as an opt-in recogniser for Marathi/Hindi (`CLIPCROW_ASR=sravaani`, `asr_sravaani.py`): wrote every word incl. repeats on the 84 s test, word starts within
+  0.1-0.3 s of ElevenLabs Scribe. Needs `torch transformers sentencepiece soundfile` and a Hugging Face token with access (gated, pinned revision). Whisper stays the fallback.
+- ASR bake-off on the 84 s Marathi recording: Whisper lost ~21 s as "silence"; ElevenLabs Scribe, Sarvam (saaras:v3, 30 s REST limit) and SraVaani all kept the whole recording and the three repeats.
+  Scribe: tight word times but Latin spellings of Marathi words. Sarvam: best spelling, no word times. Keys pasted in chat must be rotated.
+
+## Earlier (before 2026-11-14)
+- **Cleanup that reads first.** `Review` (intent, passages, drop) sees the WHOLE recording with the rules' cuts marked, then `verify_cuts` reads the result like a viewer. Fixed after job audits:
+  speech Whisper returned no words for was deleted as dead air; one word stretched over seconds hid repeats; retakes of whole passages, reworded, were not caught; text correction smoothed away the
+  stumbles the cleanup needs; the 45% removal cap refused real recordings (now 70%).
+- **Long reels / whole video as one reel**, `edl.MAX_CLIP_SECONDS` 15 min; trim limit, render timeout and worker limit follow the clip's real length.
+- **Direct browser -> R2 uploads** (multipart) removed the source-size cap except `--max-upload-mb`; validated live (3 GB accepted, 5 GB refused).
+- **Marathi/Hindi recognition**: windowed 15 s decode, no prompt/VAD, `fill_holes`, `textfix.refine`, `clipcrow compare-asr`.
+- **Slides/graphics option**, **fumble-free cut option** (adapted from the `fumble-free-cut` skill), **styles from a reference video**, **brand kit**, **social posting** (SocioBird: base URL
+  `https://go.sociobird.app/api`, needs a User-Agent; Cloudflare turns an origin 502/504 into its own page, so the app uses 424 for upstream failures), **accounts and billing**, **object storage**.
+
+## Open
+- Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.
+- Per-stage timings in the job log; an audio-similarity repeat detector; the SraVaani/Whisper choice in the job log; SraVaani in the container image.
+- The live effect of the read-first judge on a new real recording (offline replays only so far).
+- Sound cues are not yet placed or mixed into renders.
