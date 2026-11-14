@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
-from . import branding, matte, render
+from . import branding, loudness, matte, render
 from .provenance import write_sidecar
 from .compile import CompiledClip, compile_clip
 from .edl import EDL, EDLError
@@ -75,6 +76,11 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
         except branding.BrandError as e:        # the clip itself is fine: deliver it without the ending and say so
             joined.unlink(missing_ok=True)
             compiled.warnings.append(f"the ending video was skipped: {e}")
+    if os.environ.get("CLIPCROW_LOUDNORM", "1") != "0":          # 0 = leave the audio level as the footage had it
+        try:
+            loudness.normalise(out)
+        except (OSError, subprocess.SubprocessError):            # a clip at the wrong level is still a clip
+            pass
     cover = out.with_name(out.stem + ".cover.png")
     if clip.cover and clip.cover.enabled:
         try:
