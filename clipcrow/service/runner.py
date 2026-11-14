@@ -1,6 +1,7 @@
 """Runs jobs one at a time in a background thread and records their progress in the store."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -308,6 +309,36 @@ class JobRunner:
         self._changed(job_id)
         self._pool.submit(self._render_clip, job_id, clip_id)
         return True
+
+    def edit_transcript(self, job_id: str, edit) -> list[str]:
+        """Correct words of the plan's transcript and queue a re-render of the clips that show them. Raises ValueError (a message for a person).
+        Returns the ids of those clips (empty when nothing changed)."""
+        from .editor import apply_transcript
+        if self.store.get(job_id).status != "done":
+            raise ValueError("Wait for the job to finish before editing its transcript.")
+        with self._edit_lock:
+            edl = load_edl(self.store.edl_path(job_id))
+            new, hit = apply_transcript(edl, edit)
+            if new is edl:
+                return []
+            if not self._original(job_id).exists():
+                shutil.copyfile(self.store.edl_path(job_id), self._original(job_id))
+            self._write_edl(job_id, new)
+            tj = self.store.dir(job_id) / "out" / "transcript.json"
+            if tj.is_file():                                           # what a later look at the job shows matches what the captions say
+                try:
+                    tj.write_text(json.dumps({"language": new.language.primary, "words": [w.model_dump(exclude_none=True) for w in new.transcript]},
+                                             ensure_ascii=False, indent=1), encoding="utf-8")
+                except OSError:
+                    pass
+            for cid in hit:
+                key = (job_id, cid)
+                self._gen[key] = self._gen.get(key, 0) + 1
+                self._mark(job_id, cid, new, render="queued", render_error="", edited=True)
+        self._changed(job_id)
+        for cid in hit:
+            self._pool.submit(self._render_clip, job_id, cid)
+        return hit
 
     def reset_clip(self, job_id: str, clip_id: str) -> bool:
         """Put one clip back to the AI's plan and re-render it."""

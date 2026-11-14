@@ -37,7 +37,7 @@ from ..planner.source import probe_source
 from .accounts import AccountError, Accounts, User
 from .billing import BillingError, Razorpay, apply_event
 from .brand import MAX_LOGO_BYTES, MAX_OUTRO_BYTES, BrandStore
-from .editor import ClipEdit, clip_view
+from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Catalog, load_catalog
 from .publish import LIMITS, PublishError, SocioBird, caption_html, settings_for, validate_when
@@ -1182,6 +1182,42 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         except ValueError as e:
             raise HTTPException(422, str(e)[:300])
         return {"changed": changed, "render": store.get(job_id).clip(clip_id).model_dump()}
+
+    @app.get("/api/jobs/{job_id}/transcript", dependencies=[Depends(authed)])
+    def transcript_get(job_id: str, request: Request) -> dict:
+        """The words of the plan, sentence by sentence, for a person to read and correct. ``original`` is what the recogniser first wrote
+        where the AI corrected it (only when the timeline is still the original one, i.e. no cleanup cut the recording)."""
+        job = job_or_404(job_id, request)
+        if job.status != "done":
+            raise HTTPException(409, "The transcript can be checked once the job has finished.")
+        try:
+            edl = load_edl(store.edl_path(job_id))
+            raw = None
+            rawp = store.dir(job_id) / "out" / "transcript.raw.json"
+            if rawp.is_file() and not (store.dir(job_id) / "out" / "clean.mp4").is_file():
+                try:
+                    raw = json.loads(rawp.read_text(encoding="utf-8")).get("words")
+                except (OSError, ValueError):
+                    raw = None
+            return transcript_view(edl, raw)
+        except (KeyError, OSError):
+            raise HTTPException(404, "The plan for this job is not on disk.")
+        except ValueError as e:
+            raise HTTPException(409, str(e)[:200])
+
+    @app.put("/api/jobs/{job_id}/transcript", dependencies=[Depends(authed)])
+    def transcript_put(job_id: str, body: TranscriptEdit, request: Request) -> dict:
+        job = job_or_404(job_id, request)
+        if job.status == "done" and (job.source_removed or store.working_video(job_id) is None):
+            raise HTTPException(409, "The original video was removed to save space, so the clips can no longer be rendered again. "
+                                     "You can still download them.")
+        try:
+            clips = runner.edit_transcript(job_id, body)
+        except ValueError as e:
+            raise HTTPException(422, str(e)[:300])
+        except (KeyError, OSError):
+            raise HTTPException(404, "The plan for this job is not on disk.")
+        return {"changed": bool(clips), "clips": clips}
 
     @app.post("/api/jobs/{job_id}/clips/{clip_id}/reset", dependencies=[Depends(authed)])
     def clip_reset(job_id: str, clip_id: str, request: Request) -> dict:

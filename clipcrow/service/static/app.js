@@ -574,6 +574,48 @@ async function jobView(jobId) {
   const usage = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'AI usage and disclosure' }), el('div', { style: { marginTop: '12px' } }, usageBody));
   const cutBody = el('div', { class: 'small muted', text: 'Loading…' });
   const cutCard = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'What was cut from your recording' }), el('div', { style: { marginTop: '12px' } }, cutBody));
+  const trBody = el('div', { class: 'small muted', text: 'Loading…' });
+  const trCard = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'Check or fix the words (optional)' }), el('div', { style: { marginTop: '12px' } }, trBody));
+  let trLoaded = false;
+  async function loadTranscript() {
+    if (trLoaded || job.status !== 'done' || job.source_removed) return;
+    trLoaded = true;
+    try {
+      const r = await api(`/jobs/${jobId}/transcript`);
+      trCard.hidden = false;
+      const areas = new Map();
+      const msg = el('div', { class: 'small', role: 'status' });
+      const save = el('button', { class: 'btn primary', type: 'button', text: 'Save and re-render the clips', disabled: true });
+      const dirty = () => { save.disabled = ![...areas].some(([s, a]) => a.value.trim() !== s.text.trim()); };
+      const rows = r.sentences.map((s) => {
+        const a = el('textarea', { class: 'tr-text deva', rows: '2', translate: 'no', maxlength: '600', spellcheck: 'false', 'aria-label': `Words at ${fmt(s.start)}` });
+        a.value = s.text;
+        a.addEventListener('input', dirty);
+        areas.set(s, a);
+        return el('div', { class: 'tr-row' },
+          el('div', { class: 'tr-meta small muted' }, el('span', { class: 'num', text: fmt(s.start) }),
+            s.original && el('span', { class: 'chip plain', text: 'AI corrected' }),
+            s.clips.length ? el('span', { text: s.clips.join(', ') }) : el('span', { text: 'not in a clip' })),
+          a,
+          s.original && el('details', { class: 'small muted' }, el('summary', { text: 'What was first heard' }), el('div', { class: 'deva', translate: 'no', text: s.original })));
+      });
+      save.addEventListener('click', async () => {
+        const edits = [...areas].filter(([s, a]) => a.value.trim() !== s.text.trim()).map(([s, a]) => ({ id: s.id, start: s.start, text: a.value }));
+        save.disabled = true;
+        msg.textContent = 'Saving…';
+        try {
+          const done = await api(`/jobs/${jobId}/transcript`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ edits }) });
+          msg.textContent = done.changed ? `Saved. ${done.clips.length} clip(s) are rendering again with the new words.` : 'Nothing changed.';
+          trLoaded = false;
+          setTimeout(() => { trBody.replaceChildren(); loadTranscript(); }, 1200);
+        } catch (ex) { msg.textContent = ex.message; dirty(); }
+      });
+      trBody.className = '';
+      trBody.replaceChildren(
+        el('p', { class: 'small muted', text: 'The words the captions are made from. Fix a word and save: only the clips that use that sentence are rendered again, and the cut points stay where they are. You never have to do this.' }),
+        el('div', { class: 'tr-list' }, rows), el('div', { class: 'row' }, save, msg));
+    } catch (ex) { trBody.textContent = ex.message; trLoaded = false; }
+  }
   let cutLoaded = false;
   const KIND = { filler: 'Hesitation sound', stutter: 'Stutter', false_start: 'False start', retake: 'Earlier take', restart: 'Earlier take', judged: 'Judged by the AI', hidden_filler: 'Noise with no word' };
   async function loadCuts() {
@@ -731,6 +773,7 @@ async function jobView(jobId) {
     renderClips();
     loadUsage();
     loadCuts();
+    loadTranscript();
   }
 
   const needsPolling = () => ['queued', 'running'].includes(job.status) || job.clips.some(busy)
@@ -752,7 +795,7 @@ async function jobView(jobId) {
       el('section', { class: 'card' }, stages),
       clipsSection,
       logCard,
-      cutCard, usage));
+      cutCard, trCard, usage));
   update();
   timer = setTimeout(poll, 1500);
   return { cleanup() { dead = true; clearTimeout(timer); } };

@@ -4,6 +4,12 @@ What was built, what real recordings taught us, and what is still open. Newest f
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
 ## 2026-11-14
+- **Optional transcript check/edit** on the job page ("Check or fix the words"): sentences with times, the clips that use them, an "AI corrected" mark with what was first heard; saving re-renders only
+  the affected clips. Why: Marathi recognition is still imperfect and captions show the words. A pre-cut review step (pause after recognition, before cleanup and planning) was NOT built: it needs a new job
+  state, which touches minutes, drains and retention (see the rules).
+- **OpenReel Video audit** (MIT, TypeScript, browser/desktop manual editor, WebCodecs export, in-browser Whisper): not comparable (manual NLE vs batch generator). Ideas worth taking, none of its code:
+  two-pass `loudnorm` to -14 LUFS after render, ducking driven by the EDL's word times, a closed set of transitions compiled to GSAP, platform export presets with duration/size checks, a caption-animation
+  preset enum, an undo snapshot per AI turn. Its loudness measure is approximate (not a model to copy); its export is not deterministic.
 - **Pictures are the person's own.** The web service no longer opens web pages for an explainer (no capture, no SSRF surface there). A person adds screenshots (`POST /api/pictures`), the
   model is SHOWN them and places each by number. Why: server-side capture was slow, fragile and a security surface; a person knows which page matters. CLI `--link` still captures.
 - **Sound library.** 8 short cues generated once with ElevenLabs (`scripts/make_sfx.py`, `clipcrow/sfx/`). Not wired into the render yet. First `click` came back silent (peak -49 dB): regenerated

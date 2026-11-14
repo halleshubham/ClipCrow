@@ -17,7 +17,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .. import branding, fonts
-from ..edl import EDL, Clip, HexColor
+from ..edl import EDL, Clip, ClipAI, HexColor
 from ..punch import plan_punch_ins, sentence_spans
 
 MIN_SECONDS, MAX_SECONDS = 3.0, 90.0
@@ -292,3 +292,96 @@ def clip_view(edl: EDL, clip_id: str, *, source_duration: float) -> dict:
         "words": words,
         "edited": any(n.startswith("edited by a person") for n in (clip.ai.notes if clip.ai else [])),
     }
+
+
+# --- the transcript: look at it, correct its words ----------------------------------------------------------------------
+
+MAX_SENTENCE_CHARS = 600
+MAX_TRANSCRIPT_EDITS = 400
+
+
+class SentenceEdit(_M):
+    id: int = Field(ge=0, le=1_000_000)
+    start: float = Field(ge=0, le=86_400)           # the sentence as the person saw it: a stale page is refused, never applied to other words
+    text: str = Field(max_length=MAX_SENTENCE_CHARS)
+
+
+class TranscriptEdit(_M):
+    edits: list[SentenceEdit] = Field(min_length=1, max_length=MAX_TRANSCRIPT_EDITS)
+
+
+def _sentences(edl: EDL):
+    """The plan's words cut into sentences exactly as the planner did (same function, same words)."""
+    from ..planner.transcript import parse_transcript
+    if not edl.transcript:
+        raise ValueError("This plan has no transcript.")
+    if any(b.s < a.s for a, b in zip(edl.transcript, edl.transcript[1:])):
+        raise ValueError("The transcript of this plan cannot be edited.")
+    return parse_transcript({"language": edl.language.primary,
+                             "words": [{"w": w.w, "s": w.s, "e": w.e} for w in edl.transcript]}).sentences
+
+
+def transcript_view(edl: EDL, raw_words: Optional[list] = None) -> dict:
+    """Sentences with their times and the clips that show them. ``raw_words`` (what the recogniser first wrote, same timeline) marks the
+    sentences the AI corrected, with the original text."""
+    out = []
+    for s in _sentences(edl):
+        row = {"id": s.id, "start": round(s.start, 3), "end": round(s.end, 3), "text": s.text,
+               "clips": [c.id for c in edl.clips if s.end > c.source_in and s.start < c.source_out]}
+        if raw_words is not None:
+            was = " ".join(str(w.get("w", "")).strip() for w in raw_words if s.start - 0.02 <= float(w.get("s", -1)) < s.end - 0.01)
+            if was and was != s.text:
+                row["original"] = was[:MAX_SENTENCE_CHARS * 2]
+        out.append(row)
+    return {"language": edl.language.primary, "sentences": out}
+
+
+def apply_transcript(edl: EDL, edit: TranscriptEdit) -> tuple[EDL, list[str]]:
+    """The EDL with corrected words and the ids of the clips whose captions changed. A sentence keeps its time span: the new words are spread over
+    it in proportion to their length (the same number of words keeps every word's own time). Cut points never move."""
+    from ..textfix import _retime
+    sents = {s.id: s for s in _sentences(edl)}
+    words = [w.model_dump(exclude_none=True) for w in edl.transcript]
+    replace: dict[int, list[dict]] = {}
+    touched: list[tuple[float, float]] = []
+    for e in edit.edits:
+        s = sents.get(e.id)
+        if s is None or abs(s.start - e.start) > 0.05:
+            raise ValueError("The transcript has changed since you opened it. Reload the page and try again.")
+        text = " ".join(e.text.split())
+        if not text or len(text) > MAX_SENTENCE_CHARS or any(c in e.text for c in "\r\n\x00"):
+            raise ValueError("Each sentence needs some text on one line (up to 600 characters). Leave a sentence as it is instead of emptying it.")
+        old = edl.transcript[s.first:s.last + 1]
+        if text == " ".join(w.w for w in old) or e.id in replace:
+            continue
+        new = _retime(old, text.split())
+        for d in new:
+            if edl.transcript[s.first].speaker:
+                d["speaker"] = edl.transcript[s.first].speaker
+        replace[e.id] = new
+        touched.append((s.start, s.end))
+    if not replace:
+        return edl, []
+    out: list[dict] = []
+    skip: set[int] = set()
+    first_of = {sents[i].first: i for i in replace}
+    for idx, w in enumerate(words):
+        if idx in first_of:
+            out.extend(replace[first_of[idx]])
+            skip.update(range(sents[first_of[idx]].first, sents[first_of[idx]].last + 1))
+        elif idx not in skip:
+            out.append(w)
+    hit = [c.id for c in edl.clips if any(b > c.source_in and a < c.source_out for a, b in touched)]
+    clips = []
+    for c in edl.clips:
+        if c.id in hit:
+            note = "edited by a person: transcript"
+            ai = c.ai or ClipAI()
+            c = c.model_copy(update={"ai": ai.model_copy(update={"notes": ai.notes if note in ai.notes else [*ai.notes, note]})})
+        clips.append(c)
+    try:
+        new_edl = EDL.model_validate({**edl.model_dump(exclude_none=True), "transcript": out,
+                                      "clips": [c.model_dump(exclude_none=True) for c in clips]})
+    except ValidationError as err:
+        raise ValueError(_first_line(err)) from None
+    return new_edl, hit

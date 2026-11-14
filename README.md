@@ -91,6 +91,8 @@ involvement).
   Images use `GEMINI_API_KEY` (`CLIPCROW_IMAGE_MODEL` to change the model; written to Google's documented image output but **not tried
   against the live API from the build environment**). AI *video* has an interface (`clipcrow.assets.video`) and **no provider**:
   nothing asks for generated video until one is registered.
+- **Transcript check** (job page, optional): the sentences the captions are made from, with times and the clips that use them. Fix a word and save: only those clips render again, cut points stay. Where the AI
+  corrected the recogniser's words the original is shown (when no cleanup changed the timeline).
 - **Accounts** (`clipcrow serve --accounts [--no-signup]`, data in `<data>/clipcrow.db`): email + password (scrypt),
   session cookie (HttpOnly, SameSite=Strict, only its hash is stored), sign-in attempts rate limited, per-user jobs (someone
   else's job is a 404 everywhere), account deletion (password required; cancels a Razorpay subscription first and stops if

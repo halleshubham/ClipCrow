@@ -145,6 +145,10 @@ History, incidents and open items are in `development-log.md`: add an entry ther
   `storage.REL`), the part URLs sign their length, one plan per leased render task, the finished size must equal the announced one, the object is deleted after the copy and on every failure
   (`discard_direct`), and the copy is probed by `validate_clip` like any worker clip. The worker token is never sent to the bucket host. No bucket / 404 = the old PUT through the server. Name patterns use `fullmatch` (a `$` regex lets
   a trailing newline through). `Transport` methods raise `NotImplementedError`, so a test double without `upload` fails loudly.
+- Transcript edits (`GET/PUT /api/jobs/{id}/transcript`, `editor.apply_transcript`, `runner.edit_transcript`) are optional and only touch WORDS: a sentence keeps its time span (same word count = every
+  word keeps its own time, else `textfix._retime`), cut points never move, only clips overlapping an edited sentence are re-rendered (`_gen` as for any edit), a stale page is refused by id AND start time,
+  each edit is one line of <= 600 characters (never emptied), and the clip gets the note "edited by a person: transcript". The sentences shown are the planner's own (`parse_transcript` on the EDL's words), the
+  "AI corrected" original comes from `transcript.raw.json` and is shown only when no cleanup changed the timeline. `edl.original.json` is saved first, so a clip reset keeps the corrected words.
 - Clip edits are `service.editor.ClipEdit`, a closed set of fields applied by the pure `apply_edit`; never accept a raw
   EDL or a path from the browser. The AI's `decided` list is not rewritten by a person: add a note instead.
   All edl.json writes go through the runner's edit lock; a render finishes only the latest edit (`_gen`).
