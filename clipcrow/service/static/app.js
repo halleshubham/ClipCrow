@@ -420,7 +420,7 @@ async function newJobView() {
       multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', pictures: pics.ids(), ai_images: $('ai_images').checked ? 'true' : '',
-      cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '',
+      cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '',
     };
     submit.disabled = true;
     progress.hidden = false;
@@ -486,6 +486,9 @@ async function newJobView() {
         el('label', { class: c.ai_images ? 'check' : 'check muted', for: 'ai_images' }, el('input', { type: 'checkbox', id: 'ai_images', disabled: !c.ai_images }),
           el('span', {}, el('strong', { text: 'Also generate images with AI' }), el('br'),
             el('span', { class: 'muted', text: c.ai_images ? 'AI-generated pictures mean most platforms ask you to label the video as AI content.' : 'Not set up on this server.' })))),
+      el('label', { class: 'check', for: 'sounds' }, el('input', { type: 'checkbox', id: 'sounds' }),
+        el('span', {}, el('strong', { text: 'Quiet sound cues' }), el('br'),
+          el('span', { class: 'muted', text: 'A soft pop, whoosh or tick under the speech where a title, card, picture or push-in appears, never on every word. Switch it off per clip when you edit.' }))),
       el('label', { class: 'check', for: 'cover' }, el('input', { type: 'checkbox', id: 'cover', checked: !!brand.settings.default_cover }),
         el('span', {}, el('strong', { text: 'Cover title on the first frames' }), el('br'),
           el('span', { class: 'muted', text: 'A bold title (the hook line) for the first quarter-second, so the poster frame says what the clip is about. You also get it as a picture. Platforms choose their own thumbnail, so this raises the odds, it cannot force it.' }))),
@@ -881,6 +884,7 @@ async function clipEditorView(jobId, clipId) {
   textIn('cover_text', view.cover.text, 80);
   f.logo = el('input', { id: 'logo_on', type: 'checkbox', disabled: !view.logo.available }); f.logo.checked = view.logo.on;
   f.outro = el('input', { id: 'outro_on', type: 'checkbox', disabled: !view.outro.available }); f.outro.checked = view.outro.on;
+  f.sfx = el('input', { id: 'sfx_on', type: 'checkbox' }); f.sfx.checked = view.sfx.on;
 
   function body() {
     const out = {};
@@ -902,6 +906,7 @@ async function clipEditorView(jobId, clipId) {
     if (f.cover.checked && f.cover_text.value.trim() !== view.cover.text) out.cover_text = f.cover_text.value;
     if (f.logo.checked !== view.logo.on) out.logo = f.logo.checked;
     if (f.outro.checked !== view.outro.on) out.outro = f.outro.checked;
+    if (f.sfx.checked !== view.sfx.on) out.sfx = f.sfx.checked;
     const drop = [...app.querySelectorAll('[data-drop]')].filter((x) => x.checked).map((x) => x.dataset.drop);
     if (drop.length) out.drop_pictures = drop;
     if (f.framing.value) { out.framing = f.framing.value; if (f.framing.value === 'auto') out.multi = f.multi.value; }
@@ -978,6 +983,8 @@ async function clipEditorView(jobId, clipId) {
           field('Cover words', f.cover_text, 'Leave empty to use the hook line.'),
           el('label', { class: view.logo.available ? 'check' : 'check muted', for: 'logo_on' }, f.logo, el('span', { text: view.logo.available ? 'Logo in a corner' : 'Logo (this job has none)' })),
           el('label', { class: view.outro.available ? 'check' : 'check muted', for: 'outro_on' }, f.outro, el('span', { text: view.outro.available ? 'Ending video' : 'Ending video (this job has none)' }))),
+        group('Sound', el('label', { class: 'check', for: 'sfx_on' }, f.sfx, el('span', {}, el('strong', { text: 'Quiet sound cues' }), el('br'),
+          el('span', { class: 'muted', text: 'A soft pop, whoosh or tick under the speech where a title, card, picture or push-in appears. Never on every word.' })))),
         group('Framing', field('Picture', f.framing), multiField,
           el('label', { class: 'check', for: 'punch' }, f.punch, el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
             el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back.' })))),

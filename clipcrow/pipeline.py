@@ -5,7 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from . import branding, loudness, matte, render
+from . import branding, cues, loudness, matte, render
 from .provenance import write_sidecar
 from .compile import CompiledClip, compile_clip
 from .edl import EDL, EDLError
@@ -62,6 +62,11 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
     out = render.render(project, output, quality=edl.render.quality, workers=workers,
                         browser_path=os.environ.get("CLIPCROW_BROWSER"), timeout=max(1800, int(clip.duration * 12)))      # a long clip takes longer
     out = Path(out)
+    if clip.sfx and clip.sfx.enabled:                            # quiet cues under the speech, before the ending video and the loudness pass
+        try:
+            cues.mix(out, cues.plan_cues(clip), clip.sfx.level_db)
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+            compiled.warnings.append("the sound cues were skipped")
     if clip.outro and clip.outro.enabled:
         asset = next(a for a in edl.assets if a.id == clip.outro.asset)
         if not asset.uri:

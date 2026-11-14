@@ -78,6 +78,10 @@ History, incidents and open items are in `development-log.md`: add an entry ther
 - Loudness (`loudness.py`, called by `pipeline.render_clip` AFTER the outro join, `CLIPCROW_LOUDNORM=0` turns it off): two-pass `loudnorm` to -14 LUFS / -1.5 dBTP on the finished clip, picture copied, only
   audio re-encoded. A clip within 1 LU of the target with headroom is left byte for byte (a good render stays deterministic); silence, no audio, or a clip needing more than 18 dB of gain is left alone
   (raising it only raises the noise); a result that is not closer to the target is discarded; any failure keeps the original. It runs on the worker too (same `render_clip`).
+- Sound cues (`cues.py`, `Clip.sfx`, job option `sounds`, editor toggle, OFF by default): which sound goes where is a FIXED table of the clip's own events (`CUE_FOR`: stat = ding, picture = shutter,
+  lower third = soft whoosh, hook = pop, push-in = click), never the model's choice and never on a caption word; one cue per `MIN_GAP` (2 s) with `PRIORITY` deciding; each file is gained so its PEAK lands
+  at `Sfx.level_db` (default -10 dBFS) from the peak in `sfx/manifest.json`; a cue starts `LEAD` before its event, never before 0. One ffmpeg pass (`adelay`, `volume`, `amix normalize=0`), picture
+  copied, the speech keeps its channel layout; no audio / no cue / any failure leaves the clip as it was. Order in `render_clip`: cues, outro join, loudness. The editor flips `enabled`, the level stays.
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
 

@@ -6,6 +6,9 @@ The rules that came out of these are in `development-rules.md`; this file is the
 ## 2026-11-14
 - **Adoption of the OpenReel ideas, step 1: loudness.** Every finished reel is brought to -14 LUFS (`loudness.py`). Why: one real clip was -22 LUFS and another -14.6, so viewers would reach for the volume.
   Not yet verified on a real render (tests use synthetic clips).
+- **Adoption step 2: sound cues** (`cues.py`): quiet pop/whoosh/shutter/ding/click under the speech at overlays and push-ins, off by default, one checkbox on the job form and one per clip in the
+  editor. Tested with synthetic audio only: a person has to listen to a real reel before it is switched on for anyone (levels, density, whether a click on every push-in is wanted). Not done: a music bed
+  with ducking (licence risk), cues on hard cuts (the cleaned recording's seams are not in the EDL).
 - **Platform length/size checks: only YouTube Shorts (3 min, vertical) is noted on the Share page.** Searches for Instagram, TikTok, Facebook, X and LinkedIn limits returned third-party guides that
   disagree widely (Instagram 3-20 min, TikTok 10-60 min, Facebook 90 s to no cap) and no official page, so a check there would be guesswork. Add one only from the platform's own help page, with its date. Next on the list: ducking/SFX placed from the EDL's word times, platform length/size checks before posting, a closed set of transitions,
   caption animation presets.

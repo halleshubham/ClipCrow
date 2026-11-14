@@ -21,7 +21,7 @@ def _worker_clip_limit() -> float:
 def planner_options(job: Job, pictures_dir: Path | None = None) -> PlannerOptions:
     p = job.params
     opts = PlannerOptions(job_id=job.id, min_clip=p.min_clip, max_clip=p.max_clip, target_clips=p.clips, whole=p.whole,
-                          spread=p.spread, cutout=p.cutout, immersive=p.immersive, explainer=p.explainer,
+                          spread=p.spread, cutout=p.cutout, immersive=p.immersive, explainer=p.explainer, sounds=p.sounds,
                           links=tuple(p.links), ai_images=p.ai_images, speaker_name=p.speaker_name or None,
                           speaker_title=p.speaker_title)
     if pictures_dir is not None:

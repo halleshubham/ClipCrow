@@ -55,6 +55,7 @@ class ClipEdit(_M):
     cover_text: Optional[str] = Field(default=None, max_length=80)   # its words ("" = back to the hook / title)
     logo: Optional[bool] = None                 # the brand logo (only when the job has one)
     outro: Optional[bool] = None                # the ending video (only when the job has one)
+    sfx: Optional[bool] = None                  # the quiet sound cues: on or off (the level stays as it was made)
 
 
 def _first_line(e: ValidationError) -> str:
@@ -129,6 +130,18 @@ def _brand_edit(edl: EDL, clip: Clip, d: dict, edit: ClipEdit) -> list[str]:
         elif cur and cur.get("enabled", True):
             cur["enabled"] = False
             changed.append(label)
+    if edit.sfx is not None:
+        cur = d.get("sfx")
+        if edit.sfx:
+            if cur is None:
+                d["sfx"] = {}
+                changed.append("sound cues")
+            elif not cur.get("enabled", True):
+                cur["enabled"] = True
+                changed.append("sound cues")
+        elif cur and cur.get("enabled", True):
+            cur["enabled"] = False
+            changed.append("sound cues")
     return changed
 
 
@@ -288,6 +301,7 @@ def clip_view(edl: EDL, clip_id: str, *, source_duration: float) -> dict:
                   "ms": clip.cover.duration_ms if clip.cover else 250},
         "logo": {"available": any(a.id == "brand-logo" for a in edl.assets), "on": bool(clip.logo and clip.logo.enabled)},
         "outro": {"available": any(a.id == "brand-outro" for a in edl.assets), "on": bool(clip.outro and clip.outro.enabled)},
+        "sfx": {"on": bool(clip.sfx and clip.sfx.enabled)},
         "canvas": {"width": edl.render.width, "height": edl.render.height},
         "words": words,
         "edited": any(n.startswith("edited by a person") for n in (clip.ai.notes if clip.ai else [])),

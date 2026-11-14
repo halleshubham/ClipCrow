@@ -305,6 +305,13 @@ class Outro(_Model):
 MAX_CLIP_SECONDS = 900      # a clip may run 15 minutes: shorts are 15-90 s, but a cleaned recording is one reel of 3-8 minutes
 
 
+class Sfx(_Model):
+    """Quiet sound cues (pop, whoosh, tick, ding) laid under the speech where a title, card, picture or push-in appears. WHICH cue goes WHERE is code
+    (``cues.plan_cues``), never the model; this only switches it on and says how loud the loudest cue peaks (dBFS)."""
+    enabled: bool = True
+    level_db: float = Field(default=-10.0, ge=-24.0, le=-3.0)
+
+
 class Clip(_Model):
     id: SafeId
     source_in: float = Field(ge=0)
@@ -316,6 +323,7 @@ class Clip(_Model):
     cover: Optional[Cover] = None
     logo: Optional[Logo] = None
     outro: Optional[Outro] = None
+    sfx: Optional[Sfx] = None
     ai: Optional[ClipAI] = None
 
     @property

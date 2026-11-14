@@ -55,6 +55,7 @@ class Params(_M):
     cover: bool = False                     # a bold title for the first ~250 ms (and a cover PNG)
     logo: bool = False                      # the account's logo in a corner
     outro: bool = False                     # the account's ending video after each clip
+    sounds: bool = False                    # quiet sound cues under the speech where a title, card, picture or push-in appears
     style: Optional[StyleSettings] = None   # a COPY of a saved style's settings (editing the style later changes nothing here)
     style_name: str = Field(default="", max_length=60)
 
