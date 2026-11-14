@@ -277,3 +277,25 @@ def test_make_without_the_option_leaves_the_video_alone(tmp_path, long_video):
     res = make(long_video, tmp_path / "o", llm=scripted(), opts=PlannerOptions(target_clips=1, workers=1), render=False,
                transcribe_fn=lambda media, language=None, progress=None: long_talk(), refine_text=False)
     assert res.edl.source.uri == "long.mp4" and not (tmp_path / "o" / "clean.mp4").exists()
+
+
+@ffmpeg
+def test_an_ffmpeg_that_renamed_the_filter_file_option_is_retried_with_the_new_name(tmp_path, raw_video, monkeypatch):
+    """ffmpeg 7 replaced -filter_complex_script with -/filter_complex; CI has the newer one, a laptop the older."""
+    calls = []
+    real = cc._run
+
+    def fake(cmd, check, label):
+        calls.append([str(c) for c in cmd])
+        if "-filter_complex_script" in [str(c) for c in cmd]:
+            raise ValueError("ffmpeg could not cut the video: Unrecognized option 'filter_complex_script'.")
+        return real([c for c in cmd], check, label) if False else real(_swap(cmd), check, label)
+
+    def _swap(cmd):                                    # run it for real on this (older) ffmpeg with the option it knows
+        out = [str(c) for c in cmd]
+        out[out.index("-/filter_complex")] = "-filter_complex_script"
+        return out
+    monkeypatch.setattr(cc, "_run", fake)
+    info = cc.probe(str(raw_video))
+    cc.render_cleaned(raw_video, [(0, 60), (120, 200)], info, tmp_path / "c.mp4")
+    assert "-filter_complex_script" in calls[0] and "-/filter_complex" in calls[1] and (tmp_path / "c.mp4").is_file()

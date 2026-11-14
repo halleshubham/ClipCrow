@@ -444,11 +444,17 @@ def render_cleaned(src: Path, keeps: list[tuple[int, int]], info: dict, dst: Pat
             y = np.clip(np.vstack(parts), -32768, 32767).astype(np.int16)
             (d / "a.raw").write_bytes(y.tobytes())
             cmd += ["-f", "s16le", "-ar", sr, "-ac", ch, "-i", d / "a.raw"]
-        cmd += ["-filter_complex_script", d / "v.txt", "-map", "[v]"]
+        tail = ["-map", "[v]"]
         if info["has_audio"]:
-            cmd += ["-map", "1:a:0", "-c:a", "aac", "-b:a", "160k"]
-        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", dst]
-        _run(cmd, check, "cut the video")
+            tail += ["-map", "1:a:0", "-c:a", "aac", "-b:a", "160k"]
+        tail += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", dst]
+        # The graph is long (one range per cut), so it goes in a file. The option is -filter_complex_script before ffmpeg 7 and -/filter_complex from 7 on.
+        try:
+            _run(cmd + ["-filter_complex_script", d / "v.txt"] + tail, check, "cut the video")
+        except ValueError as e:
+            if "Unrecognized option" not in str(e):
+                raise
+            _run(cmd + ["-/filter_complex", d / "v.txt"] + tail, check, "cut the video")
     return tmap
 
 
