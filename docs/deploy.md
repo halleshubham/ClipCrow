@@ -77,7 +77,7 @@ requests, so the machine opens no port and needs no tunnel.
 2. **On the GPU machine** (Linux, NVIDIA driver 535 or newer). The easiest way is the same image the server runs, so the versions match:
    ```bash
    export CLIPCROW_WORKER_TOKEN=...   # the same secret; it is read from the environment, never from the command line
-   docker run --rm --gpus all --no-healthcheck -e CLIPCROW_WORKER_TOKEN -v clipcrow-models:/models \
+   docker run --rm --gpus all --shm-size=2g --no-healthcheck -e CLIPCROW_WORKER_TOKEN -v clipcrow-models:/models \
      ghcr.io/halleshubham/clipcrow:latest clipcrow worker --server https://<your domain> --name home-gpu
    ```
    (needs `nvidia-container-toolkit`; check with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`).
@@ -105,6 +105,8 @@ render to it:
 - Framing (face tracking) and planning still run on the server. Re-renders after an edit use the worker too.
 - **Cloudflare:** the clip goes back through your domain, and Cloudflare's proxy limits a request body (100 MB on the free plan). Typical
   clips are 10 to 40 MB; for longer ones use a DNS-only record for the domain, or raise the limit on your plan.
+- **`--shm-size=2g` is required for rendering:** headless Chrome crashes on Docker's default 64 MB of shared memory (the compose files
+  set the same for the server). Keep the `clipcrow-models` volume: the worker caches source videos there.
 - The person-cutout step runs wherever the render runs. Whether HyperFrames uses the GPU for it is not verified.
 
 ## 5. Things that will bite you
