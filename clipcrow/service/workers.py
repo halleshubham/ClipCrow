@@ -398,7 +398,7 @@ class RemoteRenderer:
     say: Callable[[str], None] = lambda _m: None
     fallback: Optional[Callable] = None
     max_seconds: float = 3600.0
-    max_clip_seconds: float = 100.0         # longer clips are rendered here: the MP4 comes back through a proxy that caps a request near 100 MB (0 = no limit)
+    max_clip_seconds: float = 60.0          # longer clips are rendered here: the MP4 comes back through a proxy that caps a request near 100 MB (0 = no limit)
 
     def _local(self, *args, **kw):
         fn = self.fallback

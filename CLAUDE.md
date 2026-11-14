@@ -70,10 +70,15 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   (5) The text correction must keep STUMBLES (repeats, an abandoned "तर मग…", every clause and question): a smoothed fumble cannot be cut later, and a dropped clause leaves
   speech with no captions; `textfix.acceptable` refuses a fix whose length or word count moves too far. (6) The editing pass sees SHORT phrases (`JUDGE_PAUSE`,
   `JUDGE_LINE_WORDS`), not the rules' sentences, so an abandoned fragment inside a sentence has a line of its own and only that line is removed.
+  (7) The editing pass READS FIRST: `Review` is answered in the order `intent`, `passages`, `drop` (understanding before cuts), sees the WHOLE recording in one call with the
+  lines the rules already cut marked "(cut already)", and a second call (`verify_cuts`, purpose `retake-verify`) reads the RESULT as a viewer: it may bring back an AI cut
+  or drop a leftover repeat, never undo a rule. What it understood is shown on the job page. (8) Whisper can give ONE word the time of several unwritten ones ("मधे" over six
+  seconds, hiding "आपल्याला माहितीय…" said twice): `asr.fill_holes` shortens any word over `LONG_WORD` and listens to the freed gap again, so the repeats exist as words and the
+  repeat rules can cut them. Repeats are compared with `same_word` (spelling drift and the है/आहे family count as the same).
   A cleaned recording is usually ONE reel of 3-8 minutes: a clip may run `edl.MAX_CLIP_SECONDS` (15 min), the job form offers 1½-3, 3-5, 5-8 minutes and
   "the whole video as one reel" (`Params.whole`, `PlannerOptions.whole`: one window, no scoring, the clip IS the recording whatever sentences the model
   named). Anything that assumed a short must follow the clip's real length: the editor's trim limit (`max_seconds_for`), the render timeout (12 x the
-  clip), and the GPU worker (clips over `CLIPCROW_WORKER_MAX_CLIP_SECONDS`, default 100, render on the server because the MP4 would come back through
+  clip), and the GPU worker (clips over `CLIPCROW_WORKER_MAX_CLIP_SECONDS`, default 60 (a 98 s clip was 105 MB: over the proxy cap, a 413), render on the server because the MP4 would come back through
   a proxy that caps a request near 100 MB).
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.

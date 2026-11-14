@@ -85,6 +85,20 @@ class PackChoice(BaseModel):
     pack: str
 
 
+def _clean_reading(r) -> dict:
+    """What the editing pass said it understood (shown to a person): its intent, the passages it saw, and the result of its final read-through."""
+    if not isinstance(r, dict):
+        return {}
+    out = {"intent": str(r.get("intent") or "")[:600], "passages": [], "verify": None}
+    for p in (r.get("passages") or [])[:60]:
+        if isinstance(p, dict) and isinstance(p.get("start"), (int, float)) and isinstance(p.get("end"), (int, float)):
+            out["passages"].append({"start": float(p["start"]), "end": float(p["end"]), "role": str(p.get("role") or "")[:80]})
+    v = r.get("verify")
+    if isinstance(v, dict):
+        out["verify"] = {"reads_cleanly": bool(v.get("reads_cleanly")), "problems": [str(x)[:200] for x in (v.get("problems") or [])[:8]]}
+    return out
+
+
 def _part_size() -> int:
     """Every part but the last has this size (S3/R2: equal parts of at least 5 MiB, at most 10 000 parts). Smaller parts retry
     faster on a bad connection; ``CLIPCROW_UPLOAD_PART_MB`` changes it (default 64)."""
@@ -810,7 +824,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 for c in rep.get("cuts", []) if c.get("applied") and isinstance(c.get("start"), (int, float)) and isinstance(c.get("end"), (int, float))]
         return {"pace": rep.get("pace"), "before_seconds": rep.get("before_seconds"), "after_seconds": rep.get("after_seconds"),
                 "by_kind": rep.get("by_kind", {}), "cuts": sorted(cuts, key=lambda c: c["start"]), "missed_speech": rep.get("missed_speech", []),
-                "timemap": rep.get("timemap", [])}
+                "timemap": rep.get("timemap", []), "reading": _clean_reading(rep.get("reading")),
+                "applied": rep.get("applied", True) is not False, "removed_share": rep.get("removed_share")}
 
     @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(authed)])
     def cancel_job(job_id: str, request: Request) -> dict:

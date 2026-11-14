@@ -164,6 +164,7 @@ def _decode_kwargs(model, lang: str) -> dict:
 HOLE_SECONDS = 1.5               # a stretch this long with sound but no recognised word is a hole, not a pause
 HOLE_VOICED = 0.8                # ... when at least this many seconds of it are voiced
 HOLE_WINDOW = 6.0                # a hole is listened to again in windows this long
+LONG_WORD = 1.5                  # a single word never takes this long: the recogniser stretched it over speech it did not write down
 RELAXED = {"temperature": [0.0, 0.4], "no_speech_threshold": None, "log_prob_threshold": None, "compression_ratio_threshold": 2.4}
 
 
@@ -187,6 +188,10 @@ def fill_holes(model, audio, segs: list, kw: dict, say: Callable[[str], None] = 
     """Listen again, with the settings that do not discard hesitant speech, to every hole the first pass left. Marathi is where this matters: the model is
     unsure, the first pass sees "no speech", and the speech is gone from the transcript (and, later, from the video)."""
     total = len(audio) / SAMPLE_RATE
+    for sg in segs:                                           # Whisper sometimes gives the LAST word it wrote the time of several unwritten words ("मधे" over six seconds)
+        for w in sg.words:
+            if w.end - w.start > LONG_WORD:
+                w.end = w.start + max(0.3, min(1.0, 0.12 * len(w.word.strip())))      # keep what the word plausibly took; the rest is a gap to listen to again
     holes = _holes(segs, audio, total)
     if not holes:
         return segs

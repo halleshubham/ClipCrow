@@ -123,7 +123,7 @@ render to it:
 
 ### Long reels and the worker
 
-A clip over `CLIPCROW_WORKER_MAX_CLIP_SECONDS` (default 100) is rendered on the server even when a worker is online: its MP4 is large (about 0.85 MB
+A clip over `CLIPCROW_WORKER_MAX_CLIP_SECONDS` (default 60) is rendered on the server even when a worker is online: its MP4 is large (about 0.85 MB
 per second) and would come back through Cloudflare, which caps a request at 100 MB on the free plan. Set it to `0` if your worker reaches the server
 without such a limit.
 

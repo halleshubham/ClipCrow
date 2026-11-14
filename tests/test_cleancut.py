@@ -103,7 +103,7 @@ def test_the_model_can_only_drop_lines_it_was_shown_within_the_caps_and_never_th
 
     def respond(purpose, prompt, schema):
         seen["prompt"], seen["purpose"] = prompt, purpose
-        return cc.Drops(drop=[cc.Drop(id=2, why="restart"), cc.Drop(id=2, why="dup"), cc.Drop(id=99), cc.Drop(id=9), cc.Drop(id=4), cc.Drop(id=5), cc.Drop(id=6)])
+        return cc.Review(drop=[cc.Drop(id=2, why="restart"), cc.Drop(id=2, why="dup"), cc.Drop(id=99), cc.Drop(id=9), cc.Drop(id=4), cc.Drop(id=5), cc.Drop(id=6)])
     cuts = cc.judge_retakes(words, "mr", FakeLLM(respond))
     assert seen["purpose"] == "retake-judge" and seen["prompt"].startswith("0: वाक्य0")
     assert [c.first for c in cuts] == [2, 4, 5, 6]                 # 99 and the last line refused, 2 once, and the cap is half of the batch (5)
@@ -404,11 +404,11 @@ def test_a_long_clip_is_rendered_on_the_server_not_sent_through_the_proxy(tmp_pa
 
 def test_the_worker_clip_limit_comes_from_the_environment(monkeypatch):
     from clipcrow.service.pipelines import _worker_clip_limit
-    assert _worker_clip_limit() == 100.0
+    assert _worker_clip_limit() == 60.0
     monkeypatch.setenv("CLIPCROW_WORKER_MAX_CLIP_SECONDS", "0")
     assert _worker_clip_limit() == 0.0
     monkeypatch.setenv("CLIPCROW_WORKER_MAX_CLIP_SECONDS", "nonsense")
-    assert _worker_clip_limit() == 100.0
+    assert _worker_clip_limit() == 60.0
 
 
 # --- what the audit of a real job found ---------------------------------------------------------------------------------
@@ -470,7 +470,7 @@ def test_the_editing_pass_is_shown_the_pauses():
 
     def respond(purpose, prompt, schema):
         seen["prompt"] = prompt
-        return cc.Drops(drop=[])
+        return cc.Review(drop=[])
     cc.judge_retakes(words, "mr", FakeLLM(respond))
     assert "[pause 3.3s]" in seen["prompt"] and "stopped and started again" in cc.JUDGE_SYSTEM or "FIRST" in cc.JUDGE_SYSTEM
 
@@ -578,7 +578,7 @@ def test_the_editing_pass_sees_short_phrases_so_a_fragment_has_a_line_of_its_own
 
     def respond(purpose, prompt, schema):
         seen["prompt"] = prompt
-        return cc.Drops(drop=[cc.Drop(id=1, why="abandoned fragment")])
+        return cc.Review(drop=[cc.Drop(id=1, why="abandoned fragment")])
     cuts = cc.judge_retakes(words, "mr", FakeLLM(respond))
     assert [(c.first, c.last) for c in cuts] == [(a, b - 1)]                         # exactly the fragment goes, the head and the restart stay
     assert "[pause 0.5s]" not in seen["prompt"] or True and "1: " in seen["prompt"]
@@ -586,3 +586,151 @@ def test_the_editing_pass_sees_short_phrases_so_a_fragment_has_a_line_of_its_own
 
 def test_the_judge_is_told_to_remove_only_the_fragment_not_the_restart():
     assert "ONLY that fragment" in cc.JUDGE_SYSTEM and "trails off" in cc.JUDGE_SYSTEM
+
+
+def test_a_phrase_said_three_times_with_the_recognisers_spelling_drift_leaves_only_the_last():
+    """From a real job: 'आपलाला महिती है पुन्या सर्ख्या' at 48.3 s, 50.0 s and 53.3 s, then the sentence goes on."""
+    opener = ["आपल्याला", "माहिती", "आहे", "पुण्यासारख्या"]
+    drift1 = ["आपलाला", "महिती", "है", "पुन्या", "सर्ख्या"]
+    drift2 = ["आपलाला", "महिती", "आहे", "पुण्यासारख्या"]
+    tail = ["मध्ये", "ज्या", "पद्धतीचे", "फ्लॅट्स", "असतात"]
+    lead = [uniq(900 + k) for k in range(6)]
+    words = seq(*lead, *drift1, *drift2, *opener, *tail, step=0.4)
+    cuts = [c for c in cc.detect(words, "mr") if c.apply and c.first is not None]
+    cutw = {k for c in cuts for k in range(c.first, c.last + 1)}
+    kept = [w.w for i, w in enumerate(words) if i not in cutw]
+    assert kept[-len(opener + tail):] == opener + tail and "आपलाला" not in kept       # both false starts go, the last (complete) one stays
+    assert kept[:len(lead)] == lead
+
+
+# --- the editing pass reads everything first, then decides, then reads the result ---------------------------------------------
+
+def test_the_answer_is_written_in_the_order_read_first_decide_last():
+    assert list(cc.Review.model_fields)[:3] == ["intent", "passages", "drop"]            # the model writes the fields in this order: understanding before cuts
+    assert "READ everything" in cc.JUDGE_SYSTEM and "Only then decide" in cc.JUDGE_SYSTEM
+
+
+def test_the_whole_recording_goes_to_the_model_in_one_call_with_the_rules_cuts_marked():
+    words, a, p = story()
+    planned = [c for c in cc.detect(words, "mr") if c.apply and c.first is not None]
+    assert planned
+    calls = []
+
+    def respond(purpose, prompt, schema):
+        calls.append((purpose, prompt))
+        lines = cc.judge_lines(words)
+        return cc.Review(intent="एक कथा", passages=[cc.Passage(first=0, last=len(lines) - 1, role="talk")], drop=[cc.Drop(id=0)])
+    reading = {}
+    cuts = cc.judge_retakes(words, "mr", FakeLLM(respond), planned=planned, reading=reading)
+    assert len(calls) == 1 and len(cc.judge_lines(words)) <= cc.JUDGE_BATCH                  # everything in ONE call
+    prompt = calls[0][1]
+    assert "(cut already)" in prompt and all(f"{k}: " in prompt for k in range(len(cc.judge_lines(words))))
+    assert reading["intent"] == "एक कथा" and reading["passages"][0]["role"] == "talk" and reading["passages"][0]["end"] > reading["passages"][0]["start"]
+    assert all(c.kind == "judged" for c in cuts)
+
+
+def test_a_line_the_rules_already_cut_is_not_cut_twice():
+    words, a, p = story()
+    planned = [c for c in cc.detect(words, "mr") if c.apply and c.first is not None]
+    lines = cc.judge_lines(words)
+    already = next(k for k, ln in enumerate(lines) if cc._covered(ln, cc._applied_words(planned)))
+    llm = FakeLLM(lambda pu, pr, sc: cc.Review(drop=[cc.Drop(id=already)]))
+    assert cc.judge_retakes(words, "mr", llm, planned=planned) == []
+
+
+def _judged_setup():
+    words = sentence_words(8)
+    lines = cc.judge_lines(words)
+    cuts = [cc.Cut("judged", "r", lines[2][0], lines[2][1], text="x"), cc.Cut("retake", "rule", lines[4][0], lines[4][1], text="y")]
+    return words, lines, cuts
+
+
+def test_the_final_read_through_can_bring_back_an_ai_cut_and_drop_a_leftover_but_never_undo_a_rule():
+    words, lines, cuts = _judged_setup()
+    seen = {}
+
+    def respond(purpose, prompt, schema):
+        seen["prompt"], seen["purpose"] = prompt, purpose
+        return cc.Check(reads_cleanly=False, problems=["a sentence starts mid-way"], restore=[2, 4], drop_more=[6, 7])       # 4 was cut by a RULE; 7 is the last line
+    reading = {}
+    out = cc.verify_cuts(words, "mr", FakeLLM(respond), cuts, reading=reading)
+    assert seen["purpose"] == "retake-verify" and "[AI cut] 2:" in seen["prompt"] and "— cut —" in seen["prompt"]
+    firsts = {(c.first, c.last): c for c in out}
+    assert (lines[2][0], lines[2][1]) not in firsts                                      # the AI's cut came back
+    assert (lines[4][0], lines[4][1]) in firsts                                          # a rule's cut stayed
+    assert (lines[6][0], lines[6][1]) in firsts and (lines[7][0], lines[7][1]) not in firsts      # a leftover went; the last line is never dropped
+    assert reading["verify"] == {"reads_cleanly": False, "problems": ["a sentence starts mid-way"]}
+
+
+def test_a_failing_read_through_changes_nothing():
+    words, lines, cuts = _judged_setup()
+
+    def boom(p, prompt, schema):
+        raise RuntimeError("down")
+    said = []
+    assert cc.verify_cuts(words, "mr", FakeLLM(boom), cuts, say=said.append) == cuts and said
+
+
+@ffmpeg
+def test_the_cleanup_report_carries_how_the_model_read_the_recording(tmp_path):
+    words, a, p = story()
+    video = tmp_path / "v30.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=15:d=26", "-f", "lavfi", "-i", "sine=f=300:d=26",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(video)], check=True)
+    tr = parse_transcript({"language": "mr", "words": [w.model_dump() for w in words]})
+    purposes = []
+
+    def respond(purpose, prompt, schema):
+        purposes.append(purpose)
+        if purpose == "retake-judge":
+            return cc.Review(intent="बाल्कनीबद्दल एक सूचना", passages=[cc.Passage(first=0, last=1, role="intro")], drop=[])
+        return cc.Check(reads_cleanly=True)
+    res = cc.clean_video(video, tr, tmp_path / "o", llm=FakeLLM(respond), audio_loader=lambda m: np.zeros(26 * 16000, np.float32))
+    assert res is not None and purposes == ["retake-judge", "retake-verify"]
+    rep = json.loads((tmp_path / "o" / "cleanup.json").read_text(encoding="utf-8"))
+    assert rep["reading"]["intent"] == "बाल्कनीबद्दल एक सूचना" and rep["reading"]["verify"]["reads_cleanly"] is True
+
+
+def test_the_cleanup_route_returns_how_the_model_read_the_recording_and_only_clean_values(tmp_path, video_bytes):
+    from tests.test_service import FakePipeline, client, upload, wait
+    c, app = client(tmp_path, FakePipeline())
+    job = wait(c, upload(c, video_bytes).json()["id"])
+    out = tmp_path / "data" / "jobs" / job["id"] / "out"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "cleanup.json").write_text(json.dumps({"pace": "natural", "before_seconds": 84.0, "after_seconds": 61.0, "by_kind": {}, "cuts": [], "missed_speech": [], "timemap": [],
+        "reading": {"intent": "x" * 900, "passages": [{"start": 1.0, "end": 9.5, "role": "intro"}, {"start": "bad", "end": 3, "role": "r"}, "junk"],
+                    "verify": {"reads_cleanly": False, "problems": ["a", "b"]}}}), encoding="utf-8")
+    body = c.get(f"/api/jobs/{job['id']}/cleanup").json()["reading"]
+    assert len(body["intent"]) == 600 and body["passages"] == [{"start": 1.0, "end": 9.5, "role": "intro"}] and body["verify"]["problems"] == ["a", "b"]
+
+
+def test_cuts_that_are_too_many_to_trust_are_written_down_but_not_applied(tmp_path, monkeypatch):
+    """A real job: the cleanup wanted 48% and refused, leaving the person with an uncut video and no idea what it had found."""
+    words, a, p = story()
+    video = tmp_path / "v30.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x120:r=15:d=26", "-f", "lavfi", "-i", "sine=f=300:d=26",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(video)], check=True)
+    tr = parse_transcript({"language": "mr", "words": [w.model_dump() for w in words]})
+    monkeypatch.setattr(cc, "MAX_REMOVED", 0.05)
+    said = []
+    res = cc.clean_video(video, tr, tmp_path / "o", audio_loader=lambda m: np.zeros(26 * 16000, np.float32), say=said.append)
+    assert res is None and any("too much to trust" in m and "What was cut" in m for m in said)
+    rep = json.loads((tmp_path / "o" / "cleanup.json").read_text(encoding="utf-8"))
+    assert rep["applied"] is False and rep["removed_share"] > 0.05 and [c for c in rep["cuts"] if c["applied"]]          # the proposal is on record
+    assert not (tmp_path / "o" / "clean.mp4").exists()
+
+
+def test_a_real_edit_of_forty_eight_percent_is_applied_by_default():
+    assert cc.MAX_REMOVED >= 0.6                                          # a first take of the closing plus fragments can be half a short recording
+
+
+def test_the_route_says_when_the_cuts_were_not_applied(tmp_path, video_bytes):
+    from tests.test_service import FakePipeline, client, upload, wait
+    c, app = client(tmp_path, FakePipeline())
+    job = wait(c, upload(c, video_bytes).json()["id"])
+    out = tmp_path / "data" / "jobs" / job["id"] / "out"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "cleanup.json").write_text(json.dumps({"pace": "natural", "before_seconds": 100.0, "after_seconds": 52.0, "by_kind": {}, "cuts": [], "missed_speech": [],
+                                                  "timemap": [], "applied": False, "removed_share": 0.82}), encoding="utf-8")
+    body = c.get(f"/api/jobs/{job['id']}/cleanup").json()
+    assert body["applied"] is False and body["removed_share"] == 0.82

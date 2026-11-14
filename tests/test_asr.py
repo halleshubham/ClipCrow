@@ -344,6 +344,49 @@ def test_speech_with_no_words_is_listened_to_again_with_settings_that_keep_hesit
 def test_real_silence_is_not_a_hole(monkeypatch):
     audio = voiced_audio(40, [(0, 6)])
     monkeypatch.setattr(asr, "load_audio", lambda media: audio)
-    m = HoleModel(first=(0.1, 6.0))                                  # the first pass wrote down everything that was said
+
+    class WroteItAll(HoleModel):
+        def transcribe(self, audio, **kw):
+            self.calls.append(kw.get("no_speech_threshold", 0.9) is None)
+            if len(self.calls) == 1:                                   # the first pass wrote down six words, one a second, covering everything that was said
+                ws = [NS(word=f" शब्द{k}", start=0.2 + k * 0.95, end=0.9 + k * 0.95) for k in range(6)]
+                return iter([NS(text="x", words=ws)]), NS(language="mr")
+            return iter([]), NS(language="mr")
+    m = WroteItAll()
     asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
     assert True not in m.calls                                       # nothing was spoken after 6 s: no second look
+
+
+class StretchModel:
+    """The first pass writes ONE word and gives it the time of everything said after it (what Whisper did with "मधे": six seconds)."""
+    def __init__(self):
+        self.calls = []
+
+    def detect_language(self, samples):
+        return ("mr", 0.9)
+
+    def transcribe(self, audio, **kw):
+        relaxed = kw.get("no_speech_threshold", 0.9) is None
+        self.calls.append(relaxed)
+        if not relaxed:
+            if len(self.calls) == 1:
+                return iter([NS(text="मधे", words=[NS(word=" मधे", start=1.0, end=8.5)])]), NS(language="mr")
+            return iter([]), NS(language="mr")
+        words = [NS(word=f" शब्द{len(self.calls)}{k}", start=0.5 + k * 0.8, end=1.1 + k * 0.8) for k in range(5)]
+        return iter([NS(text="x", words=words)]), NS(language="mr")
+
+
+def test_one_word_stretched_over_seconds_of_speech_is_cut_down_and_the_speech_is_listened_to_again(monkeypatch):
+    audio = voiced_audio(14, [(2, 14)])                                     # a quiet start (over 10% of it), so speech can be told from silence
+    monkeypatch.setattr(asr, "load_audio", lambda media: audio)
+    m = StretchModel()
+    tr = asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    first = next(w for w in tr.words if w.w == "मधे")
+    assert first.e - first.s <= 1.0                                         # no longer eats 7.5 s
+    assert True in m.calls and sum(1 for w in tr.words if w.w.startswith("शब्द")) >= 5       # the words that were said are now there
+    assert [w.s for w in tr.words] == sorted(w.s for w in tr.words)
+
+
+def test_a_slow_but_real_word_is_left_alone():
+    from clipcrow.asr import LONG_WORD
+    assert LONG_WORD >= 1.5                                                 # a drawn-out word of a second is normal speech

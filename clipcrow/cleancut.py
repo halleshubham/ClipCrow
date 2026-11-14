@@ -36,10 +36,11 @@ from .planner.transcript import Transcript, parse_transcript
 PACES = {"natural": dict(max_pause=0.60, keep_pause=0.40),     # pauses up to max_pause stay; longer ones shrink to keep_pause
          "fast": dict(max_pause=0.40, keep_pause=0.28),
          "tight": dict(max_pause=0.25, keep_pause=0.18)}
-MAX_REMOVED = 0.45               # more than this share of the recording cut = the detection is wrong: leave the video alone
+MAX_REMOVED = 0.70               # more than this share cut = the detection is surely wrong: the proposal is written down, but not applied. (It was 0.45, which refused a REAL
+                                 # edit: a first take of the closing, an aborted try and a fragment were 48% of a 100 s recording. Speech with no words is protected now.)
 MIN_WORDS = 20                   # too little speech to judge
 MAX_MINUTES = 90                 # the audio is held in memory while it is cut
-JUDGE_BATCH = 120                # lines per model call
+JUDGE_BATCH = 500                # lines per model call: the editing pass reads the whole recording in ONE call unless it is very long
 JUDGE_PAUSE = 0.3                # the editing pass sees phrases split at pauses this long (the rules use 0.8 s sentences)
 JUDGE_LINE_WORDS = 14            # ... and at most this many words, so a fragment is never buried in a long line
 JUDGE_MAX_SHARE = 0.5            # the model may drop at most this share of a batch (a whole first take can be almost half of it)
@@ -128,9 +129,19 @@ def refine_edges(words: list[Word], db, thr: float) -> list[tuple[float, float]]
 
 # --- detection ---------------------------------------------------------------------------------
 
+# Function words the recogniser swaps between Hindi and Marathi forms: one sound, two spellings. They count as the same word when comparing repeats.
+EQUIVALENT = [{"है", "हैं", "आहे", "आहेत"}, {"नहीं", "नही", "नाही", "नाहीत"}, {"क्या", "काय"}, {"हम", "आम्ही"}, {"मैं", "मी"}]
+
+
 def same_word(a: str, b: str) -> bool:
     """Equal, or spelled so alike that a recogniser could have written either (नाही / नहीं-style drift, an ending that changed)."""
-    return a == b or (len(a) >= 3 and len(b) >= 3 and difflib.SequenceMatcher(None, a, b).ratio() >= SAME_WORD)
+    if a == b or any(a in g and b in g for g in EQUIVALENT):
+        return True
+    if len(a) >= 3 and len(b) >= 3:
+        return difflib.SequenceMatcher(None, a, b).ratio() >= SAME_WORD
+    if min(len(a), len(b)) >= 2 and max(len(a), len(b)) <= 4:             # short function words: है / आहे, हैं / आहेत (the recogniser writes the Hindi form)
+        return difflib.SequenceMatcher(None, a, b).ratio() >= 0.75
+    return False
 
 
 def overlap(a: list[str], b: list[str]) -> tuple[int, float]:
@@ -212,6 +223,7 @@ def detect(words: list[Word], lang: str, *, db=None, thr: float | None = None) -
             need = n if n == 3 else n - 1                                     # one changed word is allowed in a phrase of four or more
             hit = next((j for j in range(i + n, min(N - n + 1, i + n + PHRASE_WINDOW))
                         if nw[j:j + n] and all(nw[j:j + n]) and sum(same_word(x, y) for x, y in zip(pat, nw[j:j + n])) >= need
+                        and any(same_word(pat[0], nw[t]) for t in (j - 1, j, j + 1) if 0 <= t < N)        # the restatement starts with the phrase's first word
                         and not any(k in done for k in range(i, j))), None)
             if hit is not None:
                 start = next((k for k in range(i + n, hit + 1) if same_word(nw[k], pat[0])), hit)      # an inserted word can shift the match: cut up to the restatement's FIRST word
@@ -320,49 +332,157 @@ class Drops(BaseModel):
     drop: list[Drop]
 
 
-JUDGE_SYSTEM = """You are a video editor cleaning a raw {language} talking recording. You get numbered consecutive lines of what was said.
-Return the ids of lines to REMOVE:
+class Passage(BaseModel):
+    first: int
+    last: int
+    role: str = ""            # intro, main point, first take of X, final take of X, abandoned fragment, sign-off, chatter
+
+
+class Review(BaseModel):
+    """What the editing pass answers. The FIELDS ARE IN THE ORDER IT WRITES THEM: it states what the recording is for and lays out its passages BEFORE it
+    decides what to remove, so a cut is a decision about a whole it has already understood."""
+    intent: str = ""
+    passages: list[Passage] = []
+    drop: list[Drop] = []
+
+
+JUDGE_SYSTEM = """You are a video editor cleaning a raw {language} talking recording. You get the WHOLE recording as numbered consecutive lines, in order,
+with long pauses marked like "[pause 3.3s]". Do the work in this order, and do not skip the reading:
+1. READ everything. In `intent`, say in one or two sentences what the speaker is trying to tell the viewer and how the finished video should flow.
+2. In `passages`, lay out the recording as consecutive line ranges with what each one is: intro, main point, a first take of X, the final take of X, an abandoned
+   fragment, a restart phrase, a sign-off, chatter.
+3. Only then decide `drop`: the ids of lines to REMOVE so the video flows as you described.
+Remove:
 - an abandoned attempt the speaker says again, better. Keep the LAST complete take. The second try is often reworded, extended, shortened or starts with
   different words; if a later line says the same thing again with some changes, the EARLIER line is the one to remove.
 - the restart phrase itself ("sorry, again", "one more time", "थांबा, पुन्हा सांगतो", "सॉरी, फिर से").
-- a whole passage said twice: when the speaker stops, pauses ("[pause 3.3s]" before a line) and says the passage again from its opening, remove the FIRST
-  attempt, all of its lines, up to the pause. A long pause before a line that repeats an earlier opening is the clearest sign.
+- a whole passage said twice: when the speaker stops, pauses and says the passage again from its opening, remove the FIRST attempt, all of its lines, up to
+  the pause. A long pause before a line that repeats an earlier opening is the clearest sign.
 - an unfinished phrase the speaker abandons mid-way and starts over: it trails off ("...so then", "तर मग…", a word cut short), is often followed by a short
   pause, and the next line says the same thing properly. Remove ONLY that fragment line, never the line that starts over. The lines are short phrases, so a
   fragment inside a sentence has a line of its own; if a line is a complete thought, keep it.
 - off-camera chatter before or after the real talk ("is it recording?", "चालू आहे का?", "ठीक है, चलो").
-Rules: a repeated idea said for emphasis is not a retake. Never remove the only place a fact appears. Never remove a line only because it is short.
-When you are not sure, keep the line. Most lines are kept: return an empty list when nothing needs to go."""
+Rules: a repeated idea said for emphasis is not a retake. Never remove the only place a fact appears. Never remove a line only because it is short. Never remove
+a line that the text after it depends on (a sentence that refers back to it, an answer to its question) unless a later line says it again. Lines marked
+"(cut already)" are being removed by another rule: treat them as gone, judge the rest as it will read after those cuts, and do not list them.
+When you are not sure, keep the line. Most lines are kept: `drop` may be empty."""
+
+VERIFY_SYSTEM = """You are checking a finished edit of a raw {language} talking recording. The lines below are what the viewer will hear, in order. "— cut —" marks
+where material was removed. Lines marked "[AI cut]" were removed by an earlier editing pass and are NOT heard; they are shown so you can bring one back.
+Read it all as a viewer would. Report:
+- `reads_cleanly`: true when it flows as one clean take with no repeated passage and no broken sentence.
+- `problems`: short notes on what is wrong (a repeated passage, a sentence that starts mid-way, "it" with nothing to refer to, a question never answered).
+- `drop_more`: ids of KEPT lines that are still a repeat of another kept line or an abandoned fragment.
+- `restore`: ids of "[AI cut]" lines whose removal broke the sense, so they must come back.
+Change as little as possible. When you are not sure, change nothing."""
 
 LANGUAGE_NAME = {"mr": "Marathi", "hi": "Hindi", "en": "English"}
 
 
-def judge_retakes(words: list[Word], lang: str, llm, *, say: Callable[[str], None] = lambda _m: None) -> list[Cut]:
-    """Whole-line cuts the model picked. Only integers it was shown are accepted, at most ``JUDGE_MAX_SHARE`` of a batch, never the last line of the recording."""
-    lines = lines_of(words, pause=JUDGE_PAUSE, longest=JUDGE_LINE_WORDS)         # short phrases, so an abandoned fragment inside a sentence has a line of its own
+class Check(BaseModel):
+    reads_cleanly: bool = True
+    problems: list[str] = []
+    drop_more: list[int] = []
+    restore: list[int] = []
+
+
+def judge_lines(words: list[Word]) -> list[tuple[int, int]]:
+    return lines_of(words, pause=JUDGE_PAUSE, longest=JUDGE_LINE_WORDS)         # short phrases, so an abandoned fragment inside a sentence has a line of its own
+
+
+def _line_text(words: list[Word], line: tuple[int, int]) -> str:
+    return " ".join(w.w for w in words[line[0]:line[1] + 1])
+
+
+def _covered(line: tuple[int, int], cutw: set[int]) -> bool:
+    return all(k in cutw for k in range(line[0], line[1] + 1))
+
+
+def _applied_words(cuts: list[Cut]) -> set[int]:
+    return {k for c in cuts if c.apply and c.first is not None for k in range(c.first, c.last + 1)}
+
+
+def judge_retakes(words: list[Word], lang: str, llm, *, planned: list[Cut] | None = None, reading: dict | None = None,
+                  say: Callable[[str], None] = lambda _m: None) -> list[Cut]:
+    """The editing pass. The model reads the WHOLE recording (``planned``: lines other rules are already cutting are marked), writes down what it is for and
+    how it is laid out, and only then names lines to remove. Only integers it was shown are accepted, at most ``JUDGE_MAX_SHARE`` of the lines it saw, never the
+    last line of the recording. ``reading`` (a dict) receives its intent and passages for the report."""
+    lines = judge_lines(words)
+    cutw = _applied_words(planned or [])
     cuts: list[Cut] = []
     system = JUDGE_SYSTEM.format(language=LANGUAGE_NAME.get(lang, "spoken"))
-    for i in range(0, len(lines), JUDGE_BATCH):
+    intent_so_far = ""
+
+    def gap(k: int) -> str:                                                   # a long pause is the clearest sign that the speaker stopped and started again
+        a = lines[k][0]
+        g = words[a].s - words[a - 1].e if a else 0.0
+        return f"[pause {g:.1f}s] " if g >= 0.8 else ""
+    for i in range(0, len(lines), JUDGE_BATCH):                               # one call for any recording a person is likely to make; chunks only for very long ones
         batch = list(range(i, min(i + JUDGE_BATCH, len(lines))))
-        def gap(k: int) -> str:                                               # a long pause is the clearest sign that the speaker stopped and started again
-            a = lines[k][0]
-            g = words[a].s - words[a - 1].e if a else 0.0
-            return f"[pause {g:.1f}s] " if g >= 0.8 else ""
-        user = "\n".join(f"{k}: {gap(k)}{' '.join(w.w for w in words[lines[k][0]:lines[k][1] + 1])}" for k in batch)
+        user = ("So far the recording is about: " + intent_so_far + "\n\n" if intent_so_far else "") + "\n".join(
+            f"{k}: {gap(k)}{'(cut already) ' if _covered(lines[k], cutw) else ''}{_line_text(words, lines[k])}" for k in batch)
         try:
-            got = llm.generate(system, user, Drops, purpose="retake-judge")
+            got = llm.generate(system, user, Review, purpose="retake-judge")
         except Exception as e:                                                 # a refusal, a timeout: the rule-based cuts still stand
             say(f"the editing pass was skipped for lines {batch[0]}-{batch[-1]}: {type(e).__name__}")
             continue
+        intent = str(getattr(got, "intent", "") or "")[:600]
+        intent_so_far = intent or intent_so_far
+        if reading is not None:
+            reading.setdefault("intent", intent)
+            for pg in getattr(got, "passages", [])[:60]:
+                if 0 <= pg.first <= pg.last < len(lines):
+                    reading.setdefault("passages", []).append({"first": pg.first, "last": pg.last, "role": str(pg.role)[:80],
+                                                                "start": round(words[lines[pg.first][0]].s, 2), "end": round(words[lines[pg.last][1]].e, 2)})
         picked, seen = [], set()
         for d in got.drop:
-            if d.id in batch and d.id not in seen and d.id != len(lines) - 1:
+            if d.id in batch and d.id not in seen and d.id != len(lines) - 1 and not _covered(lines[d.id], cutw):
                 seen.add(d.id)
                 picked.append(d)
         for d in picked[: max(1, int(JUDGE_MAX_SHARE * len(batch)))]:
             a, b = lines[d.id]
-            cuts.append(Cut("judged", (d.why or "an abandoned take, a restart or chatter")[:100], a, b, text=" ".join(w.w for w in words[a:b + 1])[:200]))
+            cuts.append(Cut("judged", (d.why or "an abandoned take, a restart or chatter")[:100], a, b, text=_line_text(words, lines[d.id])[:200]))
     return cuts
+
+
+def verify_cuts(words: list[Word], lang: str, llm, cuts: list[Cut], *, reading: dict | None = None,
+                say: Callable[[str], None] = lambda _m: None) -> list[Cut]:
+    """Read the result as a viewer would. The model may bring back a line the editing pass removed and may drop a leftover repeat or fragment, a few lines at
+    most. Lines cut by the rules are never brought back by it."""
+    lines = judge_lines(words)
+    cutw = _applied_words(cuts)
+    judged = {(c.first, c.last): c for c in cuts if c.apply and c.kind == "judged"}
+    shown: list[str] = []
+    gap_open = False
+    for k, ln in enumerate(lines):
+        if (ln[0], ln[1]) in judged:
+            shown.append(f"[AI cut] {k}: {_line_text(words, ln)}")
+            gap_open = True
+        elif _covered(ln, cutw):
+            if not gap_open:
+                shown.append("— cut —")
+            gap_open = True
+        else:
+            shown.append(f"{k}: {_line_text(words, ln)}")
+            gap_open = False
+    try:
+        got = llm.generate(VERIFY_SYSTEM.format(language=LANGUAGE_NAME.get(lang, "spoken")), "\n".join(shown), Check, purpose="retake-verify")
+    except Exception as e:
+        say(f"the final read-through was skipped: {type(e).__name__}")
+        return cuts
+    if reading is not None:
+        reading["verify"] = {"reads_cleanly": bool(got.reads_cleanly), "problems": [str(p)[:200] for p in got.problems[:8]]}
+    out = list(cuts)
+    back = {k for k in got.restore if 0 <= k < len(lines) and (lines[k][0], lines[k][1]) in judged}
+    for k in sorted(back)[: max(1, len(judged) // 2)]:                       # at most half of what the editing pass removed
+        out.remove(judged[(lines[k][0], lines[k][1])])
+        say(f"the read-through brought back line {k}: it broke the sense")
+    more = [k for k in dict.fromkeys(got.drop_more) if 0 <= k < len(lines) - 1 and not _covered(lines[k], cutw)]
+    for k in more[: max(1, int(0.15 * len(lines)))]:
+        a, b = lines[k]
+        out.append(Cut("judged", "left over after the cuts: a repeat or an abandoned fragment", a, b, text=_line_text(words, lines[k])[:200]))
+        say(f"the read-through removed a leftover repeat (line {k})")
+    return out
 
 
 # --- what to keep --------------------------------------------------------------------------------
@@ -614,8 +734,10 @@ def clean_video(video: Path, tr: Transcript, out: Path, *, pace: str = "natural"
         db = thr = None
     lang = tr.language
     cuts = detect(tr.words, lang, db=db, thr=thr)
+    reading: dict = {}
     if llm is not None:
-        cuts += judge_retakes(tr.words, lang, llm, say=say)
+        cuts += judge_retakes(tr.words, lang, llm, planned=cuts, reading=reading, say=say)       # reads it ALL first, then decides
+        cuts = verify_cuts(tr.words, lang, llm, cuts, reading=reading, say=say)                   # then reads the result as a viewer would
     check()
     keeps = compute_keeps(tr.words, cuts, db, thr if thr is not None else 0.0, pace, info["duration"], info["fps"])
     if not keeps:
@@ -627,30 +749,34 @@ def clean_video(video: Path, tr: Transcript, out: Path, *, pace: str = "natural"
     for c in cuts:
         if c.apply:
             by[c.kind] = by.get(c.kind, 0) + 1
-    if removed > MAX_REMOVED:
-        say(f"the cleanup would remove {removed:.0%} of the recording, which is too much to trust; the video is used as it is")
-        return None
     saved = info["duration"] - kept_s
     if saved < 0.5 and not by:
         say("nothing to clean up; the video is used as it is")
         return None
     missed = missed_speech(tr.words, cutw, db, thr)
+    tmap, t = [], 0.0
+    for a, b in keeps:
+        tmap.append({"src": [round(a / info["fps"], 4), round(b / info["fps"], 4)], "out": [round(t, 4), round(t + (b - a) / info["fps"], 4)]})
+        t += (b - a) / info["fps"]
+    report = {"pace": pace, "before_seconds": round(info["duration"], 2), "after_seconds": round(kept_s, 2), "by_kind": by, "timemap": tmap,
+              "missed_speech": [[round(a, 2), round(b, 2)] for a, b in missed], "reading": reading, "removed_share": round(removed, 3), "applied": removed <= MAX_REMOVED,
+              "cuts": [{"kind": c.kind, "reason": c.reason, "text": c.text, "first": c.first, "last": c.last, "t0": c.t0, "t1": c.t1, "applied": c.apply,
+                        "start": round(tr.words[c.first].s, 2) if c.first is not None else c.t0,
+                        "end": round(tr.words[c.last].e, 2) if c.first is not None else c.t1} for c in cuts]}
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "cleanup.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")        # written even when refused: a person can see what it wanted to cut
+    if removed > MAX_REMOVED:
+        say(f"the cleanup would remove {removed:.0%} of the recording, which is too much to trust; the video is used as it is (the proposed cuts are listed under 'What was cut')")
+        return None
     if missed:
         say(f"{len(missed)} stretch(es) of speech had no recognised words ({sum(b - a for a, b in missed):.0f} s): kept as they are, without captions")
-    out.mkdir(parents=True, exist_ok=True)
     dst = out / "clean.mp4"
-    tmap = render_cleaned(Path(video), keeps, info, dst, check=check)
+    render_cleaned(Path(video), keeps, info, dst, check=check)
     words = remap_words(tr.words, cutw, keeps, info["fps"])
     if len(words) < MIN_WORDS // 2:
         dst.unlink(missing_ok=True)
         return None
     new = parse_transcript({"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in words]})
-    report = {"pace": pace, "before_seconds": round(info["duration"], 2), "after_seconds": round(kept_s, 2), "by_kind": by, "timemap": tmap,
-              "missed_speech": [[round(a, 2), round(b, 2)] for a, b in missed],
-              "cuts": [{"kind": c.kind, "reason": c.reason, "text": c.text, "first": c.first, "last": c.last, "t0": c.t0, "t1": c.t1, "applied": c.apply,
-                        "start": round(tr.words[c.first].s, 2) if c.first is not None else c.t0,
-                        "end": round(tr.words[c.last].e, 2) if c.first is not None else c.t1} for c in cuts]}
-    (out / "cleanup.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
     parts = [f"{n} {k.replace('_', ' ')}" for k, n in sorted(by.items(), key=lambda kv: -kv[1])]
     summary = f"cleaned: {_clock(info['duration'])} -> {_clock(kept_s)}" + (f" ({', '.join(parts)})" if parts else " (long pauses shortened)")
     say(summary)

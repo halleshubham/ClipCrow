@@ -51,7 +51,7 @@ async function api(path, opts = {}) {
 const purposeLabel = (p) => {
   const [kind, n] = p.split(':');
   return { score: 'Score the sections', detail: n === undefined ? 'Write the title and hook' : `Pick clips, section ${Number(n) + 1}`, repair: `Fix the script, section ${Number(n) + 1}`,
-    'retake-judge': 'Judge which takes to cut', 'text-refine': 'Correct the Marathi/Hindi text' }[kind] || p;
+    'retake-judge': 'Read the recording and judge the cuts', 'retake-verify': 'Read the result through', 'text-refine': 'Correct the Marathi/Hindi text' }[kind] || p;
 };
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -547,8 +547,15 @@ async function jobView(jobId) {
       const rows = r.cuts.map((c) => el('tr', {}, el('td', { class: 'num', text: `${fmt(c.start)}–${fmt(c.end)}` }), el('td', { text: KIND[c.kind] || c.kind }),
         el('td', { class: 'deva', translate: 'no', text: c.text || c.reason })));
       cutBody.className = '';
+      const rd = r.reading || {};
       cutBody.replaceChildren(
-        el('p', { class: 'small', text: `${fmt(r.before_seconds)} became ${fmt(r.after_seconds)}. Times are in your original recording. Pauses were also shortened (${r.pace}).` }),
+        rd.intent ? el('div', {}, el('h3', { style: { margin: '0 0 6px', fontSize: '14px' }, text: 'How the AI read your recording' }),
+          el('p', { class: 'small deva', translate: 'no', text: rd.intent }),
+          rd.passages && rd.passages.length ? el('div', { class: 'chips' }, rd.passages.map((p) => el('span', { class: 'chip plain', translate: 'no', text: `${fmt(p.start)}–${fmt(p.end)} ${p.role}` }))) : null,
+          rd.verify ? el('p', { class: 'small', style: { marginTop: '10px' }, text: rd.verify.reads_cleanly ? 'Its read-through of the result: it flows as one clean take.'
+            : `Its read-through of the result found: ${rd.verify.problems.join('; ') || 'something to check'}.` }) : null) : null,
+        r.applied ? el('p', { class: 'small', text: `${fmt(r.before_seconds)} became ${fmt(r.after_seconds)}. Times are in your original recording. Pauses were also shortened (${r.pace}).` })
+          : el('p', { class: 'alert', role: 'alert', text: `These cuts were NOT applied: they would have removed ${Math.round((r.removed_share || 0) * 100)}% of your recording, which is more than the cleanup trusts itself with, so the video was used as it is. Check the list below; if it is right, tell us and we will let it through.` }),
         r.missed_speech.length ? el('p', { class: 'small', text: `Speech the recogniser could not write down was kept as it is, without captions: ${r.missed_speech.map(([a, b]) => `${fmt(a)}–${fmt(b)}`).join(', ')}.` }) : null,
         rows.length ? el('table', {}, el('thead', {}, el('tr', {}, ['Original time', 'What', 'Removed'].map((h) => el('th', { text: h })))), el('tbody', {}, rows))
           : el('p', { class: 'small muted', text: 'No words were removed; only long pauses were shortened.' }));
