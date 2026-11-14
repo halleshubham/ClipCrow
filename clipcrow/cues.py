@@ -17,14 +17,15 @@ from pathlib import Path
 from typing import Optional
 
 from .edl import Clip
+from .transitions import hard_cuts
 
 SFX_DIR = Path(__file__).parent / "sfx"
 MIN_GAP = 2.0
 LEAD = 0.08
 MAX_CUES = 40
 # overlay kind (or "punch") -> sound id; higher PRIORITY wins when events are closer than MIN_GAP
-CUE_FOR = {"stat_pill": "ding", "media": "shutter", "lower_third": "whoosh-soft", "hook": "pop", "punch": "click"}
-PRIORITY = {"stat_pill": 5, "media": 4, "lower_third": 3, "hook": 2, "punch": 1}
+CUE_FOR = {"stat_pill": "ding", "media": "shutter", "lower_third": "whoosh-soft", "hook": "pop", "punch": "click", "cut": "click"}
+PRIORITY = {"stat_pill": 5, "media": 4, "lower_third": 3, "hook": 2, "cut": 1, "punch": 0}
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ def plan_cues(clip: Clip) -> list[Cue]:
         if o.kind in CUE_FOR and getattr(o, "t_in", None) is not None:
             events.append((float(o.t_in), o.kind))
     events += [(float(p.t), "punch") for p in clip.layout.punch_ins]
+    events += [(float(t), "cut") for t in hard_cuts(clip)]
     chosen: list[tuple[float, str]] = []
     for t, kind in sorted(events, key=lambda e: (-PRIORITY[e[1]], e[0])):            # the important ones first
         if 0 <= t < clip.duration - 0.2 and all(abs(t - c[0]) >= MIN_GAP for c in chosen):

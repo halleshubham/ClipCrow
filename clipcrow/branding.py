@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .edl import EDL, Asset, Clip, Cover, Logo, Outro
+from .edl import EDL, Asset, Clip, Cover, Logo, Music, Outro
 
 CANVAS_FPS = 30
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -33,6 +33,7 @@ class BrandKit:
     """What one account (or the whole install) has uploaded, and how it likes it drawn."""
     logo: Optional[Path] = None
     outro: Optional[Path] = None
+    music: Optional[Path] = None
     logo_position: str = "tr"
     logo_size_pct: int = 18
     logo_opacity: float = 0.9
@@ -50,9 +51,10 @@ class BrandingChoice:
     cover: bool = False
     logo: bool = False
     outro: bool = False
+    music: bool = False
 
     def any(self) -> bool:
-        return self.cover or self.logo or self.outro
+        return self.cover or self.logo or self.outro or self.music
 
 
 def cover_text(clip: Clip) -> str:
@@ -82,7 +84,8 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
     assets = [a for a in edl.assets if not a.id.startswith("brand-")]
     folder = out / "brand"
     new_assets: list[Asset] = []
-    for what, src, kind, key in (("logo", kit.logo, "image", "brand-logo"), ("outro", kit.outro, "video", "brand-outro")):
+    for what, src, kind, key in (("logo", kit.logo, "image", "brand-logo"), ("outro", kit.outro, "video", "brand-outro"),
+                                 ("music", kit.music, "audio", "brand-music")):
         if src is None or not Path(src).is_file():
             continue
         suffix = Path(src).suffix.lower()
@@ -98,6 +101,8 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
         raise BrandError("No logo has been uploaded yet.")
     if choice.outro and "brand-outro" not in have:
         raise BrandError("No ending video has been uploaded yet.")
+    if choice.music and "brand-music" not in have:
+        raise BrandError("No background music has been uploaded yet.")
     clips = []
     for c in edl.clips:
         upd: dict = {}
@@ -108,6 +113,8 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
                                opacity=kit.logo_opacity, margin_px=kit.logo_margin_px)
         if choice.outro:
             upd["outro"] = Outro(asset="brand-outro", max_seconds=kit.outro_max_seconds)
+        if choice.music:
+            upd["music"] = Music(asset="brand-music")
         clips.append(c.model_copy(update=upd) if upd else c)
     return EDL.model_validate({**edl.model_dump(exclude_none=True),
                                "assets": [a.model_dump(exclude_defaults=True) for a in [*assets, *new_assets]],

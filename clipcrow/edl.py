@@ -313,6 +313,21 @@ class Sfx(_Model):
     level_db: float = Field(default=-10.0, ge=-24.0, le=-3.0)
 
 
+class Music(_Model):
+    """A background track (an audio Asset of this EDL, the account's own upload) under the speech. ``level_db`` is where it sits RELATIVE to the speech's
+    loudness while nobody talks; while someone does it is ducked further (``music.mix``: sidechain compression), so the words stay first."""
+    asset: SafeId
+    enabled: bool = True
+    level_db: float = Field(default=-10.0, ge=-24.0, le=-4.0)
+
+
+class Transition(_Model):
+    """A short effect on every hard cut of the clip (a jump cut from the cleanup, a speaker change, the edge of a slide). WHICH cuts is code
+    (``transitions.hard_cuts``); this only picks one of a closed set of looks and switches it on or off."""
+    enabled: bool = True
+    style: Literal["flash", "blur", "dip", "whip"] = "flash"
+
+
 class Clip(_Model):
     id: SafeId
     source_in: float = Field(ge=0)
@@ -324,7 +339,10 @@ class Clip(_Model):
     cover: Optional[Cover] = None
     logo: Optional[Logo] = None
     outro: Optional[Outro] = None
+    music: Optional[Music] = None
     sfx: Optional[Sfx] = None
+    transition: Optional[Transition] = None
+    seams: list[float] = Field(default_factory=list, max_length=400)   # clip times where the cleanup joined two stretches (a jump cut), in time order
     ai: Optional[ClipAI] = None
 
     @property
@@ -344,6 +362,8 @@ class Clip(_Model):
             raise ValueError(f"clip {self.id!r}: overlay ids must be unique")
         if self.layout.mode != "cutout_behind" and any(o.kind == "text_behind" for o in self.overlays):
             raise ValueError(f"clip {self.id!r}: text_behind overlays need layout.mode 'cutout_behind'")
+        if any(s <= 0 or s >= self.duration for s in self.seams) or any(b < a for a, b in zip(self.seams, self.seams[1:])):
+            raise ValueError(f"clip {self.id!r}: seams must be inside the clip and in time order")
         if self.cover and self.cover.duration_ms / 1000 > self.duration / 2:
             raise ValueError(f"clip {self.id!r}: the cover must be shorter than half the clip")
         return self

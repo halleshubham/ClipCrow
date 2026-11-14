@@ -36,7 +36,7 @@ from ..edl import load_edl
 from ..planner.source import probe_source
 from .accounts import AccountError, Accounts, User
 from .billing import BillingError, Razorpay, apply_event
-from .brand import MAX_LOGO_BYTES, MAX_OUTRO_BYTES, BrandStore
+from .brand import MAX_LOGO_BYTES, MAX_MUSIC_BYTES, MAX_OUTRO_BYTES, BrandStore
 from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Catalog, load_catalog
@@ -581,7 +581,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                             immersive=truthy(o.get("immersive")), explainer=truthy(o.get("explainer")), pictures=picture_ids,
                             ai_images=want_images, multi=o.get("multi") or "switch", graphics=truthy(o.get("graphics")),
                             clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", whole=truthy(o.get("whole")),
-                            cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), outro=truthy(o.get("outro")), sounds=truthy(o.get("sounds")))
+                            cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), outro=truthy(o.get("outro")), sounds=truthy(o.get("sounds")), music=truthy(o.get("music")), transition=o.get("transition") or "none")
         except (ValidationError, ValueError, TypeError) as e:
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
         if params.min_clip >= params.max_clip:
@@ -600,6 +600,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             params.style, params.style_name = st, rec.name
         if params.logo and brands.logo_path(owner) is None:
             raise HTTPException(422, "Upload a logo on the Brand page first, or turn the logo off.")
+        if params.music and brands.music_path(owner) is None:
+            raise HTTPException(422, "Upload a music track on the Brand page first, or turn the music off.")
         if params.outro and brands.outro_path(owner) is None:
             raise HTTPException(422, "Upload an ending video on the Brand page first, or turn it off.")
         return params
@@ -773,7 +775,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          clean: Optional[str] = Form(None), clean_pace: Optional[str] = Form(None), whole: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
                          explainer: Optional[str] = Form(None), links: Optional[str] = Form(None), pictures_ids: Optional[str] = Form(None, alias="pictures"),
                          ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
-                         logo: Optional[str] = Form(None), outro: Optional[str] = Form(None), sounds: Optional[str] = Form(None),
+                         logo: Optional[str] = Form(None), outro: Optional[str] = Form(None), sounds: Optional[str] = Form(None), music: Optional[str] = Form(None), transition: Optional[str] = Form(None),
                          style: Optional[str] = Form(None)) -> dict:
         if rights.lower() not in ("1", "true", "on", "yes"):
             raise HTTPException(400, "Confirm that you own this video or have the rights to process it.")
@@ -782,7 +784,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
                                    speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, whole=whole,
-                                   immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, outro=outro, sounds=sounds,
+                                   immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, outro=outro, sounds=sounds, music=music, transition=transition,
                                    style=style),
                               brand_owner(request))
         suffix = Path(file.filename or "").suffix.lower()
@@ -1129,6 +1131,30 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 return await asyncio.to_thread(brands.put_outro, owner, raw)
             except BrandError as e:
                 raise HTTPException(422, str(e))
+
+    @app.post("/api/brand/music", dependencies=[Depends(authed)])
+    async def brand_music(request: Request, file: UploadFile = File(...)) -> dict:
+        owner = brand_owner(request)
+        with tempfile.TemporaryDirectory(dir=data_dir) as tmp:
+            raw = Path(tmp) / "in"
+            size = 0
+            with raw.open("wb") as f:
+                while chunk := await file.read(1 << 20):
+                    size += len(chunk)
+                    if size > MAX_MUSIC_BYTES:
+                        raise HTTPException(413, f"The music can be at most {MAX_MUSIC_BYTES // (1024 * 1024)} MB.")
+                    f.write(chunk)
+            try:
+                return await asyncio.to_thread(brands.put_music, owner, raw)
+            except BrandError as e:
+                raise HTTPException(422, str(e))
+
+    @app.get("/api/brand/music/file", dependencies=[Depends(authed)])
+    def brand_music_file(request: Request):
+        path = brands.music_path(brand_owner(request))
+        if path is None:
+            raise HTTPException(404, "No music yet.")
+        return FileResponse(path, media_type="audio/mp4", headers={"Cache-Control": "no-cache"})
 
     @app.delete("/api/brand/{what}", dependencies=[Depends(authed)])
     def brand_delete(what: str, request: Request) -> dict:

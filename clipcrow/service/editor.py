@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .. import branding, fonts
 from ..edl import EDL, Clip, ClipAI, HexColor
 from ..punch import plan_punch_ins, sentence_spans
+from ..transitions import hard_cuts
 
 MIN_SECONDS, MAX_SECONDS = 3.0, 90.0
 WORD_CONTEXT = 6.0          # seconds of transcript shown around the clip for picking cut points
@@ -56,6 +57,8 @@ class ClipEdit(_M):
     cover_text: Optional[str] = Field(default=None, max_length=80)   # its words ("" = back to the hook / title)
     logo: Optional[bool] = None                 # the brand logo (only when the job has one)
     outro: Optional[bool] = None                # the ending video (only when the job has one)
+    transition: Optional[Literal["none", "flash", "blur", "dip", "whip"]] = None   # a look for every hard cut, or none
+    music: Optional[bool] = None                # the background track (only when the job has one)
     sfx: Optional[bool] = None                  # the quiet sound cues: on or off (the level stays as it was made)
 
 
@@ -114,7 +117,7 @@ def _brand_edit(edl: EDL, clip: Clip, d: dict, edit: ClipEdit) -> list[str]:
             if new != cur:
                 d["cover"] = new
                 changed.append("cover")
-    for name, label, asset in (("logo", "logo", "brand-logo"), ("outro", "ending video", "brand-outro")):
+    for name, label, asset in (("logo", "logo", "brand-logo"), ("outro", "ending video", "brand-outro"), ("music", "background music", "brand-music")):
         want = getattr(edit, name)
         if want is None:
             continue
@@ -131,6 +134,15 @@ def _brand_edit(edl: EDL, clip: Clip, d: dict, edit: ClipEdit) -> list[str]:
         elif cur and cur.get("enabled", True):
             cur["enabled"] = False
             changed.append(label)
+    if edit.transition is not None:
+        cur = d.get("transition")
+        if edit.transition == "none":
+            if cur and cur.get("enabled", True):
+                cur["enabled"] = False
+                changed.append("transition")
+        elif not cur or not cur.get("enabled", True) or cur.get("style") != edit.transition:
+            d["transition"] = {"style": edit.transition, "enabled": True}
+            changed.append("transition")
     if edit.sfx is not None:
         cur = d.get("sfx")
         if edit.sfx:
@@ -302,7 +314,9 @@ def clip_view(edl: EDL, clip_id: str, *, source_duration: float) -> dict:
                   "ms": clip.cover.duration_ms if clip.cover else 250},
         "logo": {"available": any(a.id == "brand-logo" for a in edl.assets), "on": bool(clip.logo and clip.logo.enabled)},
         "outro": {"available": any(a.id == "brand-outro" for a in edl.assets), "on": bool(clip.outro and clip.outro.enabled)},
+        "music": {"available": any(a.id == "brand-music" for a in edl.assets), "on": bool(clip.music and clip.music.enabled)},
         "sfx": {"on": bool(clip.sfx and clip.sfx.enabled)},
+        "transition": {"style": clip.transition.style if clip.transition and clip.transition.enabled else "none", "cuts": len(hard_cuts(clip))},
         "canvas": {"width": edl.render.width, "height": edl.render.height},
         "words": words,
         "edited": any(n.startswith("edited by a person") for n in (clip.ai.notes if clip.ai else [])),

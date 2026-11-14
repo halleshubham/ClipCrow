@@ -11,6 +11,9 @@ The rules that came out of these are in `development-rules.md`; this file is the
   with ducking (licence risk), cues on hard cuts (the cleaned recording's seams are not in the EDL).
 - **Adoption step 3: caption motion presets** (pop, fade, slide, karaoke) chosen per clip in the editor; default unchanged. Rendered once for real (demo clip with karaoke + cues + loudness): the active
   word was yellow, loudness -13.99 LUFS. Fonts for a local real render: `scripts/install_fonts.sh <dir>` then `CLIPCROW_FONT_DIR=<dir>` (the sandbox has none).
+- **Adoption step 4: transitions, music and ducking.** Transitions (flash, blur, dip, whip) on hard cuts, rendered for real and looked at in frames. The cleanup's join times now travel in the EDL (`Clip.seams`), so
+  cues and transitions can use the jump cuts. Music: the account uploads its own track (Brand page), the render ducks it under the speech with a sidechain compressor; ducking tested with real audio (bed 6+ dB
+  lower under a tone than in the pause). One real render with transition + karaoke + cues + music: no warnings, -14.0 LUFS. All of it is OFF by default and unlistened-to on a real Marathi reel: judge by ear.
 - **Platform length/size checks: only YouTube Shorts (3 min, vertical) is noted on the Share page.** Searches for Instagram, TikTok, Facebook, X and LinkedIn limits returned third-party guides that
   disagree widely (Instagram 3-20 min, TikTok 10-60 min, Facebook 90 s to no cap) and no official page, so a check there would be guesswork. Add one only from the platform's own help page, with its date. Next on the list: ducking/SFX placed from the EDL's word times, platform length/size checks before posting, a closed set of transitions,
   caption animation presets.

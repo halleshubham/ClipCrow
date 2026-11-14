@@ -51,6 +51,7 @@ class PlannerOptions:
     max_clips: int = 10
     whole: bool = False                     # the whole recording is ONE clip (a cleaned raw video): no scoring, one title and hook for all of it
     cutout: bool = False                    # a person cutout will exist: allow text behind the speaker
+    transition: Optional[str] = None        # a look for every hard cut (flash | blur | dip | whip); which cuts is code (transitions.hard_cuts)
     sounds: bool = False                    # quiet sound cues (clip.sfx); which cue and where is code (cues.plan_cues)
     immersive: bool = False                 # slow push-ins at sentence starts (timing is code, not the model)
     explainer: bool = False                 # pictures over the footage: screenshots of the links below, AI images
@@ -260,6 +261,8 @@ def _clip_dict(n: int, c: PlannedClip, tr: Transcript, opts: PlannerOptions, lan
     }
     if opts.sounds:
         d["sfx"] = {}
+    if opts.transition:
+        d["transition"] = {"style": opts.transition}
     if opts.caption_pause_break is not None:
         d["captions"]["pause_break"] = opts.caption_pause_break
     if opts.caption_look:

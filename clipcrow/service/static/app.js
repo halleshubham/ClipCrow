@@ -420,7 +420,7 @@ async function newJobView() {
       multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', pictures: pics.ids(), ai_images: $('ai_images').checked ? 'true' : '',
-      cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '',
+      cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '', music: $('music').checked ? 'true' : '', transition: $('transition').value,
     };
     submit.disabled = true;
     progress.hidden = false;
@@ -486,6 +486,9 @@ async function newJobView() {
         el('label', { class: c.ai_images ? 'check' : 'check muted', for: 'ai_images' }, el('input', { type: 'checkbox', id: 'ai_images', disabled: !c.ai_images }),
           el('span', {}, el('strong', { text: 'Also generate images with AI' }), el('br'),
             el('span', { class: 'muted', text: c.ai_images ? 'AI-generated pictures mean most platforms ask you to label the video as AI content.' : 'Not set up on this server.' })))),
+      el('div', {}, el('label', { class: 'field', for: 'transition', text: 'Effect on every hard cut' }),
+        el('select', { id: 'transition' }, [['none', 'None'], ['flash', 'Flash'], ['blur', 'Blur'], ['dip', 'Dip to black'], ['whip', 'Whip']].map(([v, t]) => el('option', { value: v, text: t }))),
+        el('div', { class: 'hint', text: 'A short effect where two stretches of the recording were joined, the speaker changes or a slide starts. You can change it per clip afterwards.' })),
       el('label', { class: 'check', for: 'sounds' }, el('input', { type: 'checkbox', id: 'sounds' }),
         el('span', {}, el('strong', { text: 'Quiet sound cues' }), el('br'),
           el('span', { class: 'muted', text: 'A soft pop, whoosh or tick under the speech where a title, card, picture or push-in appears, never on every word. Switch it off per clip when you edit.' }))),
@@ -498,6 +501,9 @@ async function newJobView() {
       el('label', { class: brand.outro ? 'check' : 'check muted', for: 'outro' }, el('input', { type: 'checkbox', id: 'outro', disabled: !brand.outro, checked: brand.outro && !!brand.settings.default_outro }),
         el('span', {}, el('strong', { text: 'Ending video after each clip' }), el('br'),
           el('span', { class: 'muted' }, brand.outro ? `Your branding video (${brand.outro_seconds} s), added at the end.` : ['No ending video yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
+      el('label', { class: brand.music ? 'check' : 'check muted', for: 'music' }, el('input', { type: 'checkbox', id: 'music', disabled: !brand.music, checked: brand.music && !!brand.settings.default_music }),
+        el('span', {}, el('strong', { text: 'Background music (ducks under the speech)' }), el('br'),
+          el('span', { class: 'muted' }, brand.music ? `Your track (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music yet. ', el('a', { href: '#/brand', text: 'Add your own track on the Brand page' }), '.']))),
       el('label', { class: 'check', for: 'clean' }, el('input', { type: 'checkbox', id: 'clean' }),
         el('span', {}, el('strong', { text: 'Raw recording: cut fumbles and dead air' }), el('br'),
           el('span', { class: 'muted', text: 'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.' }))),
@@ -867,6 +873,7 @@ async function clipEditorView(jobId, clipId) {
   f.cap_enabled = el('input', { id: 'cap_enabled', type: 'checkbox' }); f.cap_enabled.checked = cap.enabled;
   choose('cap_words', [1, 2, 3, 4, 5, 6, 7, 8].map((n) => [String(n), `${n} word${n > 1 ? 's' : ''} at a time`]), String(cap.max_words));
   choose('cap_font', view.fonts.map((x) => [x, x]), cap.font_family);
+  choose('tx', [['none', 'None'], ['flash', 'Flash'], ['blur', 'Blur'], ['dip', 'Dip to black'], ['whip', 'Whip']], view.transition.style);
   choose('cap_anim', [['pop', 'Pop (words bounce in)'], ['karaoke', 'Highlight the word being said'], ['fade', 'Fade (calm)'], ['slide', 'Slide up']], cap.animation || 'pop');
   f.cap_color = el('input', { id: 'cap_color', type: 'color', value: cap.color });
   f.cap_hl = el('input', { id: 'cap_hl', type: 'color', value: cap.highlight_color });
@@ -886,6 +893,7 @@ async function clipEditorView(jobId, clipId) {
   f.logo = el('input', { id: 'logo_on', type: 'checkbox', disabled: !view.logo.available }); f.logo.checked = view.logo.on;
   f.outro = el('input', { id: 'outro_on', type: 'checkbox', disabled: !view.outro.available }); f.outro.checked = view.outro.on;
   f.sfx = el('input', { id: 'sfx_on', type: 'checkbox' }); f.sfx.checked = view.sfx.on;
+  f.music = el('input', { id: 'music_on', type: 'checkbox', disabled: !view.music.available }); f.music.checked = view.music.on;
 
   function body() {
     const out = {};
@@ -909,6 +917,8 @@ async function clipEditorView(jobId, clipId) {
     if (f.logo.checked !== view.logo.on) out.logo = f.logo.checked;
     if (f.outro.checked !== view.outro.on) out.outro = f.outro.checked;
     if (f.sfx.checked !== view.sfx.on) out.sfx = f.sfx.checked;
+    if (f.music.checked !== view.music.on) out.music = f.music.checked;
+    if (f.tx.value !== view.transition.style) out.transition = f.tx.value;
     const drop = [...app.querySelectorAll('[data-drop]')].filter((x) => x.checked).map((x) => x.dataset.drop);
     if (drop.length) out.drop_pictures = drop;
     if (f.framing.value) { out.framing = f.framing.value; if (f.framing.value === 'auto') out.multi = f.multi.value; }
@@ -985,7 +995,11 @@ async function clipEditorView(jobId, clipId) {
           field('Cover words', f.cover_text, 'Leave empty to use the hook line.'),
           el('label', { class: view.logo.available ? 'check' : 'check muted', for: 'logo_on' }, f.logo, el('span', { text: view.logo.available ? 'Logo in a corner' : 'Logo (this job has none)' })),
           el('label', { class: view.outro.available ? 'check' : 'check muted', for: 'outro_on' }, f.outro, el('span', { text: view.outro.available ? 'Ending video' : 'Ending video (this job has none)' }))),
-        group('Sound', el('label', { class: 'check', for: 'sfx_on' }, f.sfx, el('span', {}, el('strong', { text: 'Quiet sound cues' }), el('br'),
+        group('Cuts', field('Effect on every cut', f.tx, view.transition.cuts
+          ? `This clip has ${view.transition.cuts} hard cut${view.transition.cuts > 1 ? 's' : ''} (a joined stretch, a speaker change or a slide).`
+          : 'This clip has no hard cuts, so nothing would show.')),
+        group('Sound', el('label', { class: view.music.available ? 'check' : 'check muted', for: 'music_on' }, f.music, el('span', { text: view.music.available ? 'Background music (ducks under the speech)' : 'Background music (this job has none)' })),
+          el('label', { class: 'check', for: 'sfx_on' }, f.sfx, el('span', {}, el('strong', { text: 'Quiet sound cues' }), el('br'),
           el('span', { class: 'muted', text: 'A soft pop, whoosh or tick under the speech where a title, card, picture or push-in appears. Never on every word.' })))),
         group('Framing', field('Picture', f.framing), multiField,
           el('label', { class: 'check', for: 'punch' }, f.punch, el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
@@ -1023,12 +1037,20 @@ async function brandView() {
 
   const logoIn = el('input', { type: 'file', id: 'logo_file', accept: 'image/png,image/jpeg,image/webp' });
   const outroIn = el('input', { type: 'file', id: 'outro_file', accept: 'video/*' });
+  const musicIn = el('input', { type: 'file', id: 'music_file', accept: 'audio/*' });
   const logoBox = el('section', { class: 'card stack' }, el('h2', { text: 'Logo' }),
     brand.logo ? el('img', { src: `/api/brand/logo/file${stamp()}`, alt: 'Your logo', class: 'logo-preview' })
       : el('p', { class: 'small muted', text: 'No logo yet.' }),
     el('div', {}, el('label', { class: 'field', for: 'logo_file', text: 'PNG, JPEG or WebP, up to 3 MB. A transparent PNG looks best. SVG is not accepted.' }), logoIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.logo ? 'Replace logo' : 'Upload logo', onclick: () => send('/brand/logo', logoIn, 'a logo') }),
       brand.logo && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('logo') })));
+  const musicBox = el('section', { class: 'card stack' }, el('h2', { text: 'Background music' }),
+    brand.music ? el('audio', { src: `/api/brand/music/file${stamp()}`, controls: true, preload: 'metadata', style: { width: '100%' }, 'aria-label': 'Your music track' })
+      : el('p', { class: 'small muted', text: 'No music yet.' }),
+    el('div', {}, el('label', { class: 'field', for: 'music_file', text: 'Your own track: MP3, M4A or WAV, 5 seconds to 15 minutes, up to 30 MB. It plays under the voice and is lowered further while someone talks.' }), musicIn,
+      el('div', { class: 'hint', text: 'Only upload music you have the right to use in your videos. Platforms can mute or claim music they recognise.' })),
+    el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.music ? 'Replace music' : 'Upload music', onclick: () => send('/brand/music', musicIn, 'a music file') }),
+      brand.music && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('music') })));
   const outroBox = el('section', { class: 'card stack' }, el('h2', { text: 'Ending video' }),
     brand.outro ? el('video', { src: `/api/brand/outro/file${stamp()}`, controls: true, playsinline: true, preload: 'metadata', style: { width: '180px' }, 'aria-label': 'Your ending video' })
       : el('p', { class: 'small muted', text: 'No ending video yet.' }),
@@ -1060,20 +1082,20 @@ async function brandView() {
       color('cover_bg_color', 'Cover solid colour', s.cover_bg_color),
       num('outro_max_seconds', 'Use at most (seconds) of the ending video', 1, 30, 0.5, s.outro_max_seconds)),
     el('div', { class: 'stack' }, el('div', { class: 'small muted', text: 'Tick by default on a new job:' }),
-      tick('default_cover', 'Cover title', s.default_cover), tick('default_logo', 'Logo', s.default_logo), tick('default_outro', 'Ending video', s.default_outro)),
+      tick('default_cover', 'Cover title', s.default_cover), tick('default_logo', 'Logo', s.default_logo), tick('default_outro', 'Ending video', s.default_outro), tick('default_music', 'Background music', s.default_music)),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: async () => {
       err.hidden = true;
       const num_ = (id) => Number(f[id].value);
       const body = { logo_position: f.logo_position.value, logo_size_pct: num_('logo_size_pct'), logo_opacity: num_('logo_opacity'),
         logo_margin_px: num_('logo_margin_px'), cover_ms: num_('cover_ms'), cover_background: f.cover_background.value,
         cover_color: f.cover_color.value.toUpperCase(), cover_accent: f.cover_accent.value.toUpperCase(), cover_bg_color: f.cover_bg_color.value.toUpperCase(),
-        outro_max_seconds: num_('outro_max_seconds'), default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_outro: f.default_outro.checked };
+        outro_max_seconds: num_('outro_max_seconds'), default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_outro: f.default_outro.checked, default_music: f.default_music.checked };
       try { await api('/brand', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); note.textContent = 'Saved. New jobs use this.'; } catch (e) { fail(e); }
     } })));
 
   app.replaceChildren(el('div', { class: 'stack' },
     el('div', {}, el('h1', { text: 'Brand' }), el('p', { class: 'small muted', text: 'Your logo and ending video are added to clips when you tick them on a new job. Clips already made keep the copy they were made with.' })),
-    err, note, el('div', { class: 'pair' }, logoBox, outroBox), look));
+    err, note, el('div', { class: 'pair' }, logoBox, outroBox), musicBox, look));
 }
 
 // ---- sharing ---------------------------------------------------------------------------------------

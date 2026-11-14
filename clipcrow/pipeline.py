@@ -5,7 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from . import branding, cues, loudness, matte, render
+from . import branding, cues, loudness, matte, music, render
 from .provenance import write_sidecar
 from .compile import CompiledClip, compile_clip
 from .edl import EDL, EDLError
@@ -62,6 +62,16 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
     out = render.render(project, output, quality=edl.render.quality, workers=workers,
                         browser_path=os.environ.get("CLIPCROW_BROWSER"), timeout=max(1800, int(clip.duration * 12)))      # a long clip takes longer
     out = Path(out)
+    if clip.music and clip.music.enabled:                        # the person's own track under the speech, ducked, before the cues (a cue must not trigger the ducking)
+        try:
+            track = next(a for a in edl.assets if a.id == clip.music.asset)
+            if not track.uri:
+                raise EDLError(f"clip {clip.id!r}: the music {track.id!r} has no file")
+            from .compile import _inside
+            if music.mix(out, _inside(Path(asset_root) if asset_root else Path(media_root), track.uri), clip.music.level_db) is None:
+                compiled.warnings.append("the background music was skipped (no clear speech to follow, or the track could not be read)")
+        except (OSError, subprocess.SubprocessError, ValueError, StopIteration):
+            compiled.warnings.append("the background music was skipped")
     if clip.sfx and clip.sfx.enabled:                            # quiet cues under the speech, before the ending video and the loudness pass
         try:
             cues.mix(out, cues.plan_cues(clip), clip.sfx.level_db)

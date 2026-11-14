@@ -145,6 +145,8 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
         opts.on_progress = opts.on_progress or say
         plan = plan_edl(tr, probe_source(video, uri=video.name), llm, opts, score_llm=score_llm)
         edl, report = plan.edl, plan.report
+        from .transitions import seams_from_cleanup, with_seams
+        edl = with_seams(edl, seams_from_cleanup(out / "cleanup.json"))       # the cleanup's jump cuts, for transitions and cues
         say(f"planned {len(edl.clips)} clip(s)")
         hk.stage("plan", "done", f"{len(edl.clips)} clip(s)")
 

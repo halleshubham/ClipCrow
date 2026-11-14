@@ -22,6 +22,8 @@ from ..branding import BrandError, BrandKit, probe_media
 MAX_LOGO_BYTES = 3 * 1024 * 1024
 MAX_OUTRO_BYTES = 90 * 1024 * 1024
 MAX_OUTRO_SECONDS = 20.0
+MAX_MUSIC_BYTES = 30 * 1024 * 1024
+MIN_MUSIC_SECONDS, MAX_MUSIC_SECONDS = 5.0, 900.0
 MAX_LOGO_SIDE = 4096
 OWNER = re.compile(r"^([0-9a-f]{32}|shared)\Z")
 SNIFF = ((b"\x89PNG\r\n\x1a\n", ".png"), (b"\xff\xd8\xff", ".jpg"))
@@ -34,7 +36,7 @@ DEFAULTS = {
     "cover_ms": 250, "cover_background": "frame", "cover_color": "#FFFFFF", "cover_accent": "#FFD54A",
     "cover_bg_color": "#111111", "outro_max_seconds": 6.0,
     # what a new job ticks by default
-    "default_cover": False, "default_logo": False, "default_outro": False,
+    "default_cover": False, "default_logo": False, "default_outro": False, "default_music": False,
 }
 _RANGES = {"logo_size_pct": (5, 40, int), "logo_opacity": (0.1, 1.0, float), "logo_margin_px": (0, 300, int),
            "cover_ms": (100, 1500, int), "outro_max_seconds": (1.0, 30.0, float)}
@@ -139,6 +141,32 @@ class BrandStore:
                 shutil.move(str(probe), d / f"logo{suffix}")
         return self.describe(owner)
 
+    def music_path(self, owner: str) -> Path | None:
+        p = self._dir(owner) / "music.m4a"
+        return p if p.is_file() else None
+
+    def put_music(self, owner: str, source: Path) -> dict:
+        """``source`` is an uploaded audio file already on disk (the caller capped its size). Re-encoded to one canonical stereo AAC file, without
+        its tags or cover art: what is stored is what we made. The person is responsible for the right to use the track."""
+        if source.stat().st_size > MAX_MUSIC_BYTES:
+            raise BrandError(f"The music can be at most {MAX_MUSIC_BYTES // (1024 * 1024)} MB.")
+        info = probe_media(source)
+        if not info["has_audio"]:
+            raise BrandError("That file has no sound.")
+        if not MIN_MUSIC_SECONDS <= info["duration"] <= MAX_MUSIC_SECONDS:
+            raise BrandError(f"The music must be between {MIN_MUSIC_SECONDS:.0f} seconds and {MAX_MUSIC_SECONDS / 60:.0f} minutes long.")
+        d = self._dir(owner)
+        d.mkdir(parents=True, exist_ok=True)
+        out = d / "music.new.m4a"
+        r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(source), "-vn", "-map", "0:a:0", "-map_metadata", "-1", "-ac", "2", "-ar", "48000",
+                            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)], capture_output=True, text=True, timeout=300)
+        if r.returncode != 0 or not out.is_file():
+            out.unlink(missing_ok=True)
+            raise BrandError("That audio could not be converted. Try an MP3 or an M4A.")
+        with self._lock:
+            os.replace(out, d / "music.m4a")
+        return self.describe(owner)
+
     def put_outro(self, owner: str, source: Path) -> dict:
         """``source`` is an uploaded file already on disk (the caller capped its size). Re-encoded to 1080x1920/30 fps."""
         if source.stat().st_size > MAX_OUTRO_BYTES:
@@ -173,6 +201,8 @@ class BrandStore:
                     p.unlink()
             elif what == "outro":
                 (d / "outro.mp4").unlink(missing_ok=True)
+            elif what == "music":
+                (d / "music.m4a").unlink(missing_ok=True)
             else:
                 raise BrandError("Unknown item.")
         return self.describe(owner)
@@ -185,12 +215,14 @@ class BrandStore:
     def describe(self, owner: str) -> dict:
         s = self.settings(owner)
         outro = self.outro_path(owner)
-        return {"logo": self.logo_path(owner) is not None, "outro": outro is not None,
+        music = self.music_path(owner)
+        return {"logo": self.logo_path(owner) is not None, "outro": outro is not None, "music": music is not None,
+                "music_seconds": round(probe_media(music)["duration"], 1) if music else 0,
                 "outro_seconds": round(probe_media(outro)["duration"], 1) if outro else 0, "settings": s}
 
     def kit(self, owner: str) -> BrandKit:
         s = self.settings(owner)
-        return BrandKit(logo=self.logo_path(owner), outro=self.outro_path(owner), logo_position=s["logo_position"],
+        return BrandKit(logo=self.logo_path(owner), outro=self.outro_path(owner), music=self.music_path(owner), logo_position=s["logo_position"],
                         logo_size_pct=s["logo_size_pct"], logo_opacity=float(s["logo_opacity"]), logo_margin_px=s["logo_margin_px"],
                         cover_ms=s["cover_ms"], cover_background=s["cover_background"], cover_color=s["cover_color"],
                         cover_accent=s["cover_accent"], cover_bg_color=s["cover_bg_color"],

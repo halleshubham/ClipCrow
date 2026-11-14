@@ -84,6 +84,14 @@ History, incidents and open items are in `development-log.md`: add an entry ther
   copied, the speech keeps its channel layout; no audio / no cue / any failure leaves the clip as it was. Order in `render_clip`: cues, outro join, loudness. The editor flips `enabled`, the level stays.
 - Caption motion (`CaptionStyle.animation`: pop | fade | slide | karaoke, editor select "Motion"): a CLOSED set compiled by `compile._caption_script`. `pop` is the original motion and its script must stay
   byte for byte what it was (a test pins it: same pixels for every clip made before the field existed). Karaoke tweens `color` of the word being said and sends an emphasised word back to the highlight colour.
+- Transitions (`transitions.py`, `Clip.transition` flash|blur|dip|whip, `Clip.seams`, job option `transition`, editor select; OFF by default): which cuts get one is code, `hard_cuts(clip)` = the cleanup's joins
+  (`seams`, set by `make()` from `cleanup.json`'s timemap through `with_seams`, clip time = cleaned-video time - source_in), speaker jumps in a tracked framing (a keyframe jump of > 0.1 within 0.12 s, never a pan) and
+  both edges of a fit span; none in the first/last 0.3 s, cuts under 0.6 s apart share one effect. The look is a full-frame layer (`compile._transitions_scene`, z 8: over cards and logo, under the cover).
+  Sound cues put a click on every hard cut when cues are on.
+- Background music and ducking (`music.py`, `Clip.music`, brand kit `music.m4a`, job option `music`, editor toggle, OFF by default): the track is the ACCOUNT'S OWN upload (we ship no music: the person is
+  responsible for the right to use it; the Brand page says platforms can mute or claim it), re-encoded to one stereo AAC, 5 s-15 min, 30 MB, copied into the job as asset `brand-music`. One ffmpeg pass: looped, faded,
+  gained to `level_db` (default -10) relative to the SPEECH's integrated loudness (`loudness.measure` of both), and pushed down further by `sidechaincompress` keyed on the speech while someone talks; the speech keeps
+  its own channel layout (mono -> stereo lowers it by 3 dB), picture copied. No speech to measure / no audio / unreadable track = clip untouched. Order in `render_clip`: music, cues, outro join, loudness.
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
 

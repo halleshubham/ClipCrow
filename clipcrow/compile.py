@@ -27,6 +27,7 @@ from typing import Callable, Optional
 
 from . import fonts
 from .captions import CaptionGroup, clip_words, group_words
+from .transitions import hard_cuts
 from .edl import EDL, Clip, Cover, EDLError, Hook, Logo, LowerThird, MediaCard, StatPill, TextBehind
 
 GSAP_HINT = "run scripts/fetch_gsap.sh, or pass gsap_js=<path to gsap.min.js>"
@@ -252,6 +253,30 @@ def _caption_script(animation: str, timeline: list, color: str, highlight: str, 
     }});"""
 
 
+def _transitions_scene(cuts: list[float], style: str, duration: float, w: int, h: int) -> str:
+    """One full-frame layer that is clear except around each hard cut, where it plays the chosen look (a closed set; ``cuts`` are clip times)."""
+    css = {
+        "flash": "    #tx { position: absolute; inset: 0; background: #ffffff; opacity: 0; }",
+        "dip": "    #tx { position: absolute; inset: 0; background: #000000; opacity: 0; }",
+        "blur": "    #tx { position: absolute; inset: 0; backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }",
+        "whip": (f"    #tx {{ position: absolute; top: 0; bottom: 0; left: 0; width: {round(w * 0.5)}px; opacity: 0;\n"
+                 "      background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.78) 50%, rgba(255,255,255,0)); }"),
+    }[style]
+    body = f'    <div id="tx" class="clip" data-start="0" data-duration="{_num(duration)}"></div>'
+    if style == "flash":
+        one = 'tl.fromTo("#tx", { opacity: 0 }, { opacity: 0.88, duration: 0.05, ease: "power1.out" }, Math.max(c - 0.05, 0)).to("#tx", { opacity: 0, duration: 0.17, ease: "power2.out" }, c);'
+    elif style == "dip":
+        one = 'tl.fromTo("#tx", { opacity: 0 }, { opacity: 1, duration: 0.07, ease: "power1.in" }, Math.max(c - 0.07, 0)).to("#tx", { opacity: 0, duration: 0.12, ease: "power1.out" }, c);'
+    elif style == "blur":
+        one = ('tl.fromTo("#tx", { backdropFilter: "blur(0px)", webkitBackdropFilter: "blur(0px)" }, { backdropFilter: "blur(34px)", webkitBackdropFilter: "blur(34px)", duration: 0.09, ease: "power1.in" }, Math.max(c - 0.09, 0))'
+               '.to("#tx", { backdropFilter: "blur(0px)", webkitBackdropFilter: "blur(0px)", duration: 0.16, ease: "power2.out" }, c);')
+    else:
+        one = (f'tl.fromTo("#tx", {{ x: {-round(w * 0.5)}, opacity: 1 }}, {{ x: {w}, duration: 0.24, ease: "power2.inOut" }}, Math.max(c - 0.12, 0))'
+               '.set("#tx", { opacity: 0 }, c + 0.13);')
+    script = f"    const C = {json.dumps([round(c, 3) for c in cuts])};\n    C.forEach((c) => {{ {one} }});"
+    return _scene("transitions", w, h, css, body, script)
+
+
 def _behind_scene(items, family: str, face: str, w: int, h: int) -> str:
     css = f"""    {face}
     .bw {{ position: absolute; left: 0; right: 0; text-align: center; overflow: visible; line-height: 1.1;
@@ -395,6 +420,8 @@ def _index(duration: float, w: int, h: int, lang: str, scenes: set[str], cutout:
         parts.append(host("cards", 6, 4, "graphics"))
     if "logo" in scenes:
         parts.append(host("logo", 7, 6, "graphics"))
+    if "transitions" in scenes:                 # over the picture, the text and the cards, under the cover
+        parts.append(host("transitions", 8, 8, "graphics"))
     if "cover" in scenes:                       # on top of everything: the first frames are the poster
         parts.append(host("cover", 9, 7, "graphics"))
     pushes = ""
@@ -548,6 +575,11 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
         t0 = min(cover.duration_ms / 1000, duration) if cover else 0.0
         (project / "compositions" / "logo.html").write_text(_logo_scene(logo, rel, t0, duration - t0, w, h), "utf-8")
         scenes.append("logo")
+    tx = clip.transition if clip.transition and clip.transition.enabled else None
+    tx_cuts = hard_cuts(clip) if tx else []
+    if tx_cuts:
+        (project / "compositions" / "transitions.html").write_text(_transitions_scene(tx_cuts, tx.style, duration, w, h), "utf-8")
+        scenes.append("transitions")
     if cover:
         (project / "compositions" / "cover.html").write_text(_cover_scene(cover, stack, face, w, h), "utf-8")
         scenes.append("cover")

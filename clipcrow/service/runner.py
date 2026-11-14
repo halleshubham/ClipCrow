@@ -222,9 +222,9 @@ class JobRunner:
 
         hooks = Hooks(stage=stage, clip_ready=clip_ready, planned=planned, clip_notes=clip_notes, cancelled=ev.is_set)
         p = job.params
-        if p.cover or p.logo or p.outro:
+        if p.cover or p.logo or p.outro or p.music:
             from ..branding import BrandingChoice, BrandKit
-            hooks.choice = BrandingChoice(cover=p.cover, logo=p.logo, outro=p.outro)
+            hooks.choice = BrandingChoice(cover=p.cover, logo=p.logo, outro=p.outro, music=p.music)
             hooks.brand = self.brands.kit(job.owner or "shared") if self.brands else BrandKit()
         try:
             if job.source_pending:                              # a direct upload: the original is in the bucket, fetch it first
