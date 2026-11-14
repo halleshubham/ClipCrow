@@ -109,6 +109,19 @@ render to it:
   set the same for the server). Keep the `clipcrow-models` volume: the worker caches source videos there.
 - The person-cutout step runs wherever the render runs. Whether HyperFrames uses the GPU for it is not verified.
 
+### Checking Marathi / Hindi accuracy on your own audio
+
+Devanagari speech is decoded in 15 s windows with no prompt, and the text is then corrected by the model (needs `ANTHROPIC_API_KEY`; turn it off
+with `CLIPCROW_TEXT_REFINE=0`). To see the difference on a real stretch, on the worker machine:
+
+```bash
+docker run --rm --gpus all --shm-size=2g -e ANTHROPIC_API_KEY -v clipcrow-models:/models -v "$PWD":/data \
+  ghcr.io/halleshubham/clipcrow:latest \
+  clipcrow compare-asr /data/talk.mp4 --from 60 --to 180 --language mr --model large-v3 --refine
+```
+
+It prints each 15 s slice three times: `old` (whole-file with a script prompt), `new` (windowed, no prompt) and `refined` (corrected).
+
 ## 5. Things that will bite you
 
 - **Cloudflare in front of the domain:** the orange-cloud proxy limits request bodies (100 MB on the free plan). With R2 configured,

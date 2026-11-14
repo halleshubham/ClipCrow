@@ -38,6 +38,7 @@ def loader(models):
 def fake_audio(monkeypatch):
     monkeypatch.setattr(indic, "media_duration", lambda p: 100.0)
     monkeypatch.setattr(indic, "audio_window", lambda p, off, secs=30: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(asr, "load_audio", lambda media: np.zeros(10 * 16000, dtype=np.float32))       # ten seconds: one window
 
 
 # --- indic.py -------------------------------------------------------------------------
@@ -67,20 +68,23 @@ def test_decode_params_seed_indic_and_confident_only():
 
 # --- asr.py ---------------------------------------------------------------------------
 
-def test_transcribe_votes_seeds_and_returns_a_transcript():
+def test_marathi_is_voted_and_decoded_without_a_prompt_and_returns_a_transcript():
     m = FakeModel([seg("क्षणात आयुष्य", W(" क्षणात", 0.0, 0.5), W(" आयुष्य।", 0.5, 1.1))])
     tr = asr.transcribe("x.mp4", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
     assert [w.w for w in tr.words] == ["क्षणात", "आयुष्य।"] and tr.language == "mr"
     kw = m.transcribe_kwargs
-    assert kw["language"] == "mr" and kw["initial_prompt"].startswith("नमस्कार")
-    assert kw["word_timestamps"] and kw["vad_filter"] and kw["condition_on_previous_text"] is False
+    assert kw["language"] == "mr" and "initial_prompt" not in kw and "hotwords" not in kw       # a prompt is echoed back as the transcript
+    assert kw["word_timestamps"] and kw["vad_filter"] is False and kw["condition_on_previous_text"] is False
     assert tr.sentences[0].text == "क्षणात आयुष्य।"
 
 
-def test_a_pinned_language_skips_the_vote_but_still_gets_the_seed():
+def test_a_pinned_language_skips_the_vote_and_the_legacy_path_still_gets_the_seed():
     m = FakeModel([seg("x", W(" नमस्ते", 0, 1))], language="hi")
     asr.transcribe("x.mp4", "hi", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
-    assert m.detect_calls == 0 and m.transcribe_kwargs["language"] == "hi" and "initial_prompt" in m.transcribe_kwargs
+    assert m.detect_calls == 0 and m.transcribe_kwargs["language"] == "hi" and "initial_prompt" not in m.transcribe_kwargs
+    old = FakeModel([seg("x", W(" नमस्ते", 0, 1))], language="hi")
+    asr.transcribe("x.mp4", "hi", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": old}), windowed=False)
+    assert "initial_prompt" in old.transcribe_kwargs and old.transcribe_kwargs["vad_filter"] is True
 
 
 def test_indic_audio_switches_to_the_larger_model_but_english_does_not():
@@ -193,7 +197,7 @@ class StrictModel:
 def test_the_seed_is_also_passed_as_hotwords_so_every_window_is_anchored_not_only_the_first():
     """initial_prompt reaches only the first 30 s window when condition_on_previous_text is False: later windows drifted to Hindi."""
     m = FakeModel([seg("x", W(" नाही", 0, 1))])
-    asr.transcribe("x.mp4", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    asr.transcribe("x.mp4", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}), windowed=False)
     kw = m.transcribe_kwargs
     assert kw["condition_on_previous_text"] is False
     assert kw["hotwords"] == kw["initial_prompt"] == indic.SCRIPT_SEED["mr"]
@@ -201,7 +205,7 @@ def test_the_seed_is_also_passed_as_hotwords_so_every_window_is_anchored_not_onl
 
 def test_a_pinned_language_gets_hotwords_too_and_english_gets_none():
     m = FakeModel([seg("x", W(" नाही", 0, 1))])
-    asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}), windowed=False)
     assert m.detect_calls == 0 and m.transcribe_kwargs["hotwords"].startswith("नमस्कार")
     en = FakeModel([seg("hello", W(" hello", 0, 1))], language="en", detect=("en", 0.95))
     asr.transcribe("x.mp4", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": en}))
@@ -210,7 +214,7 @@ def test_a_pinned_language_gets_hotwords_too_and_english_gets_none():
 
 def test_an_older_faster_whisper_without_hotwords_still_works():
     m = StrictModel([seg("x", W(" नाही", 0, 1))])
-    tr = asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    tr = asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}), windowed=False)
     assert tr.words and m.kw["initial_prompt"].startswith("नमस्कार")
     assert indic.prompt_params(m, "mr").keys() == {"initial_prompt"} and indic.prompt_params(object(), "mr").keys() == {"initial_prompt"}
     assert indic.prompt_params(m, "de") == {}
@@ -230,3 +234,67 @@ def test_a_segment_that_is_only_the_prompt_read_back_is_dropped_but_real_speech_
     kept = asr.drop_seed_echo([echo, echo2, real, short], seed)
     assert kept == [real, short]
     assert asr.drop_seed_echo([echo], None) == [echo]
+
+
+# --- windowed decoding for Devanagari speech --------------------------------------------------------------------------------
+
+class WindowModel:
+    """Answers each window with one word, so the offsets that were added show in the result."""
+    def __init__(self):
+        self.calls = []
+
+    def detect_language(self, samples):
+        return ("mr", 0.9)
+
+    def transcribe(self, audio, **kw):
+        self.calls.append((len(audio), kw))
+        word = f" शब्द{len(self.calls)}"                       # different text per window, or the loop guard drops the repeats
+        return iter([seg(word, W(word, 1.0, 2.0))]), NS(language="mr")
+
+
+def test_marathi_is_decoded_in_15_second_windows_with_absolute_times(monkeypatch):
+    monkeypatch.setattr(asr, "load_audio", lambda media: np.zeros(int(37 * 16000), dtype=np.float32))
+    m = WindowModel()
+    tr = asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    assert [n for n, _ in m.calls] == [15 * 16000, 15 * 16000, 7 * 16000]
+    assert [round(w.s) for w in tr.words] == [1, 16, 31]                    # each window's words are shifted by its start
+    kw = m.calls[0][1]
+    assert kw["language"] == "mr" and kw["vad_filter"] is False and kw["beam_size"] == 5 and kw["temperature"] == [0.0, 0.2, 0.4]
+    assert kw["repetition_penalty"] == 1.2 and kw["no_repeat_ngram_size"] == 4 and kw["compression_ratio_threshold"] == 2.2
+    assert "initial_prompt" not in kw and "hotwords" not in kw
+
+
+def test_a_sliver_of_audio_at_the_end_is_not_decoded(monkeypatch):
+    monkeypatch.setattr(asr, "load_audio", lambda media: np.zeros(int(15.1 * 16000), dtype=np.float32))
+    m = WindowModel()
+    asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    assert len(m.calls) == 1
+
+
+def test_english_and_urdu_keep_the_whole_file_path():
+    for lang in ("en", "ur"):
+        m = FakeModel([seg("x", W(" x", 0, 1))], language=lang)
+        asr.transcribe("x.mp4", lang, config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+        assert m.transcribe_kwargs["vad_filter"] is True
+
+
+def test_a_faster_whisper_that_lacks_an_option_just_skips_it(monkeypatch):
+    class Old:
+        def transcribe(self, audio, language=None, beam_size=5, word_timestamps=True):
+            self.kw = {"language": language}
+            return iter([seg("x", W(" नाही", 0, 1))]), NS(language="mr")
+    m = Old()
+    tr = asr.transcribe("x.mp4", "mr", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    assert tr.words and m.kw == {"language": "mr"}
+
+
+@pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="needs ffmpeg")
+def test_load_audio_reads_real_media_as_16k_mono_float(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.undo()                                                    # the autouse fixture replaced it with a stub
+    wav = tmp_path / "t.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-ar", "44100", "-ac", "2", str(wav)], check=True)
+    a = asr.load_audio(str(wav))
+    assert a.dtype == np.float32 and abs(len(a) - 2 * 16000) < 400 and float(np.abs(a).max()) > 0.1
+    with pytest.raises(TranscriptError):
+        asr.load_audio(str(tmp_path / "missing.wav"))

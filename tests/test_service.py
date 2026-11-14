@@ -58,7 +58,7 @@ class FakePipeline:
 
         return make(video, out, llm=scripted(), opts=planner_options(job), hooks=hooks, say=say,
                     transcribe_fn=lambda media, language=None, progress=None: make_transcript(),
-                    render_fn=fake_render)
+                    render_fn=fake_render, refine_text=False)         # the scripted model answers in call order: textfix has its own tests
 
 
 def client(tmp_path, pipeline=None, **kw):

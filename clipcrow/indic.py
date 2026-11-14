@@ -7,10 +7,9 @@ Marathi in Latin). Two fixes, both from the OpenShorts fork this project grew ou
   * vote on the language over up to three windows of the media, and
   * pass a native-script prompt so the decoder stays in the right Unicode block AND the right language.
 
-``initial_prompt`` alone is not enough for a long recording: ClipCrow decodes with ``condition_on_previous_text=False`` (it avoids repetition
-loops), and then faster-whisper applies ``initial_prompt`` to the FIRST 30 s window only. Everything after that is decoded with no
-anchor, and closely related languages drift: Marathi came out with Hindi spellings (``नही`` for ``नाही``). ``hotwords`` is put in front
-of EVERY window's prompt, so the seed is passed both ways (see ``prompt_params``).
+Devanagari speech (``asr.WINDOWED_LANGS``) no longer uses the seed at all: a prompt or hotword list is read back as the transcript, and a pinned language
+in independent 15 s windows is what keeps Marathi Marathi. The seed still serves the other scripts (Urdu), where ``initial_prompt`` keeps the letters in the
+right Unicode block; ``hotwords`` carries it into every window there, because ``condition_on_previous_text=False`` applies ``initial_prompt`` to the first only.
 
 ``decode_params(model, media)`` returns the extra faster-whisper kwargs; any failure returns ``{}``
 so the caller falls back to Whisper's own detection.

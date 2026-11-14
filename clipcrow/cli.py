@@ -21,6 +21,11 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--no-media", action="store_true", help="HTML only: skip ffmpeg and the matte")
     t = sub.add_parser("transcribe", help="speech to a word-timed transcript JSON (faster-whisper, Indic-aware)")
     t.add_argument("media"); t.add_argument("--out", required=True); t.add_argument("--language")
+    ca = sub.add_parser("compare-asr", help="run the old and the new speech settings on one stretch of a video and print them side by side")
+    ca.add_argument("media"); ca.add_argument("--from", dest="start", type=float, default=0.0); ca.add_argument("--to", type=float, required=True)
+    ca.add_argument("--language", default="mr"); ca.add_argument("--model", help="Whisper model (default $CLIPCROW_WHISPER_MODEL)")
+    ca.add_argument("--refine", action="store_true", help="also correct the new text with the model (needs ANTHROPIC_API_KEY)")
+    ca.add_argument("--out", help="also write the result as JSON")
     mk = sub.add_parser("make", help="video -> clips: transcribe, plan, frame, render")
     mk.add_argument("video"); mk.add_argument("--out", required=True); mk.add_argument("--language")
     mk.add_argument("--transcript", help="skip speech recognition: use this transcript JSON")
@@ -148,6 +153,20 @@ def main(argv: list[str] | None = None) -> int:
                                               ensure_ascii=False, indent=1), encoding="utf-8")
             release_models()
             print(f"{len(tr.words)} words, {len(tr.sentences)} sentences, language {tr.language} -> {a.out}")
+            return 0
+        if a.cmd == "compare-asr":
+            from . import asr_compare
+            from .asr import AsrConfig, release_models
+            cfg = AsrConfig(model=a.model) if a.model else AsrConfig()
+            llm = None
+            if a.refine:
+                from .planner import AnthropicLLM
+                llm = AnthropicLLM()
+            res = asr_compare.compare(a.media, a.start, a.to, a.language, config=cfg, llm=llm, say=lambda m: print(f"  {m}", file=sys.stderr))
+            release_models()
+            print(asr_compare.render(res))
+            if a.out:
+                Path(a.out).write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
             return 0
         if a.cmd == "make":
             from .make import make

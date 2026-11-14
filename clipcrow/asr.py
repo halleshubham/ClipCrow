@@ -21,6 +21,18 @@ from .planner.transcript import Transcript, TranscriptError, parse_transcript
 DECODE = {"beam_size": 5, "vad_filter": True, "condition_on_previous_text": False, "word_timestamps": True}
 LOOP_RUN = 3          # the same segment this many times in a row is a Whisper repetition loop
 
+# Devanagari speech (Marathi, Hindi, ...) is decoded the way the Thet reels skill found to work on real interviews: NO prompt (a prompt or a
+# hotword list gets echoed back as the transcript), NO voice-activity filter (it drops speech), independent 15 s windows with the language pinned
+# for each, and loop guards. A whole-file pass drifts into the related language and loops; this one is slower but keeps the speech.
+WINDOWED_LANGS = {"mr", "hi", "ne", "sa"}
+WINDOW_SECONDS = 15.0
+SAMPLE_RATE = 16000
+WINDOWED_DECODE = {
+    "beam_size": 5, "best_of": 5, "temperature": [0.0, 0.2, 0.4], "word_timestamps": True, "vad_filter": False,
+    "condition_on_previous_text": False, "repetition_penalty": 1.2, "no_repeat_ngram_size": 4,
+    "compression_ratio_threshold": 2.2, "no_speech_threshold": 0.9, "log_prob_threshold": -1.5,
+}
+
 
 @dataclass
 class AsrConfig:
@@ -118,8 +130,63 @@ def drop_seed_echo(segments: list, seed: str | None) -> list:
     return out
 
 
+@dataclass
+class _W:
+    word: str
+    start: float
+    end: float
+
+
+@dataclass
+class _Seg:
+    text: str
+    words: list
+
+
+def load_audio(media: str):
+    """The whole media as 16 kHz mono float32 samples (one ffmpeg pass; an hour is about 230 MB)."""
+    import subprocess
+    import numpy as np
+    r = subprocess.run(["ffmpeg", "-v", "error", "-i", str(media), "-vn", "-ar", str(SAMPLE_RATE), "-ac", "1", "-f", "f32le", "pipe:1"],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if r.returncode != 0 or not r.stdout:
+        raise TranscriptError("could not read audio from this media")
+    return np.frombuffer(r.stdout, dtype=np.float32)
+
+
+def _decode_kwargs(model, lang: str) -> dict:
+    """The windowed settings the installed faster-whisper accepts (a test double or an older version may take fewer)."""
+    kw = {k: v for k, v in WINDOWED_DECODE.items() if indic._takes(model, k)}
+    kw["language"] = lang
+    return kw
+
+
+def transcribe_windowed(model, media: str, lang: str, *, say: Callable[[str], None] = lambda _m: None,
+                        audio_loader: Callable | None = None) -> list:
+    """Decode ``media`` in independent ``WINDOW_SECONDS`` windows; segments come back with absolute word times."""
+    audio = (audio_loader or load_audio)(media)
+    kw = _decode_kwargs(model, lang)
+    total = len(audio) / SAMPLE_RATE
+    out: list = []
+    start, n = 0.0, 0
+    while start < total:
+        end = min(start + WINDOW_SECONDS, total)
+        chunk = audio[int(start * SAMPLE_RATE):int(end * SAMPLE_RATE)]
+        if len(chunk) >= 0.3 * SAMPLE_RATE:                       # a sliver of audio is only noise
+            got, _info = model.transcribe(chunk, **kw)
+            for seg in got:
+                words = [_W(w.word, float(w.start) + start, float(w.end) + start) for w in (seg.words or [])]
+                if words:
+                    out.append(_Seg(str(seg.text), words))
+        start, n = end, n + 1
+        if n % 10 == 0:
+            say(f"transcribed {int(start)} of {int(total)} s")
+    return out
+
+
 def transcribe(media: str, language: str | None = None, *, config: AsrConfig | None = None,
-               model_loader: Callable | None = None, progress: Callable[[str], None] | None = None) -> Transcript:
+               model_loader: Callable | None = None, progress: Callable[[str], None] | None = None,
+               windowed: bool | None = None, audio_loader: Callable | None = None) -> Transcript:
     cfg = config or AsrConfig()
     load = model_loader or _load
     say = progress or (lambda _m: None)
@@ -132,11 +199,16 @@ def transcribe(media: str, language: str | None = None, *, config: AsrConfig | N
     if lang in indic.INDIC_LANGS and cfg.indic_model and cfg.indic_model != cfg.model:
         say(f"Indic audio: using {cfg.indic_model}")
         model = load(cfg, cfg.indic_model)
-    for key, value in indic.prompt_params(model, lang).items():          # a pinned language still needs its anchors
-        params.setdefault(key, value)
-
-    segments, info = model.transcribe(media, **DECODE, **params)
-    segments = drop_seed_echo(collapse_loops(list(segments)), params.get("hotwords") or params.get("initial_prompt"))
+    use_windows = (lang in WINDOWED_LANGS) if windowed is None else (bool(windowed) and bool(lang))
+    if use_windows:
+        say(f"decoding {lang} in {int(WINDOW_SECONDS)} s windows, no prompt")
+        segments = collapse_loops(transcribe_windowed(model, media, lang, say=say, audio_loader=audio_loader))
+        info = None
+    else:
+        for key, value in indic.prompt_params(model, lang).items():          # a pinned language still needs its anchors
+            params.setdefault(key, value)
+        segments, info = model.transcribe(media, **DECODE, **params)
+        segments = drop_seed_echo(collapse_loops(list(segments)), params.get("hotwords") or params.get("initial_prompt"))
     raw = [{"w": w.word, "s": float(w.start), "e": float(w.end)}
            for seg in segments for w in (seg.words or [])]
     words = merge_fragments(raw)

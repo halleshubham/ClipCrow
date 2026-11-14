@@ -14,6 +14,7 @@ from .branding import BrandingChoice, BrandKit, apply_brand
 from .edl import EDL, load_edl
 from .framing import apply_framing
 from .planner import PlannerOptions, load_transcript, plan_edl
+from .textfix import REFINE_LANGS, refine
 from .planner.llm import LLM
 from .planner.source import probe_source
 
@@ -56,7 +57,7 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
          transcribe_fn: Callable | None = None, render_fn: Callable | None = None,
          say: Callable[[str], None] = lambda _m: None, hooks: Hooks | None = None,
          multi: str = "switch", images=None, capture_fn=None,
-         brand: BrandKit | None = None, choice: BrandingChoice | None = None) -> MakeResult:
+         brand: BrandKit | None = None, choice: BrandingChoice | None = None, refine_text: bool = True) -> MakeResult:
     video, out = Path(video), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     report: dict = {}
@@ -86,7 +87,24 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
             (out / "transcript.json").write_text(json.dumps(
                 {"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in tr.words]},
                 ensure_ascii=False, indent=1), encoding="utf-8")
-            hk.stage("transcribe", "done", f"{len(tr.words)} words, language {tr.language}")
+            detail = f"{len(tr.words)} words, language {tr.language}"
+            if refine_text and tr.language in REFINE_LANGS:
+                if llm is None:
+                    from .planner import AnthropicLLM
+                    llm = AnthropicLLM()
+                say("correcting the Marathi/Hindi text")
+                raw_tr = tr
+                tr, n = refine(tr, llm, say=say)
+                if n:
+                    (out / "transcript.raw.json").write_text(json.dumps(
+                        {"language": raw_tr.language, "words": [w.model_dump(exclude_none=True) for w in raw_tr.words]},
+                        ensure_ascii=False, indent=1), encoding="utf-8")
+                    detail += f", {n} sentence(s) corrected"
+                    say(f"{n} sentence(s) corrected; the original is in transcript.raw.json")
+            (out / "transcript.json").write_text(json.dumps(
+                {"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in tr.words]},
+                ensure_ascii=False, indent=1), encoding="utf-8")
+            hk.stage("transcribe", "done", detail)
         hk.check()
         hk.stage("plan", "running", "")
         if llm is None:

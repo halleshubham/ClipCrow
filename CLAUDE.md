@@ -38,6 +38,12 @@ CLIPCROW_RENDER_TESTS=1 pytest -q -m render        # real render: Node 22, FFmpe
   is dropped with a note. Generated media must be `ai="generated"` so the disclosure flag turns on; keep the editor's
   removal pruning orphan assets.
 - Marathi/Hindi copy must be Devanagari; keep tests with Devanagari fixtures.
+- Devanagari speech recognition (`asr.WINDOWED_LANGS`): independent 15 s windows with the language pinned, NO prompt or hotwords (they are echoed back
+  as the transcript), NO voice-activity filter (it drops speech), loop guards on (`asr.WINDOWED_DECODE`). It was found on real Marathi interviews;
+  do not "improve" it with a seed. Whisper's Marathi is still Hindi-flavoured, so `textfix.refine` corrects the sentences with one model call per
+  batch: only ids and text go to the model, word TIMES stay ours (1:1 keeps them, otherwise spread in proportion), an answer that no longer looks
+  like the sentence is dropped, a failure keeps the raw words, and the original is saved as `transcript.raw.json`. It runs only for a transcript the
+  ASR made (never a supplied one); `CLIPCROW_TEXT_REFINE=0` turns it off. `clipcrow compare-asr` runs old and new side by side on one stretch.
 - Default font is Noto Serif Devanagari (`fonts.DEFAULT_DEVANAGARI`). It lacks Latin letters: ship the Noto Serif
   companion (`fonts.companion`) whenever the text has any, or Latin falls back to an unknown system font.
 
