@@ -87,7 +87,7 @@ def tighten(words: list[dict], db, thr: float) -> list[dict]:
 
 
 def transcribe_words(media: str, *, say: Callable[[str], None] = lambda _m: None, model=None,
-                     audio_loader: Callable | None = None) -> list[dict]:
+                     audio_loader: Callable | None = None, check: Callable[[], None] = lambda: None) -> list[dict]:
     """``[{"w", "s", "e"}]`` for the whole of ``media``."""
     import tempfile
     import wave
@@ -103,6 +103,7 @@ def transcribe_words(media: str, *, say: Callable[[str], None] = lambda _m: None
     words: list[dict] = []
     with tempfile.TemporaryDirectory() as tmp:
         for k in range(len(cuts) - 1):
+            check()
             a, b = cuts[k], cuts[k + 1]
             chunk = audio[int(a * SAMPLE_RATE):int(b * SAMPLE_RATE)]
             if len(chunk) < 0.3 * SAMPLE_RATE:

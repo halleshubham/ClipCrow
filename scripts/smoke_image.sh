@@ -16,7 +16,7 @@ docker run --rm --shm-size=1g -v "$vol/data:/data" -v "$vol/models:/models" "$IM
 [ "$(stat -c %u "$vol/models/home")" = "10001" ]          # the entrypoint handed the cache directories to the app
 
 say "libraries the server needs import"
-docker run --rm "$IMG" python -c "import faster_whisper, cv2, boto3, fastapi, anthropic, playwright; print('imports ok')"
+docker run --rm "$IMG" python -c "import faster_whisper, cv2, boto3, fastapi, anthropic, playwright, torch, transformers, sentencepiece, soundfile; print('imports ok')"
 if [ "$VARIANT" = "gpu" ]; then
   docker run --rm "$IMG" python -c "import nvidia.cudnn, nvidia.cublas; print('CUDA libraries present')"
 fi

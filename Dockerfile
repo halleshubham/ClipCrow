@@ -57,6 +57,7 @@ ENV PATH=/opt/venv/bin:$PATH
 COPY pyproject.toml README.md LICENSE NOTICE ./
 RUN mkdir clipcrow && touch clipcrow/__init__.py \
  && pip install ".[llm,vision,service,storage,asr,assets]" \
+ && pip install --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.15.0" "transformers==5.23.0" sentencepiece soundfile \
  && if [ "$WITH_CUDA" = "1" ]; then pip install "nvidia-cublas-cu12" "nvidia-cudnn-cu12==9.*"; fi \
  && pip uninstall -y clipcrow
 COPY clipcrow ./clipcrow

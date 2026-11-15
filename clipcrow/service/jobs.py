@@ -111,6 +111,7 @@ class Job(_M):
     reserved_minutes: float = 0             # source minutes taken from the owner's allowance for this job
     source_removed: bool = False            # the uploaded original was deleted by retention
     source_pending: Optional[str] = None    # the original is in the bucket (a direct upload) and has not been fetched yet
+    cancel_requested: bool = False          # a person asked to stop while it was running: a restart must not start it again
     attempts: int = 0                       # times a restart interrupted this job and it was queued again (one automatic retry)
     remote: dict[str, str] = Field(default_factory=dict)   # relative name -> signature of the copy in object storage
 

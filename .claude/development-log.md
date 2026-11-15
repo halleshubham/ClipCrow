@@ -3,6 +3,12 @@
 What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
+## 2026-11-15
+- **SraVaani on the server** (CPU image now has torch CPU, transformers 5.23.0, sentencepiece, soundfile; Whisper stays the fallback). The server's job log had said "SraVaani unavailable (ModuleNotFoundError): using
+  Whisper": `CLIPCROW_ASR=sravaani` was already set in Coolify but the image lacked the packages. Needs `HF_TOKEN` (a fresh token of an account with access) in Coolify for the model download.
+- **A cancel that did not cancel** (job 47107ba0b5f7): a running job only noticed a cancel between steps, and one AI call or one recognition window can take minutes. Now every AI call is interruptible, recognition
+  checks per window, `Cancelled` can no longer be swallowed, and the flag is saved (a deploy must not restart a cancelled job: it would have re-run that one).
+
 ## 2026-11-14
 - **Adoption of the OpenReel ideas, step 1: loudness.** Every finished reel is brought to -14 LUFS (`loudness.py`). Why: one real clip was -22 LUFS and another -14.6, so viewers would reach for the volume.
   Not yet verified on a real render (tests use synthetic clips).

@@ -185,7 +185,7 @@ def _holes(segs: list, audio, total: float) -> list[tuple[float, float]]:
     return out
 
 
-def fill_holes(model, audio, segs: list, kw: dict, say: Callable[[str], None] = lambda _m: None) -> list:
+def fill_holes(model, audio, segs: list, kw: dict, say: Callable[[str], None] = lambda _m: None, check: Callable[[], None] = lambda: None) -> list:
     """Listen again, with the settings that do not discard hesitant speech, to every hole the first pass left. Marathi is where this matters: the model is
     unsure, the first pass sees "no speech", and the speech is gone from the transcript (and, later, from the video)."""
     total = len(audio) / SAMPLE_RATE
@@ -201,6 +201,7 @@ def fill_holes(model, audio, segs: list, kw: dict, say: Callable[[str], None] = 
     for a, b in holes:
         t, b = max(0.0, a - 0.2), min(total, b + 0.2)
         while t < b:
+            check()
             e = min(t + HOLE_WINDOW, b)
             chunk = audio[int(t * SAMPLE_RATE):int(e * SAMPLE_RATE)]
             if len(chunk) >= 0.3 * SAMPLE_RATE:
@@ -218,7 +219,7 @@ def fill_holes(model, audio, segs: list, kw: dict, say: Callable[[str], None] = 
 
 
 def transcribe_windowed(model, media: str, lang: str, *, say: Callable[[str], None] = lambda _m: None,
-                        audio_loader: Callable | None = None) -> list:
+                        audio_loader: Callable | None = None, check: Callable[[], None] = lambda: None) -> list:
     """Decode ``media`` in independent ``WINDOW_SECONDS`` windows; segments come back with absolute word times."""
     audio = (audio_loader or load_audio)(media)
     kw = _decode_kwargs(model, lang)
@@ -226,6 +227,7 @@ def transcribe_windowed(model, media: str, lang: str, *, say: Callable[[str], No
     out: list = []
     start, n = 0.0, 0
     while start < total:
+        check()                                                   # a cancel is noticed between windows, not after the whole recording
         end = min(start + WINDOW_SECONDS, total)
         chunk = audio[int(start * SAMPLE_RATE):int(end * SAMPLE_RATE)]
         if len(chunk) >= 0.3 * SAMPLE_RATE:                       # a sliver of audio is only noise
@@ -237,12 +239,12 @@ def transcribe_windowed(model, media: str, lang: str, *, say: Callable[[str], No
         start, n = end, n + 1
         if n % 10 == 0:
             say(f"transcribed {int(start)} of {int(total)} s")
-    return fill_holes(model, audio, out, kw, say)
+    return fill_holes(model, audio, out, kw, say, check)
 
 
 def transcribe(media: str, language: str | None = None, *, config: AsrConfig | None = None,
                model_loader: Callable | None = None, progress: Callable[[str], None] | None = None,
-               windowed: bool | None = None, audio_loader: Callable | None = None) -> Transcript:
+               windowed: bool | None = None, audio_loader: Callable | None = None, check: Callable[[], None] = lambda: None) -> Transcript:
     cfg = config or AsrConfig()
     load = model_loader or _load
     say = progress or (lambda _m: None)
@@ -258,7 +260,7 @@ def transcribe(media: str, language: str | None = None, *, config: AsrConfig | N
     if lang in asr_sravaani.LANGS and asr_sravaani.enabled():
         try:
             say(f"recognising {lang} with SraVaani")
-            words = asr_sravaani.transcribe_words(media, say=say)
+            words = asr_sravaani.transcribe_words(media, say=say, check=check)
             if words:
                 return parse_transcript({"language": lang, "words": words})
             say("SraVaani heard no speech: using Whisper")
@@ -267,7 +269,7 @@ def transcribe(media: str, language: str | None = None, *, config: AsrConfig | N
     use_windows = (lang in WINDOWED_LANGS) if windowed is None else (bool(windowed) and bool(lang))
     if use_windows:
         say(f"decoding {lang} in {int(WINDOW_SECONDS)} s windows, no prompt")
-        segments = collapse_loops(transcribe_windowed(model, media, lang, say=say, audio_loader=audio_loader))
+        segments = collapse_loops(transcribe_windowed(model, media, lang, say=say, audio_loader=audio_loader, check=check))
         info = None
     else:
         for key, value in indic.prompt_params(model, lang).items():          # a pinned language still needs its anchors

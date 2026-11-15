@@ -70,6 +70,14 @@ class JobRunner:
         for job in reversed(self.store.list()):
             if job.status == "queued":
                 self.submit(job.id)
+            elif job.status == "running" and job.cancel_requested:
+                job.status = "cancelled"
+                job.add_log("cancelled")
+                for s in job.stages:
+                    if s.state == "running":
+                        s.state, s.detail = "pending", ""
+                self.store.save(job)
+                self._finished(job)
             elif job.status == "running":
                 has_video = self.store.source_path(job.id) is not None or bool(job.source_pending)
                 if job.attempts < 1 and has_video:
@@ -104,6 +112,8 @@ class JobRunner:
         ev = self._cancel.get(job_id)
         if ev:
             ev.set()
+        if job.status == "running":                              # remembered on disk: a deploy or a crash must not start a cancelled job again
+            self.store.update(job_id, lambda j: setattr(j, "cancel_requested", True))
         if job.status == "queued":
             job.status = "cancelled"
             self.store.save(job)
@@ -155,6 +165,11 @@ class JobRunner:
             self._cond.wait_for(lambda: self._active == 0, timeout)
             running = [j for j in self.store.list() if j.status == "running"]
             for j in running:
+                if j.cancel_requested:                           # the person already said stop: let it end as cancelled, do not put it back
+                    ev = self._cancel.get(j.id)
+                    if ev:
+                        ev.set()
+                    continue
                 self._requeue.add(j.id)
                 ev = self._cancel.get(j.id)
                 if ev:
@@ -193,11 +208,13 @@ class JobRunner:
         ready: set[str] = set()
 
         def stage(name: str, state: str, detail: str = "") -> None:
+            job.cancel_requested = job.cancel_requested or ev.is_set()      # this thread saves its own copy of the job: keep the flag
             s = job.stage(name)
             s.state, s.detail = state, detail
             store.save(job)
 
         def say(msg: str) -> None:
+            job.cancel_requested = job.cancel_requested or ev.is_set()
             job.add_log(msg)
             store.save(job)
 
@@ -243,7 +260,7 @@ class JobRunner:
                     log.exception("could not probe the cleaned video of %s", job_id)
             job.status = "done"
         except Cancelled:
-            if job_id in self._requeue:                         # stopped by a deploy, not by a person
+            if job_id in self._requeue and not job.cancel_requested:       # stopped by a deploy, not by a person
                 job.status = "queued"
                 for s in job.stages:
                     s.state, s.detail = "pending", ""

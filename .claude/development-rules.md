@@ -33,6 +33,9 @@ History, incidents and open items are in `development-log.md`: add an entry ther
   fetched at render time); a missing one is dropped with a note. The pictures are sent to the model, so the form says so. Generated media must be `ai="generated"` so the disclosure
   flag turns on; keep the editor's removal pruning orphan assets.
 - Marathi/Hindi copy must be Devanagari; keep tests with Devanagari fixtures.
+- Cancel: `make.Cancelled` is a BaseException ON PURPOSE (the recogniser, cleanup and text correction have `except Exception: carry on` handlers that must not swallow a stop). Long steps call `check()`: per recognition window
+  (`asr.transcribe(check=)`), per SraVaani window, and every AI call goes through `planner.llm.Interruptible` (a helper thread polled every 0.5 s, so a cancel does not wait for a call that takes minutes; the abandoned call
+  is dropped, still billed). `Job.cancel_requested` is saved at cancel time: a deploy's drain does not requeue such a job and `recover()` ends it as cancelled. The UI says "Stopping…" until it ends.
 - Devanagari speech recognition (`asr.WINDOWED_LANGS`): independent 15 s windows with the language pinned, NO prompt or hotwords (they are echoed back
   as the transcript), NO voice-activity filter (it drops speech), loop guards on (`asr.WINDOWED_DECODE`). It was found on real Marathi interviews;
   do not "improve" it with a seed. Whisper's Marathi is still Hindi-flavoured, so `textfix.refine` corrects the sentences with one model call per

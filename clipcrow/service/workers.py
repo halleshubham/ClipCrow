@@ -439,10 +439,10 @@ def extract_audio(media: str | Path, dest: Path) -> Path:
     return dest
 
 
-def _local_transcribe(media, language, progress=None):
+def _local_transcribe(media, language, progress=None, check=lambda: None):
     from ..asr import release_models, transcribe
     try:
-        return transcribe(media, language, progress=progress)
+        return transcribe(media, language, progress=progress, check=check)
     finally:
         release_models()
 
@@ -455,10 +455,11 @@ class RemoteTranscriber:
     check: Callable[[], None] = lambda: None
     fallback: Callable = field(default=_local_transcribe)
 
-    def __call__(self, media, language=None, progress=None) -> Transcript:
+    def __call__(self, media, language=None, progress=None, check=None) -> Transcript:
         say = progress or (lambda _m: None)
+        local_check = check or self.check                                  # the job's own cancel check (the hub's wait uses ``self.check``)
         if not self.hub.online():
-            return self.fallback(media, language, progress=say)           # nothing out there: do not wait for it
+            return self.fallback(media, language, progress=say, **({"check": local_check} if self.fallback is _local_transcribe else {}))           # nothing out there: do not wait for it
         audio = self.workdir / "worker-audio.m4a"
         try:
             try:
@@ -472,7 +473,7 @@ class RemoteTranscriber:
                 return tr
             except (WorkerError, TranscriptError, KeyError, TypeError, ValueError) as e:      # a cancelled job raises something else
                 say(f"the GPU worker did not deliver ({e}); transcribing on the server instead")
-                return self.fallback(media, language, progress=say)
+                return self.fallback(media, language, progress=say, **({"check": local_check} if self.fallback is _local_transcribe else {}))
         finally:
             audio.unlink(missing_ok=True)
 
@@ -544,7 +545,7 @@ class RemoteRenderer:
         task = None
         try:
             files, meta = self._bundle(edl, clip, taskdir, media_root, asset_root)
-            self.say(f"{clip_id}: rendering on the GPU worker")
+            self.say(f"{clip_id}: rendering on the GPU worker ({sum(p.stat().st_size for p in files.values() if p.is_file()) / 1e6:.0f} MB of files to send)")
             task = self.hub.submit_render(edl.job_id, files, meta, taskdir / "in", self.max_seconds, direct=long)
             result = self.hub.wait(task, self.check)
             produced = task.uploads["clip.mp4"]

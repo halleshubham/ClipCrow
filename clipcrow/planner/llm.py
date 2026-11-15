@@ -103,3 +103,37 @@ class FakeLLM:
         if isinstance(out, Exception):
             raise out
         return out if isinstance(out, schema) else schema.model_validate(out)
+
+
+class Interruptible:
+    """Wraps an LLM so a stop request is noticed WHILE a call is in flight, not after it: each call runs in a helper thread and the caller polls ``check``
+    (which raises when the job was cancelled) every ``poll`` seconds. An abandoned call finishes in the background and its answer is dropped (it is still billed
+    and still counted in ``usage``). Everything else is passed through."""
+
+    def __init__(self, inner, check: Callable[[], None], poll: float = 0.5):
+        self.inner, self.check, self.poll = inner, check, poll
+
+    def generate(self, system, user, schema, *, purpose=""):
+        self.check()
+        box: dict = {}
+        done = threading.Event()
+
+        def run():
+            try:
+                box["result"] = self.inner.generate(system, user, schema, purpose=purpose)
+            except BaseException as e:               # handed back to the caller's thread
+                box["error"] = e
+            finally:
+                done.set()
+        threading.Thread(target=run, daemon=True, name=f"llm-{purpose or 'call'}").start()
+        while not done.wait(self.poll):
+            self.check()
+        if "error" in box:
+            raise box["error"]
+        return box["result"]
+
+    def usage(self):
+        return self.inner.usage()
+
+    def __getattr__(self, name):                       # model, input_tokens, ... of the wrapped LLM
+        return getattr(self.inner, name)

@@ -20,6 +20,7 @@ services:
       - CLIPCROW_MODEL=${CLIPCROW_MODEL:-}
       - CLIPCROW_INDIC_MODEL=${CLIPCROW_INDIC_MODEL:-}      # e.g. large-v3 for Marathi/Hindi
       - CLIPCROW_WHISPER_DEVICE=${CLIPCROW_WHISPER_DEVICE:-}  # empty = auto: the GPU when one is visible, else the CPU
+      - CLIPCROW_ASR=${CLIPCROW_ASR:-}                      # sravaani = SraVaani first for Marathi/Hindi (needs HF_TOKEN of an account with access), Whisper as the fallback
       - HF_TOKEN=${HF_TOKEN:-}                              # optional: faster, rate-limit-free model downloads from Hugging Face
       # --- object storage (Cloudflare R2 or any S3-compatible store); leave empty to keep everything on the /data volume
       - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}

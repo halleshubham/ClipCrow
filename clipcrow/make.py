@@ -19,8 +19,9 @@ from .planner.llm import LLM
 from .planner.source import probe_source
 
 
-class Cancelled(Exception):
-    """The caller asked to stop (checked between stages and between clips)."""
+class Cancelled(BaseException):
+    """The caller asked to stop. A BaseException on purpose: the many "a failure here is fine, carry on" handlers (``except Exception``) in the recogniser,
+    the cleanup and the text correction must not swallow a person's cancel and quietly carry on with the next step."""
 
 
 STAGES = ("transcribe", "plan", "frame", "render")
@@ -105,7 +106,9 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
             else:
                 release_models = lambda: None  # noqa: E731
             say("transcribing")
-            tr = transcribe_fn(str(video), language, progress=say)
+            import inspect
+            takes_check = "check" in inspect.signature(transcribe_fn).parameters      # a double in a test may not
+            tr = transcribe_fn(str(video), language, progress=say, **({"check": hk.check} if takes_check else {}))
             release_models()
             (out / "transcript.json").write_text(json.dumps(
                 {"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in tr.words]},

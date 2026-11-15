@@ -550,6 +550,7 @@ const STATE_TEXT = { pending: 'Waiting', running: 'Working…', done: 'Done', sk
 function statusText(job) {
   if (job.status === 'queued') return job.queue_position > 1 ? `Waiting (${job.queue_position - 1} ahead)` : 'Waiting to start';
   if (job.status === 'running') {
+    if (job.cancel_requested) return 'Stopping…';
     const s = job.stages.find((x) => x.state === 'running');
     return s ? STAGE_WORD[s.name] : 'Working';
   }

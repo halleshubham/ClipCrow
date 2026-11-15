@@ -332,6 +332,7 @@ def handle_render(transport: Transport, name: str, task: dict, log: Callable[[st
         _report_failure(transport, name, tid, ValueError("bad job or clip id"), log)
         return False
     jobdir = cache / job_id
+    log(f"task {tid[:8]}: took a render of {clip_id} for job {job_id}: {sum(int(v) for v in files.values()) / 1e6:.0f} MB of files (fetching what is not cached)")
     out_name = f"{clip_id}.{tid[:8]}.mp4"
     with Lease(transport, name, tid, float(task.get("lease_seconds") or 90), beat_seconds) as lease:
         try:
@@ -353,6 +354,8 @@ def handle_render(transport: Transport, name: str, task: dict, log: Callable[[st
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     transport.download(f"/api/worker/tasks/{tid}/files/{fname}?worker={name}", dest)
                     got += size
+                    if size > 5_000_000:
+                        log(f"task {tid[:8]}:   fetched {fname} ({size / 1e6:.0f} MB)")
             log(f"task {tid[:8]}: rendering {clip_id} of job {job_id} ({got / 1e6:.1f} MB fetched, rest cached)")
             from .edl import load_edl
             edl = load_edl(jobdir / f"edl-{tid[:8]}.json")
