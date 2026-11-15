@@ -24,6 +24,7 @@ REVISION = "a7254684e699e464fb70d10ad301e28fa0330cad"
 WINDOW_SECONDS = 28.0
 SEARCH_FROM = 18.0               # a cut is looked for between this many seconds into a window and its end
 MAX_WORD = 1.5
+MIN_WORD = 0.12      # a word is on screen/highlighted at least this long (as far as the next word's start allows)
 
 _model = None
 _lock = threading.Lock()
@@ -82,7 +83,10 @@ def tighten(words: list[dict], db, thr: float) -> list[dict]:
         if runs and 0.1 < runs[0][0] - s <= 0.3:               # the model's start is a frame early: the word begins where the voice does
             s = runs[0][0] - 0.02
         e = min(limit, runs[-1][1]) if runs else min(limit, s + 0.25)
-        out.append({"w": w["w"], "s": s, "e": max(e, s + 0.05)})
+        e = max(e, s + 0.05)
+        if e - s < MIN_WORD and i + 1 < len(words):                  # the energy clamp can leave 50 ms before a pause: give the word its minimum, never into the next
+            e = max(e, min(s + MIN_WORD, max(words[i + 1]["s"], s + 0.05)))
+        out.append({"w": w["w"], "s": s, "e": e})
     return out
 
 

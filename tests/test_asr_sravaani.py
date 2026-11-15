@@ -85,3 +85,10 @@ def test_sravaani_output_is_used_when_it_works(monkeypatch):
     monkeypatch.setattr(sv, "transcribe_words", lambda *a, **k: [{"w": "माहितीये", "s": 0.0, "e": 0.5}, {"w": "आहे", "s": 0.5, "e": 0.8}])
     tr = asr.transcribe("m.wav", "mr", model_loader=lambda cfg, size: object())
     assert [w.w for w in tr.words] == ["माहितीये", "आहे"] and tr.language == "mr"
+
+
+def test_a_word_before_a_pause_keeps_a_minimum_duration():
+    audio = tone_audio([(1.0, 1.04), (2.5, 3.0)], 4)
+    db = energy_db(audio)
+    out = sv.tighten([{"w": "a", "s": 1.0, "e": 1.5}, {"w": "b", "s": 2.5, "e": 3.0}], db, speech_threshold(db))
+    assert out[0]["e"] - out[0]["s"] >= sv.MIN_WORD - 1e-6 and out[0]["e"] <= out[1]["s"]

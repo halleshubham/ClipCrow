@@ -11,6 +11,7 @@ Time conventions:
 from __future__ import annotations
 
 import json
+import unicodedata
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Union
 
@@ -21,8 +22,30 @@ class EDLError(ValueError):
     """The EDL is well-formed JSON but cannot be rendered."""
 
 
+def latin_digits(text: str) -> str:
+    """Every decimal digit of any script (Devanagari ३३, Arabic-Indic, ...) written as 0-9: on screen, numbers are always 33%, 1998, 1,00,300/-."""
+    if text.isascii():
+        return text
+    return "".join(str(unicodedata.decimal(c)) if unicodedata.category(c) == "Nd" and not c.isascii() else c for c in text)
+
+
+def _latinise(value):
+    if isinstance(value, str):
+        return latin_digits(value)
+    if isinstance(value, list):
+        return [_latinise(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _latinise(v) for k, v in value.items()}
+    return value
+
+
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _latin_digits(cls, data):
+        return _latinise(data) if isinstance(data, dict) else data
 
 
 # Values that end up inside generated CSS/HTML are restricted to safe shapes: the

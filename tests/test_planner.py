@@ -318,3 +318,28 @@ def test_a_long_length_range_still_plans_and_a_clip_may_be_minutes_long():
     plan = plan_edl(tr, SourceInfo(uri="cleaned.mp4", duration=tr.duration + 1, width=1920, height=1080, fps=30), scripted(),
                     PlannerOptions(min_clip=180, max_clip=300, target_clips=1, workers=1))
     assert plan.edl.clips and all(180 <= c.duration <= 301 for c in plan.edl.clips)
+
+
+def test_a_run_on_without_punctuation_breaks_at_its_longest_pause_not_at_the_word_cap():
+    from clipcrow.edl import Word
+    from clipcrow.planner import transcript as T
+    words, t = [], 0.0
+    for i in range(60):
+        words.append(Word(w=f"w{i}", s=t, e=t + 0.3))
+        t += 0.35 + (0.4 if i == 29 else 0.0)                                             # one breath after word 29
+    sents = T.split_sentences(words)
+    assert sents[0].last == 29 and sents[1].first == 30
+    assert sum(len(s.text.split()) for s in sents) == 60
+
+
+def test_digits_of_any_script_become_latin():
+    from clipcrow.edl import Word, latin_digits
+    assert latin_digits("३३% शेतकरी, ₹१,००,३००/- आणि १९९८ ٣٤") == "33% शेतकरी, ₹1,00,300/- आणि 1998 34"
+    assert Word(w="३३%", s=0, e=1).w == "33%"
+    assert T_load("[{\"w\": \"१९९८\", \"s\": 0, \"e\": 1}]") == "1998"
+
+
+def T_load(js):
+    import json
+    from clipcrow.planner.transcript import parse_transcript
+    return parse_transcript(json.loads(js)).words[0].w

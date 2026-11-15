@@ -54,6 +54,9 @@ SENTENCE_MIN = 8                 # a sentence is compared with the next passage'
 SENTENCE_SHARE = 0.45            # ... and the next passage has one that shares this much of the two (reworded, not word for word)
 REDO_PASSAGES = 2                # the redo is the next passage, or the one after an aborted attempt
 LEAD_IN, TAIL, FADE_MS, MIN_KEEP = 0.25, 0.6, 8, 0.12
+INSERT_KEEP = 2                  # a restated phrase with at least this many words between the two tries: they are kept if said in one breath (see _fluent)
+INSERT_PAUSE = 0.45              # ... i.e. no pause this long inside them or before the restatement (a pause is how a speaker abandons a try)
+START_LAG = 0.12                 # a recogniser's word start can trail the sound by about this much: a cut before a REMOVED word stops this early so none of it leaks
 SAME_WORD = 0.85                 # two spellings this alike count as the same word
 PHRASE_WINDOW = 10               # a phrase restated within this many words is a false start
 RESTATED = 0.78                  # share of two lines that is the same words, in order, for the earlier one to be an abandoned take
@@ -172,6 +175,14 @@ def lines_of(words: list[Word], pause: float = 0.8, longest: int = 28) -> list[t
     return out
 
 
+def _fluent(inserted: list[Word], restart: Word) -> bool:
+    """The words between a phrase and its restatement were said in one breath: no hesitation sound and no pause of ``INSERT_PAUSE`` inside them or before the restatement."""
+    if any(is_filler(w.w) for w in inserted):
+        return False
+    stops = [b.s - a.e for a, b in zip(inserted, inserted[1:])] + [restart.s - inserted[-1].e]
+    return max(stops) < INSERT_PAUSE
+
+
 def detect(words: list[Word], lang: str, *, db=None, thr: float | None = None) -> list[Cut]:
     """The cuts the skill applies by default. Suggestions that need a person's eye (apply=False) are returned too, so a report can show them."""
     cuts: list[Cut] = []
@@ -227,8 +238,16 @@ def detect(words: list[Word], lang: str, *, db=None, thr: float | None = None) -
                         and not any(k in done for k in range(i, j))), None)
             if hit is not None:
                 start = next((k for k in range(i + n, hit + 1) if same_word(nw[k], pat[0])), hit)      # an inserted word can shift the match: cut up to the restatement's FIRST word
-                cuts.append(Cut("false_start", f"phrase restated at word {start}", i, start - 1, text=" ".join(w.w for w in words[i:hit + n])))
-                done.update(range(i, start))
+                last = start - 1
+                lead = 0                                                     # how many of the first try's opening words the restatement repeats, in a row
+                while start + lead < N and i + lead < start and same_word(nw[i + lead], nw[start + lead]):
+                    lead += 1
+                inserted = words[i + lead:start]
+                if lead >= max(3, need) and len(inserted) >= INSERT_KEEP and _fluent(inserted, words[start]):
+                    last = i + lead - 1                                      # "X, many said that, X is bad": the words between are a clause the speaker MEANT (who said it): cut only the repeat
+                cuts.append(Cut("false_start", f"phrase restated at word {start}" + (" (the words between are kept)" if last < start - 1 else ""),
+                                i, last, text=" ".join(w.w for w in words[i:hit + n])))
+                done.update(range(i, last + 1))
                 break
     for x, (a, b) in enumerate(lines):                                       # 4 retake: a line that the next few lines say again (reworded, extended, respelled)
         mine = [t for t in nw[a:b + 1] if t and not is_filler(t)]
@@ -537,11 +556,11 @@ def compute_keeps(words: list[Word], cuts: list[Cut], db, thr: float, pace: str,
         if i > 0 and (i - 1) in cutw:
             s = max(s, edges[i - 1][1] + 0.02)
         if i + 1 < N and (i + 1) in cutw:
-            e = min(e, edges[i + 1][0] - 0.02)
+            e = min(e, max(edges[i + 1][0] - 0.02 - START_LAG, re_ + 0.03))       # the removed word may begin before the recogniser says
         if not first and s < rs:
-            s = quiet(s, s, min(s + 0.06, rs))
+            s = quiet(s, s, min(s + 0.1, rs))
         if not last and e > re_:
-            e = quiet(e, max(e - 0.06, re_), e)
+            e = quiet(e, max(e - 0.1, re_), e)
         iv.append([max(0.0, s), min(duration, max(e, re_)), i])
     merged = [iv[0][:]]
     for s, e, i in iv[1:]:

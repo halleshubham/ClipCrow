@@ -734,3 +734,32 @@ def test_the_route_says_when_the_cuts_were_not_applied(tmp_path, video_bytes):
                                                   "timemap": [], "applied": False, "removed_share": 0.82}), encoding="utf-8")
     body = c.get(f"/api/jobs/{job['id']}/cleanup").json()
     assert body["applied"] is False and body["removed_share"] == 0.82
+
+
+# --- a restated phrase with a clause between the two tries (generic) -------------------------------------------------
+
+def test_a_clause_said_between_a_phrase_and_its_restatement_is_kept():
+    w = line(*"सरकारने घोषित केलेली पाच हजाराची मदत बरेच लोक म्हणत होते की पाच हजाराची मदत खूपच कमी आहे".split())
+    cuts = cut_range(w)
+    assert (3, 5) in cuts                                                                # only the first "पाच हजाराची मदत"
+    assert not any(f <= 9 <= l for f, l in cuts)                                         # "बरेच लोक म्हणत होते की" stays
+
+
+def test_the_first_try_and_the_words_after_it_go_when_the_speaker_stopped_before_restarting():
+    w = line(*"सरकारने जाहीर केलेली मदत बरेच".split()) + line(*"सरकारने जाहीर केलेली मदत खूपच कमी आहे".split(), start=4.0)
+    assert (0, 4) in cut_range(w)                                                        # the pause marks the abandoned try: all of it goes
+
+
+def test_a_one_word_insert_is_still_cut_with_the_first_try():
+    w = line(*"सरकारने जाहीर केलेली मदत बरेच सरकारने जाहीर केलेली मदत खूपच कमी".split())
+    assert any(f == 0 and l >= 4 for f, l in cut_range(w))
+
+
+def test_a_cut_before_a_removed_word_stops_early_enough_that_none_of_it_leaks():
+    db = np.full(400, -80.0)
+    db[100:140] = -20.0                                                                   # the kept word 1.00-1.40
+    db[150:200] = -20.0                                                                   # the removed word: really starts at 1.50, the recogniser says 1.62
+    words = [W("a", 1.0, 1.4), W("x", 1.62, 2.0)]
+    cut = [cc.Cut("false_start", "r", 1, 1)]
+    (a, b), = cc.compute_keeps(words, cut, db, -50.0, "natural", 4.0, 25.0)
+    assert b / 25.0 <= 1.5 + 0.02

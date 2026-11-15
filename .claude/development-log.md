@@ -58,6 +58,13 @@ The rules that came out of these are in `development-rules.md`; this file is the
 - **Slides/graphics option**, **fumble-free cut option** (adapted from the `fumble-free-cut` skill), **styles from a reference video**, **brand kit**, **social posting** (SocioBird: base URL
   `https://go.sociobird.app/api`, needs a User-Agent; Cloudflare turns an origin 502/504 into its own page, so the app uses 424 for upstream failures), **accounts and billing**, **object storage**.
 
+## 2026-11-15 (audit of job 55350aaed187)
+- **Restated phrase with a clause between the tries** ("X, many farmers said that, X is meagre"): the false-start rule used to cut the first X AND the clause (the quote's attribution was lost). Now only the repeat
+  is cut when the words between (>= 2) were said in one breath (no filler, no pause >= 0.45 s inside or before the restart); a pause still marks an abandoned try and cuts it all.
+- **Cuts before a removed word** stop `START_LAG` (0.12 s) early (recogniser starts trail the sound by ~0.1 s, a plosive burst leaked at the seam); quiet-point search window 60 -> 100 ms.
+- **Run-on speech** (no punctuation, 40-word cap) is split at its longest pause (>= 12 words in), not mid-phrase. **Word ends** keep >= 0.12 s (`MIN_WORD`) so caption highlights never flash for 50 ms.
+- **Digits are always Latin** (`edl.latin_digits`, applied by every EDL model and by the transcript loader): 33%, 1998, 1,00,300/-. The planner prompt is unchanged (the recorded replay is keyed on it).
+
 ## Open
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.
 - Per-stage timings in the job log; an audio-similarity repeat detector; the SraVaani/Whisper choice in the job log; SraVaani in the container image.
