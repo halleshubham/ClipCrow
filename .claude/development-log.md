@@ -4,6 +4,7 @@ What was built, what real recordings taught us, and what is still open. Newest f
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
 ## 2026-11-15
+- **A pause before the ending video**: the clip fades out, 400 ms of black and silence, the ending fades in (brand setting, 0 = straight cut). Asked for because the end looked abrupt.
 - **First real direct clip upload (job 55350aaed187)**: the worker rendered a 37 s clip from a 4K source and began sending 49 MB to R2; the upload then sat with no output. A part could wait 900 s without data, 3 times,
   and printed nothing. Now: a quiet connection fails after 60 s, each part is logged, and after 3 failed tries a clip under 90 MB goes through the server instead (above that the failure is reported and the server renders).
   Tip for a stuck worker: the finished file is in the container at `/models/home/.cache/clipcrow-worker/<job>/out/<clip>.<task8>.mp4` until the worker stops: `docker cp` it out first.

@@ -44,6 +44,7 @@ class BrandKit:
     cover_accent: str = "#FFD54A"
     cover_bg_color: str = "#111111"
     outro_max_seconds: float = 6.0
+    outro_gap_ms: int = 400
 
 
 @dataclass
@@ -112,7 +113,7 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
             upd["logo"] = Logo(asset="brand-logo", position=kit.logo_position, size_pct=kit.logo_size_pct,
                                opacity=kit.logo_opacity, margin_px=kit.logo_margin_px)
         if choice.outro:
-            upd["outro"] = Outro(asset="brand-outro", max_seconds=kit.outro_max_seconds)
+            upd["outro"] = Outro(asset="brand-outro", max_seconds=kit.outro_max_seconds, gap_ms=kit.outro_gap_ms)
         if choice.music:
             upd["music"] = Music(asset="brand-music")
         clips.append(c.model_copy(update=upd) if upd else c)
@@ -148,9 +149,10 @@ def probe_media(path: str | Path) -> dict:
 
 
 def append_outro(main: str | Path, outro: str | Path, dest: str | Path, *, width: int, height: int,
-                 fps: int = CANVAS_FPS, max_seconds: float = 6.0) -> Path:
+                 fps: int = CANVAS_FPS, max_seconds: float = 6.0, gap_ms: int = 0) -> Path:
     """``main`` followed by the first ``max_seconds`` of ``outro`` (scaled to fit the canvas, black bars if the shape
-    differs), re-encoded as one H.264/AAC file. A silent ending gets silence, so the audio stays one stream."""
+    differs), re-encoded as one H.264/AAC file. A silent ending gets silence, so the audio stays one stream. ``gap_ms`` > 0 puts a dip between them so the
+    end of the clip does not look cut off: the clip fades out (0.2 s), ``gap_ms`` of black and silence, the ending fades in (0.2 s). 0 is a straight cut."""
     main, outro, dest = Path(main), Path(outro), Path(dest)
     m, o = probe_media(main), probe_media(outro)
     if not o["has_video"]:
@@ -171,6 +173,16 @@ def append_outro(main: str | Path, outro: str | Path, dest: str | Path, *, width
     fc = (f"[0:v]{norm}[v0];[{i_outro}:v]{norm}[v1];"
           f"[{a_main}:a]aresample=48000,aformat=channel_layouts=stereo[a0];[{a_outro}:a]aresample=48000,aformat=channel_layouts=stereo[a1];"
           f"[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]")
+    if gap_ms > 0:
+        gap = gap_ms / 1000
+        fo = round(min(0.2, max(m["duration"], 0.5) / 4), 3)              # the clip's last moments fade out ...
+        fi = round(min(0.2, take / 4), 3)                                  # ... and the ending's first moments fade in
+        fc = (f"[0:v]{norm},fade=t=out:st={max(m['duration'] - fo, 0):.3f}:d={fo}[v0];[{i_outro}:v]{norm},fade=t=in:st=0:d={fi}[v1];"
+              f"color=c=black:s={width}x{height}:r={fps}:d={gap:.3f},format=yuv420p,setsar=1[vg];"
+              f"[{a_main}:a]aresample=48000,aformat=channel_layouts=stereo,afade=t=out:st={max(m['duration'] - fo, 0):.3f}:d={fo}[a0];"
+              f"[{a_outro}:a]aresample=48000,aformat=channel_layouts=stereo,afade=t=in:st=0:d={fi}[a1];"
+              f"anullsrc=r=48000:cl=stereo,atrim=0:{gap:.3f}[ag];"
+              f"[v0][a0][vg][ag][v1][a1]concat=n=3:v=1:a=1[v][a]")
     cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "medium", "-crf", "18",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(dest)]
     _run(cmd, "Adding the ending video")

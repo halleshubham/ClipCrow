@@ -301,6 +301,7 @@ class Outro(_Model):
     asset: SafeId
     enabled: bool = True
     max_seconds: float = Field(default=6.0, gt=0, le=30)
+    gap_ms: int = Field(default=400, ge=0, le=1500)      # a dip before the ending: the clip fades out, a short black silent gap, the ending fades in (0 = a straight cut)
 
 
 MAX_CLIP_SECONDS = 900      # a clip may run 15 minutes: shorts are 15-90 s, but a cleaned recording is one reel of 3-8 minutes

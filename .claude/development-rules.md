@@ -78,6 +78,8 @@ History, incidents and open items are in `development-log.md`: add an entry ther
   named). Anything that assumed a short must follow the clip's real length: the editor's trim limit (`max_seconds_for`), the render timeout (12 x the
   clip), and the GPU worker (clips over `CLIPCROW_WORKER_MAX_CLIP_SECONDS`, default 60 (a 98 s clip was 105 MB: over the proxy cap, a 413), go only to a worker that sends the MP4 to the
   bucket in presigned parts (`WorkerHub.direct_plan` / `direct_finish`, task `direct=True`); with no bucket or no such worker online they render on the server).
+- Ending video gap (`Outro.gap_ms`, brand setting `outro_gap_ms`, default 400, 0-1500; `branding.append_outro(gap_ms=)`): the clip fades out (0.2 s), a black SILENT gap, the ending fades in (0.2 s); 0 = the old straight cut. The joined clip is
+  longer by the gap (`validate_clip` allows it). A real render test checks the gap is dark.
 - Loudness (`loudness.py`, called by `pipeline.render_clip` AFTER the outro join, `CLIPCROW_LOUDNORM=0` turns it off): two-pass `loudnorm` to -14 LUFS / -1.5 dBTP on the finished clip, picture copied, only
   audio re-encoded. A clip within 1 LU of the target with headroom is left byte for byte (a good render stays deterministic); silence, no audio, or a clip needing more than 18 dB of gain is left alone
   (raising it only raises the noise); a result that is not closer to the target is discarded; any failure keeps the original. It runs on the worker too (same `render_clip`).

@@ -36,12 +36,12 @@ _HEX = re.compile(r"^#[0-9a-fA-F]{6}\Z")
 DEFAULTS = {
     "logo_position": "tr", "logo_size_pct": 18, "logo_opacity": 0.9, "logo_margin_px": 60,
     "cover_ms": 250, "cover_background": "frame", "cover_color": "#FFFFFF", "cover_accent": "#FFD54A",
-    "cover_bg_color": "#111111", "outro_max_seconds": 6.0,
+    "cover_bg_color": "#111111", "outro_max_seconds": 6.0, "outro_gap_ms": 400,
     # what a new job ticks by default
     "default_cover": False, "default_logo": False, "default_outro": False, "default_music": False, "music_track": "",
 }
 _RANGES = {"logo_size_pct": (5, 40, int), "logo_opacity": (0.1, 1.0, float), "logo_margin_px": (0, 300, int),
-           "cover_ms": (100, 1500, int), "outro_max_seconds": (1.0, 30.0, float)}
+           "cover_ms": (100, 1500, int), "outro_max_seconds": (1.0, 30.0, float), "outro_gap_ms": (0, 1500, int)}
 
 
 def library() -> dict:
@@ -255,4 +255,4 @@ class BrandStore:
                         logo_size_pct=s["logo_size_pct"], logo_opacity=float(s["logo_opacity"]), logo_margin_px=s["logo_margin_px"],
                         cover_ms=s["cover_ms"], cover_background=s["cover_background"], cover_color=s["cover_color"],
                         cover_accent=s["cover_accent"], cover_bg_color=s["cover_bg_color"],
-                        outro_max_seconds=float(s["outro_max_seconds"]))
+                        outro_max_seconds=float(s["outro_max_seconds"]), outro_gap_ms=int(s["outro_gap_ms"]))

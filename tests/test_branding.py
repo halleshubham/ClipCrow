@@ -173,3 +173,62 @@ def test_append_outro_rejects_a_file_without_picture(tmp_path):
 def test_extract_cover_is_frame_zero(tmp_path):
     out = branding.extract_cover(mp4(tmp_path / "m.mp4", 1), tmp_path / "m.cover.png")
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+# --- the dip before the ending video ----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("outro_audio", [True, False])
+@pytest.mark.parametrize("main_audio", [True, False])
+def test_a_gap_adds_a_dip_of_black_and_silence_between_the_clip_and_the_ending(tmp_path, outro_audio, main_audio):
+    main = mp4(tmp_path / "m.mp4", 2, audio=main_audio, size="540x960", color="green")
+    tail = mp4(tmp_path / "o.mp4", 3, audio=outro_audio, size="640x360", color="red")
+    out = branding.append_outro(main, tail, tmp_path / "j.mp4", width=540, height=960, max_seconds=1.5, gap_ms=500)
+    info = branding.probe_media(out)
+    assert (info["width"], info["height"]) == (540, 960) and info["has_audio"] and abs(info["duration"] - 4.0) < 0.25        # 2 + 0.5 + 1.5
+
+
+def test_the_gap_is_dark_and_quiet_and_the_clip_fades_out_into_it(tmp_path):
+    main = mp4(tmp_path / "m.mp4", 2, audio=True, size="540x960", color="white")
+    tail = mp4(tmp_path / "o.mp4", 2, audio=True, size="540x960", color="white")
+    out = branding.append_outro(main, tail, tmp_path / "j.mp4", width=540, height=960, max_seconds=2.0, gap_ms=600)
+
+    def luma(t):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(out), "-frames:v", "1", "-vf", "scale=8:8,format=gray", "-f", "rawvideo", "-"],
+                             capture_output=True).stdout
+        return sum(raw) / max(len(raw), 1)
+    assert luma(1.0) > 200 and luma(2.3) < 12 and luma(3.8) > 200         # the clip, the dark gap (2.0-2.6 s), the ending
+    assert luma(1.97) < luma(1.5)                                          # the last moments of the clip are already fading
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-ss", "2.1", "-t", "0.4", "-i", str(out), "-vn", "-af", "volumedetect", "-f", "null", "-"], capture_output=True, text=True)
+    assert "max_volume: -91" in r.stderr or "max_volume: -inf" in r.stderr or float(r.stderr.split("max_volume:")[1].split("dB")[0]) < -60
+
+
+def test_no_gap_is_a_straight_cut_as_before(tmp_path):
+    main = mp4(tmp_path / "m.mp4", 2, size="540x960", color="white")
+    tail = mp4(tmp_path / "o.mp4", 2, size="540x960", color="white")
+    out = branding.append_outro(main, tail, tmp_path / "j.mp4", width=540, height=960, max_seconds=2.0, gap_ms=0)
+    assert abs(branding.probe_media(out)["duration"] - 4.0) < 0.2
+
+
+def test_the_brand_chooses_the_gap_and_the_clip_carries_it(make_edl, tmp_path):
+    from clipcrow.edl import Outro
+    assert Outro(asset="brand-outro").gap_ms == 400
+    with pytest.raises(ValueError):
+        Outro(asset="brand-outro", gap_ms=5000)
+    from clipcrow.service.brand import BrandStore
+    store = BrandStore(tmp_path)
+    assert store.settings("a" * 32)["outro_gap_ms"] == 400
+    store.set_settings("a" * 32, {"outro_gap_ms": 250})
+    assert store.kit("a" * 32).outro_gap_ms == 250
+    for bad in (-1, 1501, True, "400"):
+        with pytest.raises(BrandError):
+            store.set_settings("a" * 32, {"outro_gap_ms": bad})
+    tail = mp4(tmp_path / "o.mp4", 2, size="320x180")
+    kit = BrandKit(outro=tail, outro_gap_ms=250)
+    edl = apply_brand(make_edl(clips=[CLIP]), kit, BrandingChoice(outro=True), tmp_path / "out")
+    assert edl.clips[0].outro.gap_ms == 250
+
+
+def test_the_render_hands_the_gap_to_the_join():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "clipcrow" / "pipeline.py").read_text(encoding="utf-8")
+    assert "gap_ms=clip.outro.gap_ms" in src

@@ -165,7 +165,7 @@ def test_cover_logo_and_outro_in_a_real_render(tmp_path):
                                 gsap_js=ROOT / "vendor" / "gsap.min.js", workers=2, asset_root=out_dir)
     assert not [w for w in compiled.warnings if "skipped" in w or "not saved" in w], compiled.warnings
     info = branding.probe_media(out)
-    assert abs(info["duration"] - 5.0) < 0.15 and info["has_audio"] and (info["width"], info["height"]) == (1080, 1920)
+    assert abs(info["duration"] - 5.4) < 0.15 and info["has_audio"]            # 3 s clip + the 0.4 s dip + 2 s ending and (info["width"], info["height"]) == (1080, 1920)
 
     def share(f, rgb, tol=40):
         r, g, b = (f[..., i].astype(int) for i in (2, 1, 0))
@@ -177,6 +177,7 @@ def test_cover_logo_and_outro_in_a_real_render(tmp_path):
     assert share(corner, (0, 220, 0)) > 0.8, "the logo is not in the top-left corner"
     assert share(after[1500:], (0, 220, 0)) < 0.001                                    # and only there
     assert share(end, (255, 0, 255)) > 0.2                                             # the ending video follows the clip
+    assert _frame(out, 3.2).mean() < 25                                                # after a dark, quiet gap (3.0-3.4 s): the end does not jump
     poster = cv2.imread(str(out.with_name("x.cover.png")))
     assert share(poster, (255, 0, 0)) > 0.5                                            # the saved cover image is the title card
 

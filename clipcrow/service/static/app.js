@@ -1092,7 +1092,8 @@ async function brandView() {
       opt('cover_background', 'Cover background', [['frame', 'The video, darkened'], ['color', 'A solid colour']], s.cover_background),
       color('cover_color', 'Cover text colour', s.cover_color), color('cover_accent', 'Cover last-word colour', s.cover_accent),
       color('cover_bg_color', 'Cover solid colour', s.cover_bg_color),
-      num('outro_max_seconds', 'Use at most (seconds) of the ending video', 1, 30, 0.5, s.outro_max_seconds)),
+      num('outro_max_seconds', 'Use at most (seconds) of the ending video', 1, 30, 0.5, s.outro_max_seconds),
+      num('outro_gap_ms', 'Pause before the ending video (ms, 0 = straight cut)', 0, 1500, 50, s.outro_gap_ms)),
     el('div', { class: 'stack' }, el('div', { class: 'small muted', text: 'Tick by default on a new job:' }),
       tick('default_cover', 'Cover title', s.default_cover), tick('default_logo', 'Logo', s.default_logo), tick('default_outro', 'Ending video', s.default_outro), tick('default_music', 'Background music', s.default_music)),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: async () => {
@@ -1101,7 +1102,7 @@ async function brandView() {
       const body = { logo_position: f.logo_position.value, logo_size_pct: num_('logo_size_pct'), logo_opacity: num_('logo_opacity'),
         logo_margin_px: num_('logo_margin_px'), cover_ms: num_('cover_ms'), cover_background: f.cover_background.value,
         cover_color: f.cover_color.value.toUpperCase(), cover_accent: f.cover_accent.value.toUpperCase(), cover_bg_color: f.cover_bg_color.value.toUpperCase(),
-        outro_max_seconds: num_('outro_max_seconds'), default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_outro: f.default_outro.checked, default_music: f.default_music.checked };
+        outro_max_seconds: num_('outro_max_seconds'), outro_gap_ms: num_('outro_gap_ms'), default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_outro: f.default_outro.checked, default_music: f.default_music.checked };
       try { await api('/brand', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); note.textContent = 'Saved. New jobs use this.'; } catch (e) { fail(e); }
     } })));
 

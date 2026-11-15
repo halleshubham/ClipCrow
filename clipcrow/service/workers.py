@@ -509,7 +509,7 @@ def validate_clip(path: Path, edl, clip, *, max_bytes: int) -> None:
     if (video.get("width"), video.get("height")) != (edl.render.width, edl.render.height):
         raise ClipRejected(f"the clip the worker sent is {video.get('width')}x{video.get('height')}, not {edl.render.width}x{edl.render.height}")
     base = float(clip.source_out) - float(clip.source_in)
-    extra = float(clip.outro.max_seconds) if clip.outro and clip.outro.enabled else 0.0
+    extra = (float(clip.outro.max_seconds) + clip.outro.gap_ms / 1000) if clip.outro and clip.outro.enabled else 0.0
     if not (base - 1.0 <= duration <= base + extra + 1.5):
         raise ClipRejected(f"the clip the worker sent is {duration:.1f} s long, expected about {base:.1f} s")
 

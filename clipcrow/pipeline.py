@@ -86,7 +86,7 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
         joined = out.with_name(out.stem + ".joined.mp4")
         try:
             branding.append_outro(out, tail, joined, width=edl.render.width, height=edl.render.height, fps=edl.render.fps,
-                                  max_seconds=clip.outro.max_seconds)
+                                  max_seconds=clip.outro.max_seconds, gap_ms=clip.outro.gap_ms)
             joined.replace(out)
         except branding.BrandError as e:        # the clip itself is fine: deliver it without the ending and say so
             joined.unlink(missing_ok=True)

@@ -1,5 +1,7 @@
 import json
+import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -86,3 +88,20 @@ def storage(endpoint):
     return S3Storage(bucket, endpoint=endpoint, access_key="k", secret_key="s", prefix="cc")
 
 
+
+
+# The service tests start daemon threads (a worker polling a test server, an abandoned AI call) that can still be running when pytest finishes. If one touches stderr
+# while Python finalises, the interpreter ABORTS (exit 134) AFTER every test passed (seen in CI: "774 passed", then "Fatal Python error: _enter_buffered_busy").
+# So, once pytest has printed its result, leave without the finalisation race, keeping the exit status. CLIPCROW_NO_FAST_EXIT=1 turns it off.
+def pytest_sessionfinish(session, exitstatus):
+    session.config._clipcrow_exit = int(exitstatus)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    code = getattr(config, "_clipcrow_exit", None)
+    if code is None or os.environ.get("CLIPCROW_NO_FAST_EXIT"):
+        return
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
