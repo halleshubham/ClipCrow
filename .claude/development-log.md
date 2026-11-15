@@ -4,6 +4,9 @@ What was built, what real recordings taught us, and what is still open. Newest f
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
 ## 2026-11-15
+- **First real direct clip upload (job 55350aaed187)**: the worker rendered a 37 s clip from a 4K source and began sending 49 MB to R2; the upload then sat with no output. A part could wait 900 s without data, 3 times,
+  and printed nothing. Now: a quiet connection fails after 60 s, each part is logged, and after 3 failed tries a clip under 90 MB goes through the server instead (above that the failure is reported and the server renders).
+  Tip for a stuck worker: the finished file is in the container at `/models/home/.cache/clipcrow-worker/<job>/out/<clip>.<task8>.mp4` until the worker stops: `docker cp` it out first.
 - **SraVaani on the server** (CPU image now has torch CPU, transformers 5.23.0, sentencepiece, soundfile; Whisper stays the fallback). The server's job log had said "SraVaani unavailable (ModuleNotFoundError): using
   Whisper": `CLIPCROW_ASR=sravaani` was already set in Coolify but the image lacked the packages. Needs `HF_TOKEN` (a fresh token of an account with access) in Coolify for the model download.
 - **A cancel that did not cancel** (job 47107ba0b5f7): a running job only noticed a cancel between steps, and one AI call or one recognition window can take minutes. Now every AI call is interruptible, recognition

@@ -86,13 +86,15 @@ def test_the_operator_can_turn_direct_clips_off(tmp_path, storage, monkeypatch):
     assert r.status_code == 404
 
 
-def test_a_short_upload_is_refused_and_leaves_nothing_in_the_bucket(tmp_path, storage, small_parts):
+def test_a_short_upload_is_refused_by_the_server_and_the_whole_clip_then_arrives_through_the_server(tmp_path, storage, small_parts):
     c, app, pipe = app_with_worker(tmp_path, storage=storage)
     t = leased_task(pipe, tmp_path)
-    with pytest.raises(WorkerHttpError) as e:
-        send_clip(BucketTransport(app, short_last=True), "w", t.id, a_clip(tmp_path, 7 * MB))
-    assert e.value.status == 422
-    assert "clip.mp4" not in t.uploads and not t.direct_used and not storage.has(JOB, f"worker/{t.id}.mp4")
+    clip = a_clip(tmp_path, 7 * MB)
+    lines = []
+    send_clip(BucketTransport(app, short_last=True), "w", t.id, clip, lines.append)
+    assert any("sending through the server instead" in l for l in lines)
+    assert (tmp_path / "in" / "clip.mp4").read_bytes() == clip.read_bytes() and not t.direct_used     # never the short copy
+    assert not storage.has(JOB, f"worker/{t.id}.mp4")
 
 
 def test_missing_parts_are_refused(tmp_path, storage, small_parts):
@@ -200,3 +202,43 @@ def test_the_real_transport_streams_a_slice_to_a_presigned_url_without_the_worke
     assert storage.size(JOB, f"worker/{'a' * 32}.mp4") == n
     with pytest.raises(ValueError):
         tr.put_part("http://evil.example/x", clip, 0, 10)                           # never plain http to a remote host
+
+
+# --- a stalled or refused upload to the bucket ------------------------------------------------------------------------------
+
+class StuckBucket(BucketTransport):
+    def put_part(self, url, src, offset, length, *, timeout=60.0):
+        raise TimeoutError("the connection went quiet")
+
+
+def test_a_stalled_upload_is_logged_and_the_clip_goes_through_the_server_instead(tmp_path, storage, small_parts, monkeypatch):
+    monkeypatch.setattr("clipcrow.worker.time.sleep", lambda s: None)
+    c, app, pipe = app_with_worker(tmp_path, storage=storage)
+    t = leased_task(pipe, tmp_path)
+    clip = a_clip(tmp_path, 7 * MB)
+    lines = []
+    send_clip(StuckBucket(app), "w", t.id, clip, lines.append)
+    assert (tmp_path / "in" / "clip.mp4").read_bytes() == clip.read_bytes() and not t.direct_used
+    text = "\n".join(lines)
+    assert "attempt 1 failed" in text and "attempt 3 failed" in text and "sending through the server instead" in text
+
+
+def test_a_clip_too_big_for_the_proxy_reports_the_failure_instead_of_trying_the_server(tmp_path, storage, small_parts, monkeypatch):
+    monkeypatch.setattr("clipcrow.worker.time.sleep", lambda s: None)
+    monkeypatch.setattr("clipcrow.worker.THROUGH_SERVER_MAX", 1 * MB)
+    c, app, pipe = app_with_worker(tmp_path, storage=storage)
+    t = leased_task(pipe, tmp_path)
+    with pytest.raises(TimeoutError):
+        send_clip(StuckBucket(app), "w", t.id, a_clip(tmp_path, 7 * MB))
+    assert "clip.mp4" not in t.uploads
+
+
+def test_each_part_is_reported_as_it_is_sent_and_the_wait_for_a_quiet_connection_is_short(tmp_path, storage, small_parts):
+    c, app, pipe = app_with_worker(tmp_path, storage=storage)
+    t = leased_task(pipe, tmp_path)
+    lines = []
+    send_clip(BucketTransport(app), "w", t.id, a_clip(tmp_path, 12 * MB), lines.append)
+    assert [l for l in lines if "part " in l and "sent" in l].__len__() == 3 and "(3 part(s))" in lines[0]
+    import inspect
+    from clipcrow.worker import HttpTransport
+    assert inspect.signature(HttpTransport.put_part).parameters["timeout"].default <= 60.0

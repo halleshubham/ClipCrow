@@ -41,7 +41,7 @@ class Transport:
     def upload(self, path: str, src: Path, *, timeout: float = 900.0) -> None:
         raise NotImplementedError
 
-    def put_part(self, url: str, src: Path, offset: int, length: int, *, timeout: float = 900.0) -> str:
+    def put_part(self, url: str, src: Path, offset: int, length: int, *, timeout: float = 60.0) -> str:
         """PUT ``length`` bytes of ``src`` from ``offset`` to a presigned URL of the bucket; returns the part's ETag."""
         raise NotImplementedError
 
@@ -90,7 +90,7 @@ class HttpTransport(Transport):
             raise WorkerHttpError(e.code, f"{e.code} from the server") from None
 
 
-    def put_part(self, url, src, offset, length, *, timeout=900.0):
+    def put_part(self, url, src, offset, length, *, timeout=60.0):
         """A presigned URL carries its own signature: the worker token must NOT be sent there (it is another host)."""
         if not url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
             raise ValueError("the storage address is not https")
@@ -131,6 +131,7 @@ class WorkerHttpError(RuntimeError):
 
 
 PART_TRIES = 3
+THROUGH_SERVER_MAX = 90 * 1024 * 1024       # the proxy in front of the server refuses a request of about 100 MB
 
 
 def send_clip(transport: Transport, name: str, tid: str, mp4: Path, log: Callable[[str], None] = lambda _m: None) -> None:
@@ -147,20 +148,30 @@ def send_clip(transport: Transport, name: str, tid: str, mp4: Path, log: Callabl
     if not plan:
         transport.upload(f"/api/worker/tasks/{tid}/uploads/clip.mp4?worker={name}", mp4)
         return
-    log(f"task {tid[:8]}: sending {size / 1e6:.0f} MB straight to the file storage")
+    log(f"task {tid[:8]}: sending {size / 1e6:.0f} MB straight to the file storage ({len(plan['parts'])} part(s))")
     done, offset = [], 0
-    for part in plan["parts"]:
-        length = int(part["length"])
-        for attempt in range(PART_TRIES):
-            try:
-                done.append({"n": int(part["n"]), "etag": transport.put_part(part["url"], mp4, offset, length)})
-                break
-            except (WorkerHttpError, urllib.error.URLError, OSError, TimeoutError):
-                if attempt == PART_TRIES - 1:
-                    raise
-                time.sleep(2 * (attempt + 1))
-        offset += length
-    transport.post(f"/api/worker/tasks/{tid}/direct-done", {"worker": name, "parts": done}, timeout=300)
+    try:
+        for part in plan["parts"]:
+            length = int(part["length"])
+            for attempt in range(PART_TRIES):
+                try:
+                    started = time.monotonic()
+                    done.append({"n": int(part["n"]), "etag": transport.put_part(part["url"], mp4, offset, length)})
+                    log(f"task {tid[:8]}:   part {part['n']}/{len(plan['parts'])} sent ({length / 1e6:.0f} MB in {time.monotonic() - started:.0f} s)")
+                    break
+                except (WorkerHttpError, urllib.error.URLError, OSError, TimeoutError) as e:
+                    log(f"task {tid[:8]}:   part {part['n']} attempt {attempt + 1} failed ({type(e).__name__})")
+                    if attempt == PART_TRIES - 1:
+                        raise
+                    time.sleep(2 * (attempt + 1))
+            offset += length
+        transport.post(f"/api/worker/tasks/{tid}/direct-done", {"worker": name, "parts": done}, timeout=300)
+        return
+    except (WorkerHttpError, urllib.error.URLError, OSError, TimeoutError) as e:
+        if size > THROUGH_SERVER_MAX:
+            raise                                                # too big for the proxy in front of the server: report the failure, the server renders it
+        log(f"task {tid[:8]}: the file storage did not take it ({type(e).__name__}); sending through the server instead")
+    transport.upload(f"/api/worker/tasks/{tid}/uploads/clip.mp4?worker={name}", mp4)
 
 
 def default_transcribe(model: str) -> tuple[Callable, str]:
