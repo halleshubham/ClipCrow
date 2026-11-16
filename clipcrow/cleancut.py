@@ -147,6 +147,14 @@ def same_word(a: str, b: str) -> bool:
     return False
 
 
+def kin_word(a: str, b: str) -> bool:
+    """The same word with a different ending (मांसाच्या / मांसाचं, दिवसांच्या / दिवसांचं): a long shared beginning. Used only to find a restarted phrase, never to cut on its own."""
+    k = 0
+    while k < min(len(a), len(b)) and a[k] == b[k]:
+        k += 1
+    return k >= 4 and k >= 0.6 * min(len(a), len(b))
+
+
 def overlap(a: list[str], b: list[str]) -> tuple[int, float]:
     """(words matched in order, share of the two lists they cover) with alike-spelled words counting as equal."""
     canon: list[str] = []
@@ -233,7 +241,7 @@ def detect(words: list[Word], lang: str, *, db=None, thr: float | None = None) -
                 continue
             need = n if n == 3 else n - 1                                     # one changed word is allowed in a phrase of four or more
             hit = next((j for j in range(i + n, min(N - n + 1, i + n + PHRASE_WINDOW))
-                        if nw[j:j + n] and all(nw[j:j + n]) and sum(same_word(x, y) for x, y in zip(pat, nw[j:j + n])) >= need
+                        if nw[j:j + n] and all(nw[j:j + n]) and sum(same_word(x, y) or kin_word(x, y) for x, y in zip(pat, nw[j:j + n])) >= need
                         and any(same_word(pat[0], nw[t]) for t in (j - 1, j, j + 1) if 0 <= t < N)        # the restatement starts with the phrase's first word
                         and not any(k in done for k in range(i, j))), None)
             if hit is not None:

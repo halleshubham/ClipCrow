@@ -64,8 +64,12 @@ The rules that came out of these are in `development-rules.md`; this file is the
 - **Cuts before a removed word** stop `START_LAG` (0.12 s) early (recogniser starts trail the sound by ~0.1 s, a plosive burst leaked at the seam); quiet-point search window 60 -> 100 ms.
 - **Run-on speech** (no punctuation, 40-word cap) is split at its longest pause (>= 12 words in), not mid-phrase. **Word ends** keep >= 0.12 s (`MIN_WORD`) so caption highlights never flash for 50 ms.
 - **Digits are always Latin** (`edl.latin_digits`, applied by every EDL model and by the transcript loader): 33%, 1998, 1,00,300/-. The planner prompt is unchanged (the recorded replay is keyed on it).
+- **Restart with changed endings** (job 1717e2deda8a: "कारण काय फार मांसाच्या | कारण काय भारी मांसाचं", the same opening, two words re-said with another ending, 0.35 s apart): rule 3 needs `n-1`
+  same words and the changed word differed too much (`same_word` 0.85). It now also counts `kin_word` (same stem: >= 4 shared leading letters and 60% of the shorter word). The read-first verify
+  noticed the fragment but "left it as is" (a problem it reports is never acted on): see Open.
 
 ## Open
+- `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.
 - Per-stage timings in the job log; an audio-similarity repeat detector; the SraVaani/Whisper choice in the job log; SraVaani in the container image.
 - The live effect of the read-first judge on a new real recording (offline replays only so far).

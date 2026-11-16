@@ -763,3 +763,13 @@ def test_a_cut_before_a_removed_word_stops_early_enough_that_none_of_it_leaks():
     cut = [cc.Cut("false_start", "r", 1, 1)]
     (a, b), = cc.compute_keeps(words, cut, db, -50.0, "natural", 4.0, 25.0)
     assert b / 25.0 <= 1.5 + 0.02
+
+
+def test_a_restart_where_the_changed_words_only_differ_in_their_ending_is_cut():
+    w = line(*"त्याचा जीव गेला कारण काय फार मांसाच्या कारण काय भारी मांसाचं कंडिशन कंट्रोल मध्येच काही नाही".split(), step=0.45)
+    assert (3, 6) in cut_range(w)                                                        # the first try; the second one stays
+
+
+def test_kin_words_share_a_stem_but_are_not_the_same_word():
+    assert cc.kin_word("मांसाच्या", "मांसाचं") and cc.kin_word("दिवसांच्या", "दिवसांचं")
+    assert not cc.kin_word("फार", "भारी") and not cc.kin_word("बँक", "बँकिंग")
