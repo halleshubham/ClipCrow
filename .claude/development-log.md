@@ -3,6 +3,19 @@
 What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
+## 2026-11-16 (market research on retake removal: Descript, Gling, Tella, FireCut, Smart-Cut)
+- **Reviewable cuts.** `GET /api/jobs/<id>/cleanup` lists every applied cut AND the AI's unapplied suggestions with a number; the job page has a switch for each and "Cut again with my choices"
+  (`POST .../cleanup/review {applied: [numbers]}`). The choices are saved as `out/cleanup.review.json`; the job runs again from the saved words (`transcript.original.json`) and the ORIGINAL upload with
+  exactly those cuts (`clean_video(cuts=...)`, nothing is detected again, the 70% cap does not apply), the clips are planned and rendered again (clip/word edits are lost; the minutes are not charged again,
+  and a failed re-cut does not refund them).
+- **Read-through acts.** `Check.suggest` (lines it suspects but will not cut) become `kind="suggested"`, `apply=False` cuts the person can switch on; the verify prompt now says that a fragment the next line
+  restarts goes in `drop_more` (job 1717e2deda8a: it named the fragment and left it).
+- **Best take** (`Params.clean_take = "best"`, `--clean-take best`, job form): the judge may swap, i.e. list a worse LATER take in `drop` and the earlier take it replaces in `keep` (one `keep` per `drop`,
+  only retake/restart/false_start rule cuts come back). Default stays "last".
+- **Restart after a short pause** (>= 0.45 s) when 5 of the 6 opening words come back (0.9 s needed 4 before); a kept aside is at most 6 words (`INSERT_MAX`). **Fades at every join 8 -> 20 ms.**
+- **The deploy of fea5f37 never happened**: the restart lacked `?latest=true`, so Coolify restarted the OLD image (job 1717e2deda8a ran on old code). Always add `?latest=true` and confirm with a route only the new
+  code has (`can_review` in `GET /api/jobs/<id>/cleanup`). Also fixed: `RealPipeline.run` used `Interruptible` without importing it (NameError on every real job since d07c816; the import sat in `reference_look`).
+
 ## 2026-11-15
 - **A pause before the ending video**: the clip fades out, 400 ms of black and silence, the ending fades in (brand setting, 0 = straight cut). Asked for because the end looked abrupt.
 - **First real direct clip upload (job 55350aaed187)**: the worker rendered a 37 s clip from a 4K source and began sending 49 MB to R2; the upload then sat with no output. A part could wait 900 s without data, 3 times,

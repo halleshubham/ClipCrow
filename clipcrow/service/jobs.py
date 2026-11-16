@@ -52,6 +52,7 @@ class Params(_M):
     graphics: bool = False                  # the source cuts to slides, cards or b-roll: show those whole instead of cropping them
     clean: bool = False                     # cut fumbles, fillers, retakes and dead air out of a raw recording first
     clean_pace: Literal["natural", "fast", "tight"] = "natural"
+    clean_take: Literal["last", "best"] = "last"     # which take of a repeated passage stays: the last one, or the one the AI judges best
     cover: bool = False                     # a bold title for the first ~250 ms (and a cover PNG)
     logo: bool = False                      # the account's logo in a corner
     outro: bool = False                     # the account's ending video after each clip

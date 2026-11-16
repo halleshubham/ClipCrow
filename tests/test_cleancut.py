@@ -773,3 +773,107 @@ def test_a_restart_where_the_changed_words_only_differ_in_their_ending_is_cut():
 def test_kin_words_share_a_stem_but_are_not_the_same_word():
     assert cc.kin_word("मांसाच्या", "मांसाचं") and cc.kin_word("दिवसांच्या", "दिवसांचं")
     assert not cc.kin_word("फार", "भारी") and not cc.kin_word("बँक", "बँकिंग")
+
+
+# --- research-driven: restarts after a short pause, suggestions, best take, reviewed cuts -----------------------------------------------
+
+def test_a_passage_restarted_after_a_short_pause_is_cut_only_when_nearly_all_of_its_opening_comes_back():
+    opening = "आज आपण बँकेच्या खाजगीकरणाबद्दल बोलणार आहोत".split()
+    rest = "गणित नदी पर्वत वाहन शेतकरी विमान किल्ला समुद्र पुस्तक घड्याळ दगड फुलपाखरू रस्ता खिडकी चंद्र दुकान पाऊस बाग मासा".split()     # 25 words in all: the restart is past the window of the phrase rule
+    a = line(*(opening + rest))
+    again = opening + "आणि सरकारची भूमिका स्पष्ट आहे कारण लोकांना खरी माहिती हवी असते म्हणून".split()                       # what follows is long enough to be the real take
+    assert any(f == 0 and l == 24 for f, l in cut_range(a + line(*again, start=a[-1].e + 0.55)))                      # a 0.55 s pause, the opening said again
+    changed = "आज आपण बँकेच्या विम्याबद्दल बोलूया तर आहोत आणि सरकारची भूमिका स्पष्ट आहे कारण लोकांना खरी माहिती हवी असते म्हणून".split()    # three of the six opening words changed
+    assert not any(f == 0 for f, _ in cut_range(a + line(*changed, start=a[-1].e + 0.55)))
+    assert not any(f == 0 for f, _ in cut_range(a + line(*again, start=a[-1].e + 0.3)))                               # under 0.45 s it is no pause at all
+
+
+def test_a_long_continuation_between_two_tries_is_not_an_aside_and_goes_with_the_first_try():
+    w = line(*"आज आपण बँकेच्या खाजगीकरणाबद्दल बोलणार आहोत आणि त्यात सरकारची भूमिका काय आहे ते पाहू आज आपण बँकेच्या खाजगीकरणाबद्दल बोलणार आहोत आणि पुढे".split())
+    assert any(f == 0 and l == 13 for f, l in cut_range(w))
+
+
+def test_a_line_the_read_through_suspects_is_offered_as_an_unapplied_cut_never_applied():
+    words, lines, cuts = _judged_setup()
+
+    def respond(purpose, prompt, schema):
+        return cc.Check(reads_cleanly=False, suggest=[cc.Drop(id=5, why="maybe a restart")])
+    out = cc.verify_cuts(words, "mr", FakeLLM(respond), cuts)
+    sug = [c for c in out if c.kind == "suggested"]
+    assert len(sug) == 1 and sug[0].apply is False and (sug[0].first, sug[0].last) == lines[5]
+    assert cc.compute_keeps(words, out, None, 0.0, "natural", 100.0, 25.0) == cc.compute_keeps(words, cuts, None, 0.0, "natural", 100.0, 25.0)
+
+
+def test_best_take_lets_the_model_swap_which_take_stays_and_last_take_ignores_it():
+    words = sentence_words(8)
+    lines = cc.judge_lines(words)
+    rule = cc.Cut("retake", "earlier take", lines[1][0], lines[1][1], text="e")
+    seen = {}
+
+    def respond(purpose, prompt, schema):
+        return cc.Review(drop=[cc.Drop(id=3, why="worse take")], keep=[1])
+    cuts = cc.judge_retakes(words, "mr", FakeLLM(respond), planned=[rule], take="best")
+    assert rule.apply is False and any(c.kind == "judged" and (c.first, c.last) == lines[3] for c in cuts)
+    rule2 = cc.Cut("retake", "earlier take", lines[1][0], lines[1][1], text="e")
+    cc.judge_retakes(words, "mr", FakeLLM(respond), planned=[rule2], take="last")
+    assert rule2.apply is True                                                             # the default never brings an earlier take back
+
+
+def test_the_judge_prompt_only_mentions_best_take_when_asked():
+    seen = []
+    words = sentence_words(8)
+    cc.judge_retakes(words, "mr", FakeLLM(lambda p, u, s: seen.append(p) or cc.Review()), take="last")
+    assert "BEST take" in cc.BEST_TAKE and seen
+
+
+@ffmpeg
+def test_cutting_again_with_a_persons_choices_uses_exactly_those_cuts(tmp_path, raw_video):
+    tr = talk()
+    first = cc.clean_video(raw_video, tr, tmp_path / "a", audio_loader=lambda p: np.zeros(16 * 16000, np.float32))
+    rep = json.loads((tmp_path / "a" / "cleanup.json").read_text(encoding="utf-8"))
+    chosen = [cc.cut_from_report(dict(c, applied=False if c["kind"] == "stutter" else c["applied"])) for c in rep["cuts"]]
+    again = cc.clean_video(raw_video, tr, tmp_path / "b", audio_loader=lambda p: np.zeros(16 * 16000, np.float32), cuts=chosen, reading=rep["reading"])
+    assert again is not None
+    texts = [w.w for w in again.transcript.words]
+    assert texts.count("the") == 2 and "um" not in texts                                    # the stutter was put back, the hesitation stays out
+    assert json.loads((tmp_path / "b" / "cleanup.json").read_text(encoding="utf-8"))["reviewed"] is True
+    assert [w.w for w in first.transcript.words].count("the") == 1
+
+
+def test_the_review_route_records_the_choices_and_cuts_again(tmp_path, video_bytes):
+    from tests.test_service import FakePipeline, client, upload, wait
+    c, app = client(tmp_path, FakePipeline())
+    job = wait(c, upload(c, video_bytes).json()["id"])
+    out = tmp_path / "data" / "jobs" / job["id"] / "out"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "transcript.json").write_text(json.dumps({"language": "mr", "words": [{"w": "a", "s": 0, "e": 1}]}), encoding="utf-8")
+    cuts = [{"kind": "retake", "reason": "r", "text": "x", "applied": True, "start": 1.0, "end": 2.0, "first": 0, "last": 0},
+            {"kind": "suggested", "reason": "maybe", "text": "y", "applied": False, "start": 3.0, "end": 4.0, "first": 0, "last": 0},
+            {"kind": "filler", "reason": "r", "text": "z", "applied": True, "start": None, "end": None, "t0": 5.0, "t1": 5.2}]
+    (out / "cleanup.json").write_text(json.dumps({"pace": "natural", "before_seconds": 9.0, "after_seconds": 6.0, "by_kind": {}, "cuts": cuts, "missed_speech": [], "timemap": []}), encoding="utf-8")
+    body = c.get(f"/api/jobs/{job['id']}/cleanup").json()
+    assert [x["index"] for x in body["cuts"]] == [0, 1] and body["can_review"] is True and body["cuts"][1]["applied"] is False
+    assert c.post(f"/api/jobs/{job['id']}/cleanup/review", json={"applied": [7]}).status_code == 422
+    assert c.post(f"/api/jobs/zzzzzzzzzzzz/cleanup/review", json={"applied": []}).status_code == 404
+    r = c.post(f"/api/jobs/{job['id']}/cleanup/review", json={"applied": [1]})                # the retake is put back in, the suggestion is cut
+    assert r.status_code == 200
+    saved = json.loads((out / "cleanup.review.json").read_text(encoding="utf-8"))["cuts"]
+    assert [x["applied"] for x in saved] == [False, True, True]                              # the hidden timing cut stays as it was
+    wait(c, job["id"])
+
+
+def test_a_pipeline_run_after_a_review_cuts_from_the_saved_words_with_those_choices(tmp_path, monkeypatch):
+    from clipcrow.service import pipelines
+    from clipcrow.service.jobs import Job, Params
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "transcript.json").write_text("{}", encoding="utf-8")
+    (out / "transcript.original.json").write_text("{}", encoding="utf-8")
+    (out / "cleanup.review.json").write_text(json.dumps({"cuts": [{"kind": "retake", "reason": "r", "first": 0, "last": 1, "applied": False}], "reading": {"intent": "i"}}), encoding="utf-8")
+    seen = {}
+    monkeypatch.setattr(pipelines, "make", lambda *a, **k: seen.update(k) or "made")
+    monkeypatch.setattr("clipcrow.planner.AnthropicLLM", lambda *a, **k: object())
+    job = Job(id="a" * 12, name="n", created_at="t", params=Params(clean=True, clean_take="best"))
+    pipelines.RealPipeline().run(job, tmp_path / "v.mp4", out, pipelines.Hooks(), lambda m: None)
+    assert seen["transcript_path"].name == "transcript.original.json" and seen["clean_take"] == "best"
+    assert seen["clean_cuts"][0].apply is False and seen["clean_reading"] == {"intent": "i"}

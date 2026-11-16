@@ -417,7 +417,7 @@ async function newJobView() {
     const options = {
       style: $('style').value,
       language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
-      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
+      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, clean_take: $('clean_take').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', pictures: pics.ids(), ai_images: $('ai_images').checked ? 'true' : '',
       cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '', music: $('music').checked ? 'true' : '', transition: $('transition').value,
@@ -507,7 +507,8 @@ async function newJobView() {
       el('label', { class: 'check', for: 'clean' }, el('input', { type: 'checkbox', id: 'clean' }),
         el('span', {}, el('strong', { text: 'Raw recording: cut fumbles and dead air' }), el('br'),
           el('span', { class: 'muted', text: 'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.' }))),
-      el('div', { id: 'clean-opts', hidden: true }, select('clean_pace', 'How tight', [['natural', 'Natural: keep short pauses (talks, courses, interviews)'], ['fast', 'Fast: tighter (YouTube talking head)'], ['tight', 'Tight: jump-cut style (Reels and Shorts)']])),
+      el('div', { id: 'clean-opts', hidden: true }, select('clean_pace', 'How tight', [['natural', 'Natural: keep short pauses (talks, courses, interviews)'], ['fast', 'Fast: tighter (YouTube talking head)'], ['tight', 'Tight: jump-cut style (Reels and Shorts)']]),
+        select('clean_take', 'When a passage is said twice', [['last', 'Keep the last take'], ['best', 'Keep the best take (the AI judges which)']])),
       el('label', { class: 'check', for: 'graphics' }, el('input', { type: 'checkbox', id: 'graphics' }),
         el('span', {}, el('strong', { text: 'Video has slides, cards or graphics' }), el('br'),
           el('span', { class: 'muted', text: 'For explainers that cut away from the speaker to text cards, charts or pictures. Those moments are shown whole instead of cropped to the middle, so the text is not cut off. Moments with the speaker are still framed on their face.' }))),
@@ -627,18 +628,39 @@ async function jobView(jobId) {
     } catch (ex) { trBody.textContent = ex.message; trLoaded = false; }
   }
   let cutLoaded = false;
-  const KIND = { filler: 'Hesitation sound', stutter: 'Stutter', false_start: 'False start', retake: 'Earlier take', restart: 'Earlier take', judged: 'Judged by the AI', hidden_filler: 'Noise with no word' };
+  const KIND = { filler: 'Hesitation sound', stutter: 'Stutter', false_start: 'False start', retake: 'Earlier take', restart: 'Earlier take', judged: 'Judged by the AI', hidden_filler: 'Noise with no word', suggested: 'Suggested (not cut)' };
   async function loadCuts() {
     if (cutLoaded || job.status !== 'done' || !job.params.clean) return;
     cutLoaded = true;
     try {
       const r = await api(`/jobs/${jobId}/cleanup`);
       cutCard.hidden = false;
-      const rows = r.cuts.map((c) => el('tr', {}, el('td', { class: 'num', text: `${fmt(c.start)}–${fmt(c.end)}` }), el('td', { text: KIND[c.kind] || c.kind }),
-        el('td', { class: 'deva', translate: 'no', text: c.text || c.reason })));
+      const boxes = [];
+      const msg = el('div', { class: 'small', role: 'status' });
+      const again = el('button', { class: 'btn primary', type: 'button', text: 'Cut again with my choices', disabled: true });
+      const changed = () => { again.disabled = !boxes.some(([c, cb]) => cb.checked !== c.applied); };
+      const rows = r.cuts.map((c) => {
+        const cb = el('input', { type: 'checkbox', 'aria-label': `Cut ${fmt(c.start)} to ${fmt(c.end)}` });
+        cb.checked = c.applied;
+        cb.disabled = !r.can_review;
+        cb.addEventListener('change', changed);
+        boxes.push([c, cb]);
+        return el('tr', {}, el('td', {}, cb), el('td', { class: 'num', text: `${fmt(c.start)}–${fmt(c.end)}` }), el('td', { text: KIND[c.kind] || c.kind }),
+          el('td', {}, el('div', { class: 'deva', translate: 'no', text: c.text || c.reason }), c.kind === 'suggested' && c.reason ? el('div', { class: 'small muted', text: c.reason }) : null));
+      });
+      again.addEventListener('click', async () => {
+        if (!confirm('Cut the recording again with these choices? Every clip is planned and rendered again from your original recording, so any edits you made to the clips or the words are lost.')) return;
+        again.disabled = true;
+        msg.textContent = 'Starting…';
+        try {
+          await api(`/jobs/${jobId}/cleanup/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ applied: boxes.filter(([, cb]) => cb.checked).map(([c]) => c.index) }) });
+          location.reload();
+        } catch (ex) { msg.textContent = ex.message; changed(); }
+      });
       cutBody.className = '';
       const rd = r.reading || {};
-      cutBody.replaceChildren(
+      cutBody.replaceChildren(...[
         rd.intent ? el('div', {}, el('h3', { style: { margin: '0 0 6px', fontSize: '14px' }, text: 'How the AI read your recording' }),
           el('p', { class: 'small deva', translate: 'no', text: rd.intent }),
           rd.passages && rd.passages.length ? el('div', { class: 'chips' }, rd.passages.map((p) => el('span', { class: 'chip plain', translate: 'no', text: `${fmt(p.start)}–${fmt(p.end)} ${p.role}` }))) : null,
@@ -647,8 +669,11 @@ async function jobView(jobId) {
         r.applied ? el('p', { class: 'small', text: `${fmt(r.before_seconds)} became ${fmt(r.after_seconds)}. Times are in your original recording. Pauses were also shortened (${r.pace}).` })
           : el('p', { class: 'alert', role: 'alert', text: `These cuts were NOT applied: they would have removed ${Math.round((r.removed_share || 0) * 100)}% of your recording, which is more than the cleanup trusts itself with, so the video was used as it is. Check the list below; if it is right, tell us and we will let it through.` }),
         r.missed_speech.length ? el('p', { class: 'small', text: `Speech the recogniser could not write down was kept as it is, without captions: ${r.missed_speech.map(([a, b]) => `${fmt(a)}–${fmt(b)}`).join(', ')}.` }) : null,
-        rows.length ? el('table', {}, el('thead', {}, el('tr', {}, ['Original time', 'What', 'Removed'].map((h) => el('th', { text: h })))), el('tbody', {}, rows))
-          : el('p', { class: 'small muted', text: 'No words were removed; only long pauses were shortened.' }));
+        r.reviewed ? el('p', { class: 'small', text: 'This is the cut you chose.' }) : null,
+        rows.length ? el('div', {}, el('p', { class: 'small muted', text: r.can_review ? 'Tick what should be cut. Untick a cut to keep those words, or tick a suggestion to cut it, then cut again.' : 'These cuts can no longer be changed (the original recording is gone).' }),
+          el('div', { style: { overflowX: 'auto' } }, el('table', {}, el('thead', {}, el('tr', {}, ['Cut', 'Original time', 'What', 'Removed'].map((h) => el('th', { text: h })))), el('tbody', {}, rows))),
+          r.can_review ? el('div', { class: 'row' }, again, msg) : null)
+          : el('p', { class: 'small muted', text: 'No words were removed; only long pauses were shortened.' })].filter(Boolean));
     } catch (_) { cutLoaded = false; cutCard.hidden = true; }
   }
   const cards = new Map();

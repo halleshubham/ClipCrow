@@ -65,6 +65,10 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' 
 UPSTREAM = 424
 
 
+class CleanupReview(BaseModel):
+    applied: list[int] = Field(max_length=2000)             # the numbers of the cuts that must be cut (all the others stay in)
+
+
 class Login(BaseModel):
     token: str
 
@@ -580,7 +584,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                             speaker_title=str(o.get("speaker_title") or "").strip(), cutout=truthy(o.get("cutout")),
                             immersive=truthy(o.get("immersive")), explainer=truthy(o.get("explainer")), pictures=picture_ids,
                             ai_images=want_images, multi=o.get("multi") or "switch", graphics=truthy(o.get("graphics")),
-                            clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", whole=truthy(o.get("whole")),
+                            clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", clean_take=o.get("clean_take") or "last", whole=truthy(o.get("whole")),
                             cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), outro=truthy(o.get("outro")), sounds=truthy(o.get("sounds")), music=truthy(o.get("music")), transition=o.get("transition") or "none")
         except (ValidationError, ValueError, TypeError) as e:
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
@@ -772,7 +776,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          spread: Optional[str] = Form(None), speaker_name: Optional[str] = Form(None),
                          speaker_title: Optional[str] = Form(""), cutout: Optional[str] = Form(None),
                          multi: Optional[str] = Form(None), graphics: Optional[str] = Form(None),
-                         clean: Optional[str] = Form(None), clean_pace: Optional[str] = Form(None), whole: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
+                         clean: Optional[str] = Form(None), clean_pace: Optional[str] = Form(None), clean_take: Optional[str] = Form(None), whole: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
                          explainer: Optional[str] = Form(None), links: Optional[str] = Form(None), pictures_ids: Optional[str] = Form(None, alias="pictures"),
                          ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
                          logo: Optional[str] = Form(None), outro: Optional[str] = Form(None), sounds: Optional[str] = Form(None), music: Optional[str] = Form(None), transition: Optional[str] = Form(None),
@@ -783,7 +787,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if declared > limit + 1_000_000:
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
-                                   speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, whole=whole,
+                                   speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, clean_take=clean_take, whole=whole,
                                    immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, outro=outro, sounds=sounds, music=music, transition=transition,
                                    style=style),
                               brand_owner(request))
@@ -846,19 +850,62 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     @app.get("/api/jobs/{job_id}/cleanup", dependencies=[Depends(authed)])
     def get_cleanup(job_id: str, request: Request) -> dict:
         """What the raw-recording cleanup cut, in the ORIGINAL recording's seconds, so a person can check each removal."""
-        job_or_404(job_id, request)
+        job = job_or_404(job_id, request)
         path = store.dir(job_id) / "out" / "cleanup.json"
         try:
             rep = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             raise HTTPException(404, "This job has no cleanup report.")
-        cuts = [{"kind": str(c.get("kind", ""))[:20], "reason": str(c.get("reason", ""))[:200], "text": str(c.get("text", ""))[:300],
-                 "start": c.get("start"), "end": c.get("end")}
-                for c in rep.get("cuts", []) if c.get("applied") and isinstance(c.get("start"), (int, float)) and isinstance(c.get("end"), (int, float))]
+        cuts = [{"index": n, "kind": str(c.get("kind", ""))[:20], "reason": str(c.get("reason", ""))[:200], "text": str(c.get("text", ""))[:300],
+                 "start": c.get("start"), "end": c.get("end"), "applied": bool(c.get("applied"))}
+                for n, c in enumerate(rep.get("cuts", [])) if isinstance(c.get("start"), (int, float)) and isinstance(c.get("end"), (int, float))
+                and (c.get("applied") or c.get("kind") == "suggested")]
+        out = store.dir(job_id) / "out"
+        can_review = (job.status == "done" and not job.source_removed and store.source_path(job_id) is not None
+                      and ((out / "transcript.original.json").is_file() or (out / "transcript.json").is_file()))
         return {"pace": rep.get("pace"), "before_seconds": rep.get("before_seconds"), "after_seconds": rep.get("after_seconds"),
                 "by_kind": rep.get("by_kind", {}), "cuts": sorted(cuts, key=lambda c: c["start"]), "missed_speech": rep.get("missed_speech", []),
-                "timemap": rep.get("timemap", []), "reading": _clean_reading(rep.get("reading")),
+                "timemap": rep.get("timemap", []), "reading": _clean_reading(rep.get("reading")), "can_review": can_review,
+                "take": rep.get("take", "last"), "reviewed": bool(rep.get("reviewed")),
                 "applied": rep.get("applied", True) is not False, "removed_share": rep.get("removed_share")}
+
+    @app.post("/api/jobs/{job_id}/cleanup/review", dependencies=[Depends(authed)])
+    def review_cleanup(job_id: str, body: CleanupReview, request: Request) -> dict:
+        """Cut again with the person's choices: ``applied`` is the complete list of cut numbers (as ``GET .../cleanup`` shows them) that must be cut; every
+        other cut stays in. The recording is cut again from the ORIGINAL upload and the clips are planned and rendered again (edits to clips are lost)."""
+        job = job_or_404(job_id, request)
+        if job.status != "done":
+            raise HTTPException(409, "The cuts can be changed once the job has finished.")
+        if job.source_removed or store.source_path(job_id) is None:
+            raise HTTPException(409, "The original recording has been removed, so it cannot be cut again.")
+        if any(c.render in ("queued", "rendering") for c in job.clips):
+            raise HTTPException(409, "A clip is rendering. Try again when it has finished.")
+        out = store.dir(job_id) / "out"
+        try:
+            rep = json.loads((out / "cleanup.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise HTTPException(404, "This job has no cleanup report.")
+        cuts = rep.get("cuts", [])
+        if any(n < 0 or n >= len(cuts) for n in body.applied):
+            raise HTTPException(422, "Unknown cut number.")
+        chosen = set(body.applied)
+        for n, c in enumerate(cuts):
+            shown = isinstance(c.get("start"), (int, float)) and isinstance(c.get("end"), (int, float)) and (c.get("applied") or c.get("kind") == "suggested")
+            if shown:                                            # only what the person was shown can be switched; any other cut stays as it was
+                c["applied"] = n in chosen
+        if not (out / "transcript.original.json").is_file() and not (out / "transcript.json").is_file():
+            raise HTTPException(409, "The saved words of this job are missing, so it cannot be cut again.")
+        (out / "cleanup.review.json").write_text(json.dumps({"cuts": cuts, "reading": rep.get("reading")}, ensure_ascii=False), encoding="utf-8")
+
+        def reset(j: Job) -> None:
+            j.status, j.error, j.cancel_requested = "queued", None, False
+            j.reserved_minutes = 0                              # the minutes were taken for the first run; a failed re-cut must not give them back
+            for st in j.stages:
+                st.state, st.detail = "pending", ""
+            j.add_log("cutting again with your choices; the clips are rebuilt")
+        store.update(job_id, reset)
+        runner.submit(job_id)
+        return view(store.get(job_id))
 
     @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(authed)])
     def cancel_job(job_id: str, request: Request) -> dict:

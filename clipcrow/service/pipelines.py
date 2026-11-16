@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 
@@ -91,7 +92,6 @@ class RealPipeline:
         """What the reference's captions look like, read by one Claude vision call. None when there are no credentials."""
         import anthropic
         from ..planner import AnthropicLLM
-        from ..planner.llm import Interruptible
         from ..styles_look import read_look
         llm = AnthropicLLM(client=anthropic.Anthropic(timeout=60.0, max_retries=1))      # a stuck call must not hold the queue
         return read_look(path, duration, llm).model_dump()
@@ -100,6 +100,7 @@ class RealPipeline:
 
     def run(self, job: Job, video: Path, out: Path, hooks: Hooks, say) -> MakeResult:
         from ..planner import AnthropicLLM
+        from ..planner.llm import Interruptible
         transcribe_fn = None
         if self.hub is not None and self.hub.online():           # a GPU worker is out there: let it listen, fall back if it cannot
             from .workers import RemoteTranscriber
@@ -108,7 +109,18 @@ class RealPipeline:
         if self.hub is not None:                                 # each clip goes to a matching render worker when one is online
             from .workers import RemoteRenderer
             render_fn = RemoteRenderer(self.hub, check=hooks.check, say=say, max_clip_seconds=_worker_clip_limit())
-        return make(video, out, language=job.params.language, llm=Interruptible(AnthropicLLM(), hooks.check), opts=planner_options(job, out.parent / "pictures"),
+        review = out / "cleanup.review.json"                      # a person went through "What was cut": rebuild from the saved words with exactly their choices
+        recut: dict = {}
+        if review.is_file():
+            try:
+                from ..cleancut import cut_from_report
+                data = json.loads(review.read_text(encoding="utf-8"))
+                saved = out / "transcript.original.json"
+                recut = dict(transcript_path=saved if saved.is_file() else out / "transcript.json",
+                             clean_cuts=[cut_from_report(c) for c in data["cuts"]], clean_reading=data.get("reading") or {})
+            except (OSError, ValueError, KeyError, TypeError):
+                recut = {}
+        return make(video, out, language=job.params.language, clean_take=job.params.clean_take, **recut, llm=Interruptible(AnthropicLLM(), hooks.check), opts=planner_options(job, out.parent / "pictures"),
                     hooks=hooks, say=say, multi=job.params.multi, graphics=job.params.graphics, clean=job.params.clean, clean_pace=job.params.clean_pace, transcribe_fn=transcribe_fn, render_fn=render_fn,
                     images=self._images() if job.params.ai_images else None,
                     gsap_js=os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"),

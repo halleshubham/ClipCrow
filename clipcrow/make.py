@@ -59,7 +59,7 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
          say: Callable[[str], None] = lambda _m: None, hooks: Hooks | None = None,
          multi: str = "switch", graphics: bool = False, images=None, capture_fn=None,
          brand: BrandKit | None = None, choice: BrandingChoice | None = None, refine_text: bool = True,
-         clean: bool = False, clean_pace: str = "natural") -> MakeResult:
+         clean: bool = False, clean_pace: str = "natural", clean_take: str = "last", clean_cuts: list | None = None, clean_reading: dict | None = None) -> MakeResult:
     """``clean``: cut hesitation sounds, stutters, retakes and long dead air out of the raw recording first (``cleancut``). The cleaned video
     (``out/clean.mp4``) becomes the source for everything after: planning, framing, rendering and later re-renders."""
     video, out = Path(video), Path(out_dir)
@@ -75,12 +75,14 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
         if not clean:
             return video, tr, ""
         from .cleancut import clean_video
+        if clean_cuts is not None:
+            (out / "clean.mp4").unlink(missing_ok=True)           # a re-cut: the old cut video must not outlive a choice that no longer cuts anything
         if llm is None:
             from .planner import AnthropicLLM
             llm = AnthropicLLM()
         say("cutting fumbles and dead air out of the recording")
         try:
-            res = clean_video(video, tr, out, pace=clean_pace, llm=llm, say=say, check=hk.check)
+            res = clean_video(video, tr, out, pace=clean_pace, llm=llm, say=say, check=hk.check, take=clean_take, cuts=clean_cuts, reading=clean_reading)
         except (ValueError, OSError) as e:                       # an unreadable file, a failed cut: the original still works
             say(f"the cleanup was skipped: {e}")
             return video, tr, ""
@@ -97,7 +99,15 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
         if transcript_path:
             tr = load_transcript(transcript_path, language)
             say(f"using the transcript {transcript_path}")
-            video, tr, note = cleaned(tr)
+            before = video
+            video, tr_cut, note = cleaned(tr)
+            if clean_cuts is not None:                            # a re-cut from the saved words: write the files a first run would have written
+                if video != before:
+                    (out / "transcript.original.json").write_text(json.dumps(
+                        {"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in tr.words]}, ensure_ascii=False, indent=1), encoding="utf-8")
+                (out / "transcript.json").write_text(json.dumps(
+                    {"language": tr_cut.language, "words": [w.model_dump(exclude_none=True) for w in tr_cut.words]}, ensure_ascii=False, indent=1), encoding="utf-8")
+            tr = tr_cut
             hk.stage("transcribe", "skipped", "transcript provided" + note)
         else:
             hk.stage("transcribe", "running", "")
