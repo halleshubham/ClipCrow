@@ -92,3 +92,29 @@ def test_a_word_before_a_pause_keeps_a_minimum_duration():
     db = energy_db(audio)
     out = sv.tighten([{"w": "a", "s": 1.0, "e": 1.5}, {"w": "b", "s": 2.5, "e": 3.0}], db, speech_threshold(db))
     assert out[0]["e"] - out[0]["s"] >= sv.MIN_WORD - 1e-6 and out[0]["e"] <= out[1]["s"]
+
+
+MR_WORDS = [{"w": w, "s": i * 0.4, "e": i * 0.4 + 0.3} for i, w in enumerate(
+    "नेमकं लिंगायतांचं तत्वज्ञान काय आहे आणि म्हणजे आपण नाही तर काय आहेत आम्ही पण म्हणून तुम्ही मी होतं झालं केलं असतं आहोत".split())]
+
+
+class HindiEars:
+    """Whisper hearing Marathi as Hindi; it must not be asked to decode anything when SraVaani is on."""
+    def detect_language(self, samples):
+        return ("hi", 0.8)
+
+    def transcribe(self, *a, **k):
+        raise AssertionError("SraVaani is on: Whisper has nothing to decode")
+
+
+def test_with_sravaani_on_the_words_name_the_language_whatever_whispers_guess_said(monkeypatch):
+    from clipcrow import indic
+    monkeypatch.setenv("CLIPCROW_ASR", "sravaani")
+    monkeypatch.setattr(indic, "media_duration", lambda p: 100.0)
+    monkeypatch.setattr(indic, "audio_window", lambda p, off, secs=30: np.zeros(16000, np.float32))
+    monkeypatch.setattr(sv, "transcribe_words", lambda *a, **k: [dict(w) for w in MR_WORDS])
+    said = []
+    tr = asr.transcribe("m.wav", model_loader=lambda cfg, size: HindiEars(), progress=said.append)
+    assert tr.language == "mr" and tr.engine == "sravaani" and any("the words are Marathi, not Hindi" in m for m in said)
+    pinned = asr.transcribe("m.wav", "hi", model_loader=lambda cfg, size: HindiEars(), progress=said.append)
+    assert pinned.language == "hi"                                                         # a language the person chose is never overruled

@@ -257,22 +257,27 @@ def transcribe(media: str, language: str | None = None, *, config: AsrConfig | N
     if lang in indic.INDIC_LANGS and cfg.indic_model and cfg.indic_model != cfg.model:
         say(f"Indic audio: using {cfg.indic_model}")
         model = load(cfg, cfg.indic_model)
-    if lang in ("hi", "mr") and not language:                            # Whisper hears Marathi as Hindi often: the words of a short sample decide
-        settled = indic.settle_hi_mr(model, media, lang)
-        if settled != lang:
-            say(f"the speech reads as {'Marathi' if settled == 'mr' else 'Hindi'}, not {'Marathi' if lang == 'mr' else 'Hindi'}: using {settled}")
-            params, lang = {"language": settled, **indic.prompt_params(model, settled)}, settled
     if lang in asr_sravaani.LANGS and asr_sravaani.enabled():
         try:
             say(f"recognising {lang} with SraVaani")
             words = asr_sravaani.transcribe_words(media, say=say, check=check)
             if words:
-                tr = parse_transcript({"language": lang, "words": words})
+                label = lang                              # SraVaani reads Hindi and Marathi alike: Whisper's guess only picks the engine, the WORDS name the language
+                if not language:
+                    label = indic.language_from_text(" ".join(w["w"] for w in words)) or lang
+                    if label != lang:
+                        say(f"the words are {'Marathi' if label == 'mr' else 'Hindi'}, not {'Marathi' if lang == 'mr' else 'Hindi'}: using {label}")
+                tr = parse_transcript({"language": label, "words": words})
                 tr.engine = "sravaani"
                 return tr
             say("SraVaani heard no speech: using Whisper")
         except Exception as e:                          # a missing package, no access to the gated repo, no memory: the Whisper path still works
             say(f"SraVaani unavailable ({type(e).__name__}): using Whisper")
+    if lang in ("hi", "mr") and not language:                            # Whisper hears Marathi as Hindi often: the words of a short sample decide
+        settled = indic.settle_hi_mr(model, media, lang)
+        if settled != lang:
+            say(f"the speech reads as {'Marathi' if settled == 'mr' else 'Hindi'}, not {'Marathi' if lang == 'mr' else 'Hindi'}: using {settled}")
+            params, lang = {"language": settled, **indic.prompt_params(model, settled)}, settled
     use_windows = (lang in WINDOWED_LANGS) if windowed is None else (bool(windowed) and bool(lang))
     if use_windows:
         say(f"decoding {lang} in {int(WINDOW_SECONDS)} s windows, no prompt")

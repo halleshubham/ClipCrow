@@ -9,6 +9,8 @@ The rules that came out of these are in `development-rules.md`; this file is the
 - Fix, two layers: `indic.settle_hi_mr` decodes the vote windows in the chosen language and lets `language_from_text` (Marathi-only vs Hindi-only function words, >= 8 of one and >= 3x the other) overrule the
   label BEFORE the long decode, and `make()` relabels after any transcription (a worker's, SraVaani's, a reused one) with the same rule. A language the person picked is never second-guessed.
   Workaround for older jobs: pick Marathi in "Spoken language" instead of Auto-detect.
+- With `CLIPCROW_ASR=sravaani` Hindi and Marathi both go to SraVaani (it reads either), Whisper's vote only picks the engine and SraVaani's WORDS name the language (the Whisper-decode check is for the
+  Whisper path only). A vote of another language (Nepali, Sanskrit) still goes to Whisper.
 
 ## 2026-11-17 (interface audit: icons, platform logos, short copy)
 - Audited every page (new job, jobs, job, clip editor, share, styles, brand) at 360 px and desktop in both themes. Findings: text-only buttons and navigation, platform names as plain words on the share page, a long
