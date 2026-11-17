@@ -138,6 +138,14 @@ The rules that came out of these are in `development-rules.md`; this file is the
   same words and the changed word differed too much (`same_word` 0.85). It now also counts `kin_word` (same stem: >= 4 shared leading letters and 60% of the shorter word). The read-first verify
   noticed the fragment but "left it as is" (a problem it reports is never acted on): see Open.
 
+## 2026-11-17 (several brands per account)
+- **Brands**: an account holds up to 20 brands (`BrandStore`: `brand/<owner>/brands.json` + one folder per brand, ids `^[0-9a-f]{12}\Z`; the first use of an old single-brand account migrates its files into a brand called "My brand").
+  A brand carries logo, ending video, music, look, the speaker's name/role and the default caption style (colour, highlight, font, animation, words per line, height). Routes take `?brand=<id>` (none = the default brand);
+  `/api/brands` lists, creates, renames, sets the default and deletes (the last brand stays). Someone else's brand id is a 404.
+- **A job fixes its brand when it is made** (`Params.brand`); changing the default later never moves it. The brand's speaker fills the lower third unless the job names someone; the brand's caption look applies unless the job
+  picked a reference style (a style wins). A brand deleted after the job was made falls back to the copies in the job.
+- UI: Brand page switcher (+ Speaker and Captions sections); New job has a Brand select (shown with two or more brands) that re-fills the logo/ending/music rows.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

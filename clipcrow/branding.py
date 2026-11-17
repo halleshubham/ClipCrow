@@ -14,7 +14,7 @@ import json
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -45,6 +45,9 @@ class BrandKit:
     cover_bg_color: str = "#111111"
     outro_max_seconds: float = 6.0
     outro_gap_ms: int = 400
+    captions: dict = field(default_factory=dict)       # CaptionStyle fields this brand sets (colour, font, position ...); empty = the app's own look
+    speaker_name: str = ""                              # the lower third every clip gets unless the job names someone
+    speaker_title: str = ""
 
 
 @dataclass
@@ -53,9 +56,10 @@ class BrandingChoice:
     logo: bool = False
     outro: bool = False
     music: bool = False
+    captions: bool = False                              # the brand's caption look (not when a reference style already set it)
 
     def any(self) -> bool:
-        return self.cover or self.logo or self.outro or self.music
+        return self.cover or self.logo or self.outro or self.music or self.captions
 
 
 def cover_text(clip: Clip) -> str:
@@ -116,6 +120,8 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
             upd["outro"] = Outro(asset="brand-outro", max_seconds=kit.outro_max_seconds, gap_ms=kit.outro_gap_ms)
         if choice.music:
             upd["music"] = Music(asset="brand-music")
+        if choice.captions and kit.captions:
+            upd["captions"] = c.captions.model_copy(update=kit.captions)
         clips.append(c.model_copy(update=upd) if upd else c)
     return EDL.model_validate({**edl.model_dump(exclude_none=True),
                                "assets": [a.model_dump(exclude_defaults=True) for a in [*assets, *new_assets]],

@@ -19,6 +19,7 @@ History, incidents and open items are in `development-log.md`: add an entry ther
   `#behind` and `#cutout` with the same tween, or the text slides across the person. `compile_clip` clears stale
   `compositions/*.html` (a re-render reuses the folder). Without a matte the clip renders without text-behind and says
   so (`CompiledClip.warnings`, the provenance `notes`); the matte is cached by a hash of the prepared footage.
+- Brands are per account and several: every brand route goes through `BrandStore._dir(owner, brand)` (ids strict hex `\Z`, checked against the owner's registry, so another account's id is a KeyError/404); a job stores `Params.brand` when it is made and never follows the default afterwards.
 - Branding: the cover is the TOP scene (z9) and shows from frame 0 with no fade-in; its words are the hook (else the title),
   never a new model call (replay tests key on the prompt hash). Cover/logo/outro files are COPIED into `<out>/brand/` and
   named by assets `brand-logo` / `brand-outro`; the EDL never points outside the job folder. Logos are PNG/JPEG/WebP only,

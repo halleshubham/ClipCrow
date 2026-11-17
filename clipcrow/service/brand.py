@@ -15,9 +15,12 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..branding import BrandError, BrandKit, probe_media
+from ..edl import CaptionStyle
 
 MAX_LOGO_BYTES = 3 * 1024 * 1024
 MAX_OUTRO_BYTES = 90 * 1024 * 1024
@@ -28,6 +31,9 @@ TRACK_ID = re.compile(r"^[a-z0-9-]{1,40}\Z")
 MIN_MUSIC_SECONDS, MAX_MUSIC_SECONDS = 5.0, 900.0
 MAX_LOGO_SIDE = 4096
 OWNER = re.compile(r"^([0-9a-f]{32}|shared)\Z")
+BRAND_ID = re.compile(r"^[0-9a-f]{12}\Z")
+MAX_BRANDS = 20
+CAPTION_ANIMATIONS = ("pop", "fade", "slide", "karaoke")
 SNIFF = ((b"\x89PNG\r\n\x1a\n", ".png"), (b"\xff\xd8\xff", ".jpg"))
 POSITIONS = ("tl", "tr", "bl", "br")
 BACKGROUNDS = ("frame", "color")
@@ -39,9 +45,37 @@ DEFAULTS = {
     "cover_bg_color": "#111111", "outro_max_seconds": 6.0, "outro_gap_ms": 400,
     # what a new job ticks by default
     "default_cover": False, "default_logo": False, "default_outro": False, "default_music": False, "music_track": "",
+    # who speaks (the lower third of every clip) and how this brand's captions look; "" / 0 = the app's own default
+    "speaker_name": "", "speaker_title": "",
+    "caption_color": "", "caption_highlight": "", "caption_font": "", "caption_words": 0, "caption_top_px": 0, "caption_animation": "",
 }
 _RANGES = {"logo_size_pct": (5, 40, int), "logo_opacity": (0.1, 1.0, float), "logo_margin_px": (0, 300, int),
-           "cover_ms": (100, 1500, int), "outro_max_seconds": (1.0, 30.0, float), "outro_gap_ms": (0, 1500, int)}
+           "cover_ms": (100, 1500, int), "outro_max_seconds": (1.0, 30.0, float), "outro_gap_ms": (0, 1500, int),
+           "caption_words": (0, 8, int), "caption_top_px": (0, 1800, int)}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _clean_name(name) -> str:
+    name = " ".join(str(name or "").split())
+    if not 1 <= len(name) <= 40 or any(ord(c) < 32 for c in name):
+        raise BrandError("A brand name is 1 to 40 characters.")
+    return name
+
+
+def caption_defaults(s: dict) -> dict:
+    """The caption fields this brand sets, under the names of ``edl.CaptionStyle`` (what is left empty stays the app's default)."""
+    out: dict = {}
+    for key, field in (("caption_color", "color"), ("caption_highlight", "highlight_color"), ("caption_font", "font_family"), ("caption_animation", "animation")):
+        if s.get(key):
+            out[field] = s[key]
+    if s.get("caption_words"):
+        out["max_words"] = int(s["caption_words"])
+    if s.get("caption_top_px"):
+        out["top_px"] = int(s["caption_top_px"])
+    return out
 
 
 def library() -> dict:
@@ -70,17 +104,108 @@ def sniff_image(head: bytes) -> str | None:
 class BrandStore:
     def __init__(self, data_dir: str | Path):
         self.root = Path(data_dir) / "brand"
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
-    def _dir(self, owner: str) -> Path:
+    # --- the brands of an owner ---------------------------------------------------------------------
+    # <data>/brand/<owner>/brands.json  {"default": id, "brands": [{"id", "name", "created"}]}  and one folder per brand: <owner>/<id>/ (logo, outro, music, settings).
+    # An owner whose files still sit directly in <owner>/ (before there were several brands) gets them moved into a first brand, once.
+    def _owner_dir(self, owner: str) -> Path:
         if not OWNER.match(owner):
             raise KeyError(owner)
         return self.root / owner
 
+    def _registry(self, owner: str) -> dict:
+        d = self._owner_dir(owner)
+        reg = d / "brands.json"
+        with self._lock:
+            try:
+                data = json.loads(reg.read_text("utf-8"))
+                if isinstance(data, dict) and isinstance(data.get("brands"), list) and data["brands"]:
+                    return data
+            except (OSError, ValueError):
+                pass
+            d.mkdir(parents=True, exist_ok=True)
+            bid = uuid.uuid4().hex[:12]
+            bd = d / bid
+            bd.mkdir()
+            for legacy in [d / "settings.json", d / "outro.mp4", d / "music.m4a", *d.glob("logo.*")]:        # what an account had before there were several brands
+                if legacy.is_file():
+                    shutil.move(str(legacy), bd / legacy.name)
+            data = {"default": bid, "brands": [{"id": bid, "name": "My brand", "created": _now()}]}
+            self._write_registry(d, data)
+            return data
+
+    @staticmethod
+    def _write_registry(d: Path, data: dict) -> None:
+        tmp = d / "brands.tmp"
+        tmp.write_text(json.dumps(data), "utf-8")
+        os.replace(tmp, d / "brands.json")
+
+    def _dir(self, owner: str, brand: str | None = None) -> Path:
+        reg = self._registry(owner)
+        bid = brand or reg["default"]
+        if not BRAND_ID.match(bid) or not any(b["id"] == bid for b in reg["brands"]):
+            raise KeyError(bid)
+        return self._owner_dir(owner) / bid
+
+    def default_id(self, owner: str) -> str:
+        return self._registry(owner)["default"]
+
+    def has(self, owner: str, brand: str) -> bool:
+        return bool(BRAND_ID.match(brand or "")) and any(b["id"] == brand for b in self._registry(owner)["brands"])
+
+    def list(self, owner: str) -> list[dict]:
+        reg = self._registry(owner)
+        return [{"id": b["id"], "name": b["name"], "default": b["id"] == reg["default"]} for b in reg["brands"]]
+
+    def create(self, owner: str, name: str) -> dict:
+        name = _clean_name(name)
+        reg = self._registry(owner)
+        if len(reg["brands"]) >= MAX_BRANDS:
+            raise BrandError(f"You can have at most {MAX_BRANDS} brands.")
+        with self._lock:
+            bid = uuid.uuid4().hex[:12]
+            (self._owner_dir(owner) / bid).mkdir(parents=True)
+            reg["brands"].append({"id": bid, "name": name, "created": _now()})
+            self._write_registry(self._owner_dir(owner), reg)
+        return {"id": bid, "name": name, "default": False}
+
+    def rename(self, owner: str, brand: str, name: str) -> None:
+        name = _clean_name(name)
+        reg = self._registry(owner)
+        row = next((b for b in reg["brands"] if b["id"] == brand), None)
+        if row is None:
+            raise KeyError(brand)
+        with self._lock:
+            row["name"] = name
+            self._write_registry(self._owner_dir(owner), reg)
+
+    def set_default(self, owner: str, brand: str) -> None:
+        reg = self._registry(owner)
+        if not any(b["id"] == brand for b in reg["brands"]):
+            raise KeyError(brand)
+        with self._lock:
+            reg["default"] = brand
+            self._write_registry(self._owner_dir(owner), reg)
+
+    def remove(self, owner: str, brand: str) -> None:
+        """Delete a brand and its files. The last brand cannot go; deleting the default makes the oldest remaining one the default. A job that used it keeps the copies it made."""
+        reg = self._registry(owner)
+        if not any(b["id"] == brand for b in reg["brands"]):
+            raise KeyError(brand)
+        if len(reg["brands"]) == 1:
+            raise BrandError("You need at least one brand.")
+        with self._lock:
+            reg["brands"] = [b for b in reg["brands"] if b["id"] != brand]
+            if reg["default"] == brand:
+                reg["default"] = reg["brands"][0]["id"]
+            self._write_registry(self._owner_dir(owner), reg)
+            shutil.rmtree(self._owner_dir(owner) / brand, ignore_errors=True)
+
     # --- settings ---------------------------------------------------------------------------------
-    def settings(self, owner: str) -> dict:
+    def settings(self, owner: str, brand: str | None = None) -> dict:
         try:
-            raw = json.loads((self._dir(owner) / "settings.json").read_text("utf-8"))
+            raw = json.loads((self._dir(owner, brand) / "settings.json").read_text("utf-8"))
         except (OSError, ValueError):
             raw = {}
         out = dict(DEFAULTS)
@@ -96,8 +221,8 @@ class BrandStore:
                 out[k] = v
         return out
 
-    def set_settings(self, owner: str, changes: dict) -> dict:
-        cur = self.settings(owner)
+    def set_settings(self, owner: str, changes: dict, brand: str | None = None) -> dict:
+        cur = self.settings(owner, brand)
         for k, v in changes.items():
             if k not in DEFAULTS:
                 raise BrandError("Unknown setting.")
@@ -113,6 +238,20 @@ class BrandStore:
             elif k == "music_track":
                 if not (isinstance(v, str) and (v == "" or v in library())):
                     raise BrandError("Choose one of the listed tracks, or your own upload.")
+            elif k in ("speaker_name", "speaker_title"):
+                if not isinstance(v, str) or len(v.strip()) > 60 or any(ord(c) < 32 for c in v):
+                    raise BrandError("A name or role is at most 60 characters.")
+                v = v.strip()
+            elif k in ("caption_color", "caption_highlight"):
+                if not (isinstance(v, str) and (v == "" or _HEX.match(v))):
+                    raise BrandError("Colours look like #RRGGBB (or empty for the default).")
+            elif k == "caption_font":
+                from .. import fonts
+                if not (isinstance(v, str) and (v == "" or v in fonts.KNOWN)):
+                    raise BrandError("Choose one of the listed fonts, or the default.")
+            elif k == "caption_animation":
+                if v not in ("",) + CAPTION_ANIMATIONS:
+                    raise BrandError("Choose pop, fade, slide or karaoke (or the default).")
             elif k == "logo_position":
                 if v not in POSITIONS:
                     raise BrandError("Choose a corner: tl, tr, bl or br.")
@@ -122,7 +261,7 @@ class BrandStore:
             elif not (isinstance(v, str) and _HEX.match(v)):
                 raise BrandError("Colours look like #RRGGBB.")
             cur[k] = v
-        d = self._dir(owner)
+        d = self._dir(owner, brand)
         d.mkdir(parents=True, exist_ok=True)
         tmp = d / "settings.tmp"
         tmp.write_text(json.dumps(cur), "utf-8")
@@ -130,15 +269,15 @@ class BrandStore:
         return cur
 
     # --- files ------------------------------------------------------------------------------------
-    def logo_path(self, owner: str) -> Path | None:
-        return next((p for p in sorted(self._dir(owner).glob("logo.*")) if p.suffix in (".png", ".jpg", ".webp")), None) \
-            if self._dir(owner).is_dir() else None
+    def logo_path(self, owner: str, brand: str | None = None) -> Path | None:
+        return next((p for p in sorted(self._dir(owner, brand).glob("logo.*")) if p.suffix in (".png", ".jpg", ".webp")), None) \
+            if self._dir(owner, brand).is_dir() else None
 
-    def outro_path(self, owner: str) -> Path | None:
-        p = self._dir(owner) / "outro.mp4"
+    def outro_path(self, owner: str, brand: str | None = None) -> Path | None:
+        p = self._dir(owner, brand) / "outro.mp4"
         return p if p.is_file() else None
 
-    def put_logo(self, owner: str, data: bytes) -> dict:
+    def put_logo(self, owner: str, data: bytes, brand: str | None = None) -> dict:
         if not data:
             raise BrandError("That file is empty.")
         if len(data) > MAX_LOGO_BYTES:
@@ -146,7 +285,7 @@ class BrandStore:
         suffix = sniff_image(data[:16])
         if suffix is None:
             raise BrandError("Upload a PNG, JPEG or WebP logo. SVG files are not accepted.")
-        d = self._dir(owner)
+        d = self._dir(owner, brand)
         d.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=d) as tmp:
             probe = Path(tmp) / f"in{suffix}"
@@ -158,18 +297,18 @@ class BrandStore:
                 for old in d.glob("logo.*"):
                     old.unlink()
                 shutil.move(str(probe), d / f"logo{suffix}")
-        return self.describe(owner)
+        return self.describe(owner, brand)
 
-    def uploaded_music(self, owner: str) -> Path | None:
-        p = self._dir(owner) / "music.m4a"
+    def uploaded_music(self, owner: str, brand: str | None = None) -> Path | None:
+        p = self._dir(owner, brand) / "music.m4a"
         return p if p.is_file() else None
 
-    def music_path(self, owner: str) -> Path | None:
+    def music_path(self, owner: str, brand: str | None = None) -> Path | None:
         """The track a job would use: the built-in one the brand chose, else its own upload (``music_track`` "" = the upload)."""
-        chosen = self.settings(owner).get("music_track", "")
-        return (track_path(chosen) if chosen else None) or self.uploaded_music(owner)
+        chosen = self.settings(owner, brand).get("music_track", "")
+        return (track_path(chosen) if chosen else None) or self.uploaded_music(owner, brand)
 
-    def put_music(self, owner: str, source: Path) -> dict:
+    def put_music(self, owner: str, source: Path, brand: str | None = None) -> dict:
         """``source`` is an uploaded audio file already on disk (the caller capped its size). Re-encoded to one canonical stereo AAC file, without
         its tags or cover art: what is stored is what we made. The person is responsible for the right to use the track."""
         if source.stat().st_size > MAX_MUSIC_BYTES:
@@ -179,7 +318,7 @@ class BrandStore:
             raise BrandError("That file has no sound.")
         if not MIN_MUSIC_SECONDS <= info["duration"] <= MAX_MUSIC_SECONDS:
             raise BrandError(f"The music must be between {MIN_MUSIC_SECONDS:.0f} seconds and {MAX_MUSIC_SECONDS / 60:.0f} minutes long.")
-        d = self._dir(owner)
+        d = self._dir(owner, brand)
         d.mkdir(parents=True, exist_ok=True)
         out = d / "music.new.m4a"
         r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(source), "-vn", "-map", "0:a:0", "-map_metadata", "-1", "-ac", "2", "-ar", "48000",
@@ -189,9 +328,9 @@ class BrandStore:
             raise BrandError("That audio could not be converted. Try an MP3 or an M4A.")
         with self._lock:
             os.replace(out, d / "music.m4a")
-        return self.describe(owner)
+        return self.describe(owner, brand)
 
-    def put_outro(self, owner: str, source: Path) -> dict:
+    def put_outro(self, owner: str, source: Path, brand: str | None = None) -> dict:
         """``source`` is an uploaded file already on disk (the caller capped its size). Re-encoded to 1080x1920/30 fps."""
         if source.stat().st_size > MAX_OUTRO_BYTES:
             raise BrandError(f"The ending video can be at most {MAX_OUTRO_BYTES // (1024 * 1024)} MB.")
@@ -200,7 +339,7 @@ class BrandStore:
             raise BrandError("That file has no picture.")
         if not 0.5 <= info["duration"] <= MAX_OUTRO_SECONDS:
             raise BrandError(f"The ending video must be between 0.5 and {MAX_OUTRO_SECONDS:.0f} seconds.")
-        d = self._dir(owner)
+        d = self._dir(owner, brand)
         d.mkdir(parents=True, exist_ok=True)
         out = d / "outro.new.mp4"
         norm = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,format=yuv420p"
@@ -215,10 +354,10 @@ class BrandStore:
             raise BrandError("That video could not be converted. Try an MP4.")
         with self._lock:
             os.replace(out, d / "outro.mp4")
-        return self.describe(owner)
+        return self.describe(owner, brand)
 
-    def delete(self, owner: str, what: str) -> dict:
-        d = self._dir(owner)
+    def delete(self, owner: str, what: str, brand: str | None = None) -> dict:
+        d = self._dir(owner, brand)
         with self._lock:
             if what == "logo":
                 for p in d.glob("logo.*"):
@@ -229,30 +368,36 @@ class BrandStore:
                 (d / "music.m4a").unlink(missing_ok=True)       # the built-in tracks are not the person's to delete: choose another or none
             else:
                 raise BrandError("Unknown item.")
-        return self.describe(owner)
+        return self.describe(owner, brand)
 
     def delete_all(self, owner: str) -> None:
         """Account erasure."""
-        shutil.rmtree(self._dir(owner), ignore_errors=True)
+        shutil.rmtree(self._owner_dir(owner), ignore_errors=True)
 
     # --- views ------------------------------------------------------------------------------------
-    def describe(self, owner: str) -> dict:
-        s = self.settings(owner)
-        outro = self.outro_path(owner)
-        music = self.music_path(owner)
+    def describe(self, owner: str, brand: str | None = None) -> dict:
+        s = self.settings(owner, brand)
+        outro = self.outro_path(owner, brand)
+        music = self.music_path(owner, brand)
         lib = library()
         chosen = s.get("music_track", "")
         name = lib[chosen]["title"] if chosen in lib else ("Your upload" if music else "")
-        return {"logo": self.logo_path(owner) is not None, "outro": outro is not None, "music": music is not None,
+        reg = self._registry(owner)
+        bid = brand or reg["default"]
+        return {"id": bid, "name": next((b["name"] for b in reg["brands"] if b["id"] == bid), ""), "is_default": bid == reg["default"], "brands": self.list(owner),
+                "logo": self.logo_path(owner, brand) is not None, "outro": outro is not None, "music": music is not None,
                 "music_seconds": round(probe_media(music)["duration"], 1) if music else 0, "music_name": name,
-                "uploaded_music": self.uploaded_music(owner) is not None,
+                "uploaded_music": self.uploaded_music(owner, brand) is not None,
                 "tracks": [{"id": k, "title": v.get("title", k), "mood": v.get("mood", ""), "seconds": v.get("seconds", 0)} for k, v in sorted(lib.items())],
-                "outro_seconds": round(probe_media(outro)["duration"], 1) if outro else 0, "settings": s}
+                "outro_seconds": round(probe_media(outro)["duration"], 1) if outro else 0, "settings": s,
+                "fonts": sorted(__import__("clipcrow.fonts", fromlist=["KNOWN"]).KNOWN), "animations": list(CAPTION_ANIMATIONS),
+                "caption_base": {"color": CaptionStyle().color, "highlight": CaptionStyle().highlight_color}}
 
-    def kit(self, owner: str) -> BrandKit:
-        s = self.settings(owner)
-        return BrandKit(logo=self.logo_path(owner), outro=self.outro_path(owner), music=self.music_path(owner), logo_position=s["logo_position"],
+    def kit(self, owner: str, brand: str | None = None) -> BrandKit:
+        s = self.settings(owner, brand)
+        return BrandKit(logo=self.logo_path(owner, brand), outro=self.outro_path(owner, brand), music=self.music_path(owner, brand), logo_position=s["logo_position"],
                         logo_size_pct=s["logo_size_pct"], logo_opacity=float(s["logo_opacity"]), logo_margin_px=s["logo_margin_px"],
                         cover_ms=s["cover_ms"], cover_background=s["cover_background"], cover_color=s["cover_color"],
                         cover_accent=s["cover_accent"], cover_bg_color=s["cover_bg_color"],
-                        outro_max_seconds=float(s["outro_max_seconds"]), outro_gap_ms=int(s["outro_gap_ms"]))
+                        outro_max_seconds=float(s["outro_max_seconds"]), outro_gap_ms=int(s["outro_gap_ms"]),
+                        captions=caption_defaults(s), speaker_name=s["speaker_name"], speaker_title=s["speaker_title"])

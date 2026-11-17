@@ -72,6 +72,15 @@ class SpeakerChoice(BaseModel):
     voices: dict[str, Optional[int]] = Field(max_length=30)     # voice number -> person (1 = first from the left), null = off screen
 
 
+class BrandName(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+
+
+class BrandPatch(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    default: bool = False
+
+
 class CleanupReview(BaseModel):
     applied: list[int] = Field(max_length=2000)             # the numbers of the cuts that must be cut (all the others stay in)
 
@@ -625,12 +634,22 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             if not (_opt_int(o.get("min_clip")) or _opt_int(o.get("max_clip"))):      # an explicit clip length from the person wins
                 params.min_clip, params.max_clip = st.min_clip, st.max_clip
             params.style, params.style_name = st, rec.name
-        if params.logo and brands.logo_path(owner) is None:
-            raise HTTPException(422, "Upload a logo on the Brand page first, or turn the logo off.")
-        if params.music and brands.music_path(owner) is None:
-            raise HTTPException(422, "Upload a music track on the Brand page first, or turn the music off.")
-        if params.outro and brands.outro_path(owner) is None:
-            raise HTTPException(422, "Upload an ending video on the Brand page first, or turn it off.")
+        want = str(o.get("brand") or "").strip()
+        if want and not brands.has(owner, want):
+            raise HTTPException(422, "That brand does not exist any more. Choose another.")
+        bid = want or brands.default_id(owner)
+        params.brand = bid                                      # fixed now: changing the default brand later never moves this job
+        if params.logo and brands.logo_path(owner, bid) is None:
+            raise HTTPException(422, "Upload a logo for this brand on the Brand page first, or turn the logo off.")
+        if params.music and brands.music_path(owner, bid) is None:
+            raise HTTPException(422, "Upload a music track for this brand on the Brand page first, or turn the music off.")
+        if params.outro and brands.outro_path(owner, bid) is None:
+            raise HTTPException(422, "Upload an ending video for this brand on the Brand page first, or turn it off.")
+        bs = brands.settings(owner, bid)
+        if not params.speaker_name and bs.get("speaker_name"):  # the brand's own speaker unless the job names someone
+            params.speaker_name = bs["speaker_name"]
+            if not params.speaker_title:
+                params.speaker_title = bs.get("speaker_title", "")
         return params
 
     # --- the person's own pictures for an explainer (the model looks at them and places them) -----------------------
@@ -803,7 +822,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          explainer: Optional[str] = Form(None), links: Optional[str] = Form(None), pictures_ids: Optional[str] = Form(None, alias="pictures"),
                          ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
                          logo: Optional[str] = Form(None), outro: Optional[str] = Form(None), sounds: Optional[str] = Form(None), music: Optional[str] = Form(None), transition: Optional[str] = Form(None),
-                         style: Optional[str] = Form(None)) -> dict:
+                         style: Optional[str] = Form(None), brand: Optional[str] = Form(None)) -> dict:
         if rights.lower() not in ("1", "true", "on", "yes"):
             raise HTTPException(400, "Confirm that you own this video or have the rights to process it.")
         declared = int(request.headers.get("content-length") or 0)
@@ -812,7 +831,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
                                    speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, clean_take=clean_take, fresh_transcript=fresh_transcript, whole=whole,
                                    immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, outro=outro, sounds=sounds, music=music, transition=transition,
-                                   style=style),
+                                   style=style, brand=brand),
                               brand_owner(request))
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in VIDEO_SUFFIXES:
@@ -1207,29 +1226,75 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return {"ok": hub.finish(task_id, body.worker, result={"language": body.language, "engine": body.engine, "words": [w.model_dump() for w in body.words]})}
 
     # --- the brand kit: logo, ending video, how the cover and logo look ----------------------------------------
+    def brand_q(request: Request) -> Optional[str]:
+        """The brand a request is about (``?brand=<id>``), else None for the default one. Someone else's brand is simply not there."""
+        bid = request.query_params.get("brand")
+        if not bid:
+            return None
+        if not brands.has(brand_owner(request), bid):
+            raise HTTPException(404, "No such brand.")
+        return bid
+
+    @app.get("/api/brands", dependencies=[Depends(authed)])
+    def brands_list(request: Request) -> list[dict]:
+        return brands.list(brand_owner(request))
+
+    @app.post("/api/brands", dependencies=[Depends(authed)], status_code=201)
+    def brands_create(request: Request, body: BrandName) -> dict:
+        try:
+            return brands.create(brand_owner(request), body.name)
+        except BrandError as e:
+            raise HTTPException(422, str(e))
+
+    @app.put("/api/brands/{brand_id}", dependencies=[Depends(authed)])
+    def brands_update(brand_id: str, request: Request, body: BrandPatch) -> list[dict]:
+        owner = brand_owner(request)
+        if not brands.has(owner, brand_id):
+            raise HTTPException(404, "No such brand.")
+        try:
+            if body.name is not None:
+                brands.rename(owner, brand_id, body.name)
+            if body.default:
+                brands.set_default(owner, brand_id)
+        except BrandError as e:
+            raise HTTPException(422, str(e))
+        return brands.list(owner)
+
+    @app.delete("/api/brands/{brand_id}", dependencies=[Depends(authed)])
+    def brands_delete(brand_id: str, request: Request) -> list[dict]:
+        owner = brand_owner(request)
+        if not brands.has(owner, brand_id):
+            raise HTTPException(404, "No such brand.")
+        try:
+            brands.remove(owner, brand_id)
+        except BrandError as e:
+            raise HTTPException(422, str(e))
+        return brands.list(owner)
+
     @app.get("/api/brand", dependencies=[Depends(authed)])
     def brand_get(request: Request) -> dict:
-        return brands.describe(brand_owner(request))
+        return brands.describe(brand_owner(request), brand_q(request))
 
     @app.put("/api/brand", dependencies=[Depends(authed)])
     def brand_put(request: Request, body: dict = Body(...)) -> dict:
         try:
-            brands.set_settings(brand_owner(request), body)
+            brands.set_settings(brand_owner(request), body, brand_q(request))
         except BrandError as e:
             raise HTTPException(422, str(e))
-        return brands.describe(brand_owner(request))
+        return brands.describe(brand_owner(request), brand_q(request))
 
     @app.post("/api/brand/logo", dependencies=[Depends(authed)])
     async def brand_logo(request: Request, file: UploadFile = File(...)) -> dict:
         data = await file.read(MAX_LOGO_BYTES + 1)
         try:
-            return await asyncio.to_thread(brands.put_logo, brand_owner(request), data)
+            return await asyncio.to_thread(brands.put_logo, brand_owner(request), data, brand_q(request))
         except BrandError as e:
             raise HTTPException(422, str(e))
 
     @app.post("/api/brand/outro", dependencies=[Depends(authed)])
     async def brand_outro(request: Request, file: UploadFile = File(...)) -> dict:
         owner = brand_owner(request)
+        bq = brand_q(request)
         with tempfile.TemporaryDirectory(dir=data_dir) as tmp:
             raw = Path(tmp) / "in"
             size = 0
@@ -1240,13 +1305,14 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                         raise HTTPException(413, f"The ending video can be at most {MAX_OUTRO_BYTES // (1024 * 1024)} MB.")
                     f.write(chunk)
             try:
-                return await asyncio.to_thread(brands.put_outro, owner, raw)
+                return await asyncio.to_thread(brands.put_outro, owner, raw, bq)
             except BrandError as e:
                 raise HTTPException(422, str(e))
 
     @app.post("/api/brand/music", dependencies=[Depends(authed)])
     async def brand_music(request: Request, file: UploadFile = File(...)) -> dict:
         owner = brand_owner(request)
+        bq = brand_q(request)
         with tempfile.TemporaryDirectory(dir=data_dir) as tmp:
             raw = Path(tmp) / "in"
             size = 0
@@ -1257,13 +1323,13 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                         raise HTTPException(413, f"The music can be at most {MAX_MUSIC_BYTES // (1024 * 1024)} MB.")
                     f.write(chunk)
             try:
-                return await asyncio.to_thread(brands.put_music, owner, raw)
+                return await asyncio.to_thread(brands.put_music, owner, raw, bq)
             except BrandError as e:
                 raise HTTPException(422, str(e))
 
     @app.get("/api/brand/music/file", dependencies=[Depends(authed)])
     def brand_music_file(request: Request):
-        path = brands.music_path(brand_owner(request))
+        path = brands.music_path(brand_owner(request), brand_q(request))
         if path is None:
             raise HTTPException(404, "No music yet.")
         return FileResponse(path, media_type="audio/mpeg" if path.suffix == ".mp3" else "audio/mp4", headers={"Cache-Control": "no-cache"})
@@ -1278,13 +1344,13 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     @app.delete("/api/brand/{what}", dependencies=[Depends(authed)])
     def brand_delete(what: str, request: Request) -> dict:
         try:
-            return brands.delete(brand_owner(request), what)
+            return brands.delete(brand_owner(request), what, brand_q(request))
         except BrandError as e:
             raise HTTPException(404, str(e))
 
     @app.get("/api/brand/logo/file", dependencies=[Depends(authed)])
     def brand_logo_file(request: Request):
-        path = brands.logo_path(brand_owner(request))
+        path = brands.logo_path(brand_owner(request), brand_q(request))
         if path is None:
             raise HTTPException(404, "No logo yet.")
         return FileResponse(path, media_type={".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}[path.suffix],
@@ -1292,7 +1358,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     @app.get("/api/brand/outro/file", dependencies=[Depends(authed)])
     def brand_outro_file(request: Request):
-        path = brands.outro_path(brand_owner(request))
+        path = brands.outro_path(brand_owner(request), brand_q(request))
         if path is None:
             raise HTTPException(404, "No ending video yet.")
         return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-cache"})

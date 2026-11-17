@@ -531,7 +531,7 @@ async function newJobView() {
     const options = {
       style: $('style').value,
       language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
-      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, clean_take: $('clean_take').value, fresh_transcript: $('fresh_transcript').checked ? 'true' : '', speaker_name: $('speaker').value, speaker_title: $('role').value,
+      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, clean_take: $('clean_take').value, fresh_transcript: $('fresh_transcript').checked ? 'true' : '', brand: $('brand') ? $('brand').value : '', speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', pictures: pics.ids(), ai_images: $('ai_images').checked ? 'true' : '',
       cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '', music: $('music').checked ? 'true' : '', transition: $('transition').value,
@@ -613,18 +613,21 @@ async function newJobView() {
       el('label', { class: 'check', for: 'sounds' }, el('input', { type: 'checkbox', id: 'sounds' }),
         el('span', {}, el('strong', { text: 'Quiet sound cues' }), el('br'),
           el('span', { class: 'muted', text: 'A soft pop, whoosh or tick under the speech where a title, card, picture or push-in appears, never on every word. Switch it off per clip when you edit.' }))),
+      brand.brands && brand.brands.length > 1 && el('div', {}, el('label', { class: 'field', for: 'brand', text: 'Brand' }),
+        el('select', { id: 'brand' }, brand.brands.map((b) => el('option', { value: b.id, text: b.name + (b.default ? ' (default)' : '') }))),
+        el('div', { class: 'hint', text: 'Logo, ending video, music, look, speaker and captions come from this brand.' })),
       el('label', { class: 'check', for: 'cover' }, el('input', { type: 'checkbox', id: 'cover', checked: !!brand.settings.default_cover }),
         el('span', {}, el('strong', { text: 'Cover title on the first frames' }), el('br'),
           el('span', { class: 'muted', text: 'A bold title (the hook line) for the first quarter-second, so the poster frame says what the clip is about. You also get it as a picture. Platforms choose their own thumbnail, so this raises the odds, it cannot force it.' }))),
       el('label', { class: brand.logo ? 'check' : 'check muted', for: 'logo' }, el('input', { type: 'checkbox', id: 'logo', disabled: !brand.logo, checked: brand.logo && !!brand.settings.default_logo }),
         el('span', {}, el('strong', { text: 'Logo in a corner' }), el('br'),
-          el('span', { class: 'muted' }, brand.logo ? 'Your logo, from the Brand page.' : ['No logo yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
+          el('span', { class: 'muted', id: 'logo-hint' }, brand.logo ? 'Your logo, from the Brand page.' : ['No logo yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
       el('label', { class: brand.outro ? 'check' : 'check muted', for: 'outro' }, el('input', { type: 'checkbox', id: 'outro', disabled: !brand.outro, checked: brand.outro && !!brand.settings.default_outro }),
         el('span', {}, el('strong', { text: 'Ending video after each clip' }), el('br'),
-          el('span', { class: 'muted' }, brand.outro ? `Your branding video (${brand.outro_seconds} s), added at the end.` : ['No ending video yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
+          el('span', { class: 'muted', id: 'outro-hint' }, brand.outro ? `Your branding video (${brand.outro_seconds} s), added at the end.` : ['No ending video yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
       el('label', { class: brand.music ? 'check' : 'check muted', for: 'music' }, el('input', { type: 'checkbox', id: 'music', disabled: !brand.music, checked: brand.music && !!brand.settings.default_music }),
         el('span', {}, el('strong', { text: 'Background music (ducks under the speech)' }), el('br'),
-          el('span', { class: 'muted' }, brand.music ? `${brand.music_name} (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music chosen. ', el('a', { href: '#/brand', text: 'Pick a track or add your own on the Brand page' }), '.']))),
+          el('span', { class: 'muted', id: 'music-hint' }, brand.music ? `${brand.music_name} (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music chosen. ', el('a', { href: '#/brand', text: 'Pick a track or add your own on the Brand page' }), '.']))),
       el('label', { class: 'check', for: 'clean' }, el('input', { type: 'checkbox', id: 'clean' }),
         el('span', {}, el('strong', { text: 'Raw recording: cut fumbles and dead air' }), el('br'),
           el('span', { class: 'muted', text: 'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.' }))),
@@ -656,6 +659,20 @@ async function newJobView() {
     else if (!$('clean').checked && !$('min_clip').value.trim() && !$('max_clip').value.trim()) { $('min_clip').value = '15'; $('max_clip').value = '60'; lengthChanged(); }
   });
   $('explainer').addEventListener('change', () => { $('explainer-opts').hidden = !$('explainer').checked; });
+  const applyBrand = (b) => {                                                                      // the rows that depend on the chosen brand
+    const set = (id, have, on, hint) => { const box = $(id); box.disabled = !have; box.checked = have && !!on; box.closest('label').className = have ? 'check' : 'check muted'; $(id + '-hint').replaceChildren(...[].concat(hint)); };
+    const link = (t) => [t, el('a', { href: '#/brand', text: 'Open the Brand page' }), '.'];
+    $('cover').checked = !!b.settings.default_cover;
+    set('logo', b.logo, b.settings.default_logo, b.logo ? 'Your logo, from the Brand page.' : link('No logo for this brand. '));
+    set('outro', b.outro, b.settings.default_outro, b.outro ? `Your branding video (${b.outro_seconds} s), added at the end.` : link('No ending video for this brand. '));
+    set('music', b.music, b.settings.default_music, b.music ? `${b.music_name} (${b.music_seconds} s), kept below the voice and lowered further while someone talks.` : link('No music for this brand. '));
+    $('speaker').placeholder = b.settings.speaker_name || ''; $('role').placeholder = b.settings.speaker_title || '';
+  };
+  if ($('brand')) {
+    $('brand').value = brand.id;
+    $('brand').addEventListener('change', async () => { try { applyBrand(await api(`/brand?brand=${$('brand').value}`)); } catch (e) { if (e instanceof SignInNeeded) route(); } });
+  }
+  applyBrand(brand);
   $('style').addEventListener('change', lengthChanged);                                              // the style sets the clip length
 
   const aside = el('div', { class: 'aside' },
@@ -1237,8 +1254,11 @@ async function clipEditorView(jobId, clipId) {
 
 // ---- brand kit -------------------------------------------------------------------------------------
 
-async function brandView() {
-  let brand = await api('/brand');
+async function brandView(bid) {
+  let brand;
+  try { brand = await api(bid ? `/brand?brand=${bid}` : '/brand'); } catch (e) { if (e instanceof SignInNeeded) throw e; location.hash = '#/brand'; return; }
+  bid = brand.id;
+  const q = `?brand=${bid}`;
   const s = brand.settings;
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
   const note = el('div', { class: 'small', role: 'status', 'aria-live': 'polite' });
@@ -1251,18 +1271,38 @@ async function brandView() {
     const fd = new FormData();
     fd.append('file', input.files[0]);
     note.textContent = 'Uploading…';
-    try { await api(path, { method: 'POST', body: fd }); await route(); } catch (e) { note.textContent = ''; fail(e); }
+    try { await api(path + q, { method: 'POST', body: fd }); await route(); } catch (e) { note.textContent = ''; fail(e); }
   }
   async function remove(what) {
     if (!confirm('Remove it? Clips already made keep their copy.')) return;
-    try { await api(`/brand/${what}`, { method: 'DELETE' }); await route(); } catch (e) { fail(e); }
+    try { await api(`/brand/${what}${q}`, { method: 'DELETE' }); await route(); } catch (e) { fail(e); }
   }
+
+  const switcher = el('section', { class: 'card stack' },
+    el('div', { class: 'row' },
+      el('div', {}, el('label', { class: 'field', for: 'brand_pick', text: 'Brand' }),
+        (() => { const sel = el('select', { id: 'brand_pick' }, brand.brands.map((b) => el('option', { value: b.id, text: b.name + (b.default ? ' (default)' : '') }))); sel.value = bid; sel.onchange = () => { location.hash = `#/brand/${sel.value}`; }; return sel; })()),
+      el('button', { class: 'btn', type: 'button', text: 'New brand', onclick: async () => {
+        const name = prompt('Name of the new brand (up to 40 characters)'); if (!name) return;
+        try { const b = await api('/brands', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); location.hash = `#/brand/${b.id}`; } catch (e) { fail(e); }
+      } }),
+      el('button', { class: 'btn', type: 'button', text: 'Rename', onclick: async () => {
+        const name = prompt('New name', brand.name); if (!name) return;
+        try { await api(`/brands/${bid}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); await route(); } catch (e) { fail(e); }
+      } }),
+      !brand.is_default && el('button', { class: 'btn', type: 'button', text: 'Make default', onclick: async () => {
+        try { await api(`/brands/${bid}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ default: true }) }); await route(); } catch (e) { fail(e); }
+      } }),
+      brand.brands.length > 1 && el('button', { class: 'btn', type: 'button', text: 'Delete brand', onclick: async () => {
+        if (!confirm('Delete this brand and its files? Clips already made keep their copy.')) return;
+        try { await api(`/brands/${bid}`, { method: 'DELETE' }); location.hash = '#/brand'; await route(); } catch (e) { fail(e); }
+      } })));
 
   const logoIn = el('input', { type: 'file', id: 'logo_file', accept: 'image/png,image/jpeg,image/webp' });
   const outroIn = el('input', { type: 'file', id: 'outro_file', accept: 'video/*' });
   const musicIn = el('input', { type: 'file', id: 'music_file', accept: 'audio/*' });
   const logoBox = el('section', { class: 'card stack' }, el('h2', { text: 'Logo' }),
-    brand.logo ? el('img', { src: `/api/brand/logo/file${stamp()}`, alt: 'Your logo', class: 'logo-preview' })
+    brand.logo ? el('img', { src: `/api/brand/logo/file${q}&v=${Date.now()}`, alt: 'Your logo', class: 'logo-preview' })
       : el('p', { class: 'small muted', text: 'No logo yet.' }),
     el('div', {}, el('label', { class: 'field', for: 'logo_file' }, 'PNG, JPEG or WebP · up to 3 MB', tip('A transparent PNG looks best. SVG is not accepted.', 'the logo file')), logoIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.logo ? 'Replace logo' : 'Upload logo', onclick: () => send('/brand/logo', logoIn, 'a logo') }),
@@ -1271,21 +1311,21 @@ async function brandView() {
     .map(([v, t]) => el('option', { value: v, text: t })));
   trackSel.value = brand.settings.music_track || '';
   trackSel.addEventListener('change', async () => {
-    try { await api('/brand', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ music_track: trackSel.value }) }); await route(); } catch (e) { fail(e); }
+    try { await api('/brand' + q, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ music_track: trackSel.value }) }); await route(); } catch (e) { fail(e); }
   });
-  const previewSrc = brand.settings.music_track ? `/api/brand/tracks/${brand.settings.music_track}/file` : (brand.music ? `/api/brand/music/file${stamp()}` : '');
+  const previewSrc = brand.settings.music_track ? `/api/brand/tracks/${brand.settings.music_track}/file` : (brand.music ? `/api/brand/music/file${q}&v=${Date.now()}` : '');
   const musicBox = el('section', { class: 'card stack' }, el('h2', { text: 'Background music' }),
     el('div', {}, el('label', { class: 'field', for: 'music_track', text: 'Track' }), trackSel,
       el('div', { class: 'hint', text: 'The built-in tracks are instrumental and made for this app. Or add your own below.' })),
     previewSrc ? el('audio', { src: previewSrc, controls: true, preload: 'none', style: { width: '100%' }, 'aria-label': 'Preview of the chosen track' }) : el('p', { class: 'small muted', text: 'No music chosen.' }),
     el('div', {}, el('label', { class: 'field', for: 'music_file' }, 'Your own track · MP3, M4A or WAV, up to 30 MB', tip('5 seconds to 15 minutes. Only upload music you have the right to use in your videos: platforms can mute or claim music they recognise. It plays under the voice and is lowered further while someone talks.', 'your own music track')), musicIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.uploaded_music ? 'Replace my upload' : 'Upload music', onclick: async () => {
-      if (musicIn.files[0]) { try { await api('/brand', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ music_track: '' }) }); } catch (_) { /* the upload reports its own problem */ } }
+      if (musicIn.files[0]) { try { await api('/brand' + q, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ music_track: '' }) }); } catch (_) { /* the upload reports its own problem */ } }
       send('/brand/music', musicIn, 'a music file');
     } }),
       brand.uploaded_music && el('button', { class: 'btn', type: 'button', text: 'Remove my upload', onclick: () => remove('music') })));
   const outroBox = el('section', { class: 'card stack' }, el('h2', { text: 'Ending video' }),
-    brand.outro ? el('video', { src: `/api/brand/outro/file${stamp()}`, controls: true, playsinline: true, preload: 'metadata', style: { width: '180px' }, 'aria-label': 'Your ending video' })
+    brand.outro ? el('video', { src: `/api/brand/outro/file${q}&v=${Date.now()}`, controls: true, playsinline: true, preload: 'metadata', style: { width: '180px' }, 'aria-label': 'Your ending video' })
       : el('p', { class: 'small muted', text: 'No ending video yet.' }),
     el('div', {}, el('label', { class: 'field', for: 'outro_file' }, 'A short branding clip · up to 90 MB', tip('0.5 to 20 seconds. It is converted to a vertical 1080×1920 video.', 'the ending video file')), outroIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.outro ? 'Replace ending video' : 'Upload ending video', onclick: () => send('/brand/outro', outroIn, 'a video') }),
@@ -1315,6 +1355,21 @@ async function brandView() {
       color('cover_bg_color', 'Cover solid colour', s.cover_bg_color),
       num('outro_max_seconds', 'Use at most (seconds) of the ending video', 1, 30, 0.5, s.outro_max_seconds),
       num('outro_gap_ms', 'Pause before the ending video (ms, 0 = straight cut)', 0, 1500, 50, s.outro_gap_ms)),
+    el('h3', { text: 'Speaker' }),
+    el('div', { class: 'grid2', style: { marginTop: 0 } },
+      el('div', {}, el('label', { class: 'field', for: 'speaker_name', text: 'Name shown on every clip' }), (f.speaker_name = el('input', { id: 'speaker_name', maxlength: '60', value: s.speaker_name || '' }))),
+      el('div', {}, el('label', { class: 'field', for: 'speaker_title', text: 'Role' }), (f.speaker_title = el('input', { id: 'speaker_title', maxlength: '60', value: s.speaker_title || '' })))),
+    el('h3', { text: 'Captions' }),
+    el('div', { class: 'small muted' }, 'Used on new jobs unless you pick a reference style.', tip('Leave a field on “App default” to keep the built-in look. A style you choose on a job overrides these.', 'the caption defaults')),
+    el('div', { class: 'grid2', style: { marginTop: 0 } },
+      opt('caption_font', 'Font', [['', 'App default'], ...brand.fonts.map((x) => [x, x])], s.caption_font || ''),
+      opt('caption_animation', 'Animation', [['', 'App default'], ...brand.animations.map((x) => [x, x])], s.caption_animation || ''),
+      num('caption_words', 'Words per line (0 = default)', 0, 8, 1, s.caption_words || 0),
+      num('caption_top_px', 'Caption height from top (px, 0 = default)', 0, 1800, 10, s.caption_top_px || 0),
+      el('div', {}, el('label', { class: 'field', for: 'caption_color', text: 'Caption colour' }), (f.caption_color = el('input', { id: 'caption_color', type: 'color', value: s.caption_color || brand.caption_base.color })),
+        tick('caption_color_on', 'Use this colour', !!s.caption_color)),
+      el('div', {}, el('label', { class: 'field', for: 'caption_highlight', text: 'Highlight colour' }), (f.caption_highlight = el('input', { id: 'caption_highlight', type: 'color', value: s.caption_highlight || brand.caption_base.highlight })),
+        tick('caption_highlight_on', 'Use this colour', !!s.caption_highlight))),
     el('div', { class: 'stack' }, el('div', { class: 'small muted', text: 'Tick by default on a new job:' }),
       tick('default_cover', 'Cover title', s.default_cover), tick('default_logo', 'Logo', s.default_logo), tick('default_outro', 'Ending video', s.default_outro), tick('default_music', 'Background music', s.default_music)),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: async () => {
@@ -1323,13 +1378,17 @@ async function brandView() {
       const body = { logo_position: f.logo_position.value, logo_size_pct: num_('logo_size_pct'), logo_opacity: num_('logo_opacity'),
         logo_margin_px: num_('logo_margin_px'), cover_ms: num_('cover_ms'), cover_background: f.cover_background.value,
         cover_color: f.cover_color.value.toUpperCase(), cover_accent: f.cover_accent.value.toUpperCase(), cover_bg_color: f.cover_bg_color.value.toUpperCase(),
-        outro_max_seconds: num_('outro_max_seconds'), outro_gap_ms: num_('outro_gap_ms'), default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_outro: f.default_outro.checked, default_music: f.default_music.checked };
-      try { await api('/brand', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); note.textContent = 'Saved. New jobs use this.'; } catch (e) { fail(e); }
+        outro_max_seconds: num_('outro_max_seconds'), outro_gap_ms: num_('outro_gap_ms'),
+        speaker_name: f.speaker_name.value, speaker_title: f.speaker_title.value, caption_font: f.caption_font.value, caption_animation: f.caption_animation.value,
+        caption_words: num_('caption_words'), caption_top_px: num_('caption_top_px'),
+        caption_color: f.caption_color_on.checked ? f.caption_color.value.toUpperCase() : '', caption_highlight: f.caption_highlight_on.checked ? f.caption_highlight.value.toUpperCase() : '',
+        default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_outro: f.default_outro.checked, default_music: f.default_music.checked };
+      try { await api('/brand' + q, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); note.textContent = 'Saved. New jobs use this.'; } catch (e) { fail(e); }
     } })));
 
   app.replaceChildren(el('div', { class: 'stack' },
     el('div', {}, el('h1', { text: 'Brand' }), el('p', { class: 'small muted' }, 'Added to clips when you tick them on a new job.', tip('Clips already made keep the copy they were made with.', 'the brand page'))),
-    err, note, el('div', { class: 'pair' }, logoBox, outroBox), musicBox, look));
+    switcher, err, note, el('div', { class: 'pair' }, logoBox, outroBox), musicBox, look));
 }
 
 // ---- sharing ---------------------------------------------------------------------------------------
@@ -1567,14 +1626,14 @@ async function route() {
   const hash = location.hash || '#/';
   renderAcct();
   document.querySelectorAll('nav a').forEach((a) => {
-    const on = (a.dataset.nav === 'new' && (hash === '#/' || hash === '#' || hash === '#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs')) || (a.dataset.nav === 'brand' && hash === '#/brand') || (a.dataset.nav === 'styles' && hash === '#/styles');
+    const on = (a.dataset.nav === 'new' && (hash === '#/' || hash === '#' || hash === '#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs')) || (a.dataset.nav === 'brand' && hash.startsWith('#/brand')) || (a.dataset.nav === 'styles' && hash === '#/styles');
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   try {
     if (state.config.needs_login && !state.config.signed_in) return loginView();
     let m;
     if (hash === '#/' || hash === '#' || hash === '#/new') await newJobView();
-    else if (hash === '#/brand') await brandView();
+    else if ((m = hash.match(/^#\/brand(?:\/([a-f0-9]{12}))?$/))) await brandView(m[1]);
     else if (hash === '#/styles') { const v = await stylesView(); cleanup = v.cleanup; }
     else if (hash === '#/jobs') await jobsView();
     else if (hash === '#/account') await accountView();

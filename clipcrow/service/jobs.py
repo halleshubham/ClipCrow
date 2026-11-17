@@ -34,6 +34,7 @@ class _M(BaseModel):
 
 
 class Params(_M):
+    brand: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{12}$")     # which of the owner's brands this job uses (fixed when it is made, so a later change of default never moves it)
     language: Optional[str] = Field(default=None, pattern=r"^[a-z]{2,3}$")
     clips: Optional[int] = Field(default=None, ge=1, le=20)
     min_clip: int = Field(default=15, ge=5, le=900)

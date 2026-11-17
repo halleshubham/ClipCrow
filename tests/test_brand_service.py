@@ -82,7 +82,7 @@ def test_settings_are_validated(store):
 
 def test_a_corrupt_settings_file_falls_back_to_defaults(store):
     store.set_settings(OWNER, {"cover_ms": 400})
-    (store.root / OWNER / "settings.json").write_text('{"cover_ms": "soon", "logo_position": 7}')
+    (store._dir(OWNER) / "settings.json").write_text('{"cover_ms": "soon", "logo_position": 7}')
     assert store.settings(OWNER)["cover_ms"] == 250 and store.settings(OWNER)["logo_position"] == "tr"
 
 
@@ -152,7 +152,7 @@ def test_deleting_the_account_removes_the_brand_files(tmp_path):
     signup(c, "a@example.com")
     c.post("/api/brand/logo", files={"file": ("l.png", png(tmp_path / "l.png").read_bytes(), "image/png")})
     folders = [p for p in (tmp_path / "data" / "brand").iterdir()]
-    assert len(folders) == 1 and (folders[0] / "logo.png").is_file()
+    assert len(folders) == 1 and list(folders[0].rglob("logo.png"))   # the owner folder holds one folder per brand
     assert c.request("DELETE", "/api/account", json={"password": PW}).status_code == 200
     assert not folders[0].exists()
 
@@ -226,3 +226,63 @@ def test_a_rerender_moves_the_cover_png_beside_the_clip_and_drops_it_when_switch
     assert (tmp_path / "c1.cover.png").read_bytes() == b"png" and not list(tmp_path.glob("*.new.*"))
     pipelines.render_one(None, "without", "c1", out, tmp_path / "w", tmp_path, "g")
     assert not (tmp_path / "c1.cover.png").exists()
+
+
+# --- several brands per account ------------------------------------------------------------------------------------
+
+def test_an_account_can_hold_several_brands_each_with_its_own_files_and_settings(store, tmp_path):
+    first = store.default_id(OWNER)
+    second = store.create(OWNER, "Podcast")["id"]
+    store.put_logo(OWNER, png(tmp_path / "l.png").read_bytes(), second)
+    store.set_settings(OWNER, {"speaker_name": "Asha", "caption_color": "#00FF00"}, second)
+    assert store.logo_path(OWNER, first) is None and store.logo_path(OWNER, second) is not None
+    assert store.settings(OWNER, first)["speaker_name"] == "" and store.kit(OWNER, second).captions == {"color": "#00FF00"}
+    assert store.kit(OWNER, second).speaker_name == "Asha"
+    for bad in ("../x", "z" * 12, "0" * 12):
+        with pytest.raises(KeyError):
+            store.settings(OWNER, bad)
+    other = "b" * 32
+    with pytest.raises(KeyError):
+        store.settings(other, second)                                           # someone else's brand is simply not there
+
+
+def test_default_rename_remove_and_the_limit(store):
+    a = store.default_id(OWNER)
+    b = store.create(OWNER, "B")["id"]
+    store.set_default(OWNER, b)
+    assert store.default_id(OWNER) == b
+    store.rename(OWNER, a, "Main")
+    assert [x["name"] for x in store.list(OWNER)] == ["Main", "B"] or {x["name"] for x in store.list(OWNER)} == {"Main", "B"}
+    store.remove(OWNER, b)
+    assert store.default_id(OWNER) == a                                          # the default moves to a brand that is left
+    with pytest.raises(BrandError):
+        store.remove(OWNER, a)                                                   # the last one stays
+    for i in range(19):
+        store.create(OWNER, f"n{i}")
+    with pytest.raises(BrandError):
+        store.create(OWNER, "one too many")
+    with pytest.raises(BrandError):
+        store.rename(OWNER, a, "x" * 41)
+
+
+def test_caption_and_speaker_settings_are_validated(store):
+    for bad in ({"caption_color": "red"}, {"caption_font": "Nope Sans"}, {"caption_animation": "spin"}, {"caption_words": 99}, {"speaker_name": "x" * 61}):
+        with pytest.raises(BrandError):
+            store.set_settings(OWNER, bad)
+
+
+def test_a_job_keeps_the_brand_it_was_made_with_and_the_default_speaker(tmp_path, video_bytes):  # noqa: F811
+    c, app = client(tmp_path)
+    brands = c.get("/api/brands").json()
+    first = brands[0]["id"]
+    second = c.post("/api/brands", json={"name": "Second"}).json()["id"]
+    assert c.put(f"/api/brand?brand={second}", json={"speaker_name": "Meera", "speaker_title": "Host"}).json()["settings"]["speaker_name"] == "Meera"
+    assert c.get("/api/brand?brand=" + "0" * 12).status_code == 404
+    assert c.post("/api/jobs", data={"rights": "true", "brand": "0" * 12}, files={"file": ("a.mp4", video_bytes, "video/mp4")}).status_code == 422
+    job = wait(c, upload(c, video_bytes, brand=second).json()["id"])
+    assert job["status"] == "done", job["error"]
+    p = app.state.store.get(job["id"]).params
+    assert p.brand == second and p.speaker_name == "Meera"
+    c.put(f"/api/brands/{second}", json={"default": True})                       # a later change of default does not move the job
+    assert app.state.store.get(job["id"]).params.brand == second
+    assert c.delete(f"/api/brands/{first}").status_code == 200 and c.delete(f"/api/brands/{second}").status_code == 422
