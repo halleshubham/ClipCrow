@@ -180,13 +180,18 @@ def is_one_person(counts: list[int]) -> bool:
 
 # --- seats ----------------------------------------------------------------------------------
 
-def find_seats(video: str, duration: float, detector, *, check: Callable[[], None] = lambda: None) -> tuple[list[Seat], object]:
+def find_seats(video: str, duration: float, detector, *, check: Callable[[], None] = lambda: None,
+               say: Callable[[str], None] = lambda _m: None) -> tuple[list[Seat], object]:
     """The seats of a fixed shot: faces at ~1 frame a second over the whole video, chained into tracks by position. Returns the seats (left to right)
     and the frame where the most seats were visible together (for the picture the person labels voices on)."""
     rate = min(DISCOVERY_RATE, DISCOVERY_MAX / max(duration, 1.0))
     samples: list[Sample] = []
     best_frame, best_n, size = None, 0, None
+    quarter = 0
     for t, frame in read_frames(video, 0.0, duration, rate, check=check):
+        if duration > 120 and int(t * 4 / duration) > quarter:                            # a long video: say how far the search has got
+            quarter = int(t * 4 / duration)
+            say(f"looking for the people on screen: {int(t // 60)} of {int(duration // 60)} minutes")
         boxes = detector.detect(frame)
         size = (frame.shape[1], frame.shape[0])
         samples.append(Sample(t, boxes))
@@ -246,13 +251,17 @@ def _watch_windows(turns: list[vc.Turn]) -> list[tuple[float, float, int]]:
 
 
 def mouth_series(video: str, windows: list[tuple[float, float, int]], seats: list[Seat], detector, *,
-                 check: Callable[[], None] = lambda: None) -> tuple[list[tuple[int, int, float]], dict[int, tuple[int, int]]]:
+                 check: Callable[[], None] = lambda: None, say: Callable[[str], None] = lambda _m: None) -> tuple[list[tuple[int, int, float]], dict[int, tuple[int, int]]]:
     """Rows ``(voice, seat, activity)`` (how much a seat's mouth region changed between two frames 1/ACT_RATE s apart while a voice was heard) and, per seat,
     ``(frames it was in view, frames looked at)``."""
     import numpy as np
     rows: list[tuple[int, int, float]] = []
     seen: dict[int, list[int]] = {}
-    for t0, t1, v in windows:
+    quarter = 0
+    for k, (t0, t1, v) in enumerate(windows):
+        if len(windows) >= 8 and k * 4 // len(windows) > quarter:
+            quarter = k * 4 // len(windows)
+            say(f"matching voices to people: {k} of {len(windows)} stretches watched")
         prev: dict[int, object] = {}
         for _, frame in read_frames(video, t0, t1, ACT_RATE, check=check):
             h, w = frame.shape[:2]
@@ -340,7 +349,7 @@ def analyse(video: str | Path, *, detector=None, embedder=None, audio_loader: Ca
         say("one person on screen: nobody to tell apart")
         return SpeakerMap([], [], {}, {}, duration, {}, sig), None
     say("looking for the people on screen")
-    seats, frame = find_seats(video, duration, detector, check=check)
+    seats, frame = find_seats(video, duration, detector, check=check, say=say)
     sm = SpeakerMap(seats, [], {}, {}, duration, {}, sig, picture_t=(frame[2] if frame else None))
     if len(seats) >= 2:
         say(f"{len(seats)} people on screen")
@@ -358,7 +367,7 @@ def analyse(video: str | Path, *, detector=None, embedder=None, audio_loader: Ca
             voices = sorted({t.voice for t in sm.turns})
             if voices:
                 say(f"{len(voices)} voice(s) heard; matching each voice to a person")
-                rows, seen = mouth_series(video, _watch_windows(sm.turns), seats, detector, check=check)
+                rows, seen = mouth_series(video, _watch_windows(sm.turns), seats, detector, check=check, say=say)
                 sm.voice_seat, sm.lift = assign(rows, seen, voices, len(seats))
                 say("who is who: " + ", ".join(f"voice {v + 1} = person {s + 1}" if s is not None else f"voice {v + 1} = off screen" for v, s in sm.voice_seat.items()))
     return sm, frame

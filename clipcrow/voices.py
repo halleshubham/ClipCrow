@@ -175,10 +175,15 @@ def diarize(audio, embedder: Embedder, *, say: Callable[[str], None] = lambda _m
         return []
     say(f"listening for who speaks ({len(spans)} stretches of voice)")
     embs = []
+    quarter = 0
     for i in range(0, len(spans), 32):
         check()
         chunk = [audio[int(s * SAMPLE_RATE):int(e * SAMPLE_RATE)] for s, e in spans[i:i + 32]]
         embs.append(np.asarray(embedder.embed(chunk)))
+        done = min(len(spans), i + 32)
+        if done * 4 // len(spans) > quarter and done < len(spans):                       # a line at each quarter: a long wait is not a silent one
+            quarter = done * 4 // len(spans)
+            say(f"listening for who speaks: {done} of {len(spans)} stretches")
     emb = np.concatenate(embs)
     labels = cluster(emb, same=same)
     return turns_from(spans, labels, db, total)

@@ -334,3 +334,13 @@ def test_every_stage_records_how_long_it_took(tmp_path, video_bytes):
     job = wait(c, upload(c, video_bytes).json()["id"])
     done = [s for s in job["stages"] if s["state"] == "done"]
     assert done and all(s["seconds"] is not None and s["seconds"] >= 0 for s in done)
+
+
+def test_a_long_search_says_how_far_it_has_got():
+    audio = talk_audio([(200, 9), (None, 2), (400, 9), (None, 2), (200, 9)] * 3)             # ~90 s, ~60 voiced windows
+    said = []
+    voices.diarize(audio, ToneEmbedder(), say=said.append)
+    ticks = [m for m in said if " of " in m and "stretches" in m and "(" not in m]
+    assert 1 <= len(ticks) <= 3 and all(m.startswith("listening for who speaks: ") for m in ticks)       # at most one line per quarter, none at the very end
+    counts = [int(m.split(": ")[1].split(" of ")[0]) for m in ticks]
+    assert counts == sorted(counts) and counts[-1] < int(ticks[-1].split(" of ")[1].split(" ")[0])

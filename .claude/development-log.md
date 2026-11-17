@@ -3,6 +3,10 @@
 What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
+## 2026-11-17 (progress while telling people apart)
+- The three slow steps of the speakers search now log a line at each quarter ("looking for the people on screen: 20 of 53 minutes", "listening for who speaks: 450 of 900 stretches", "matching voices to people: ..."), so
+  a long video is no longer silent for many minutes (job ba56794375f8, a 53-minute video, showed one line for a long time).
+
 ## 2026-11-17 (the speakers task on the GPU worker)
 - Built on the owner's request although the measurement said ~2 min saved: `speakers` task kind, `SpeakersIn` validation, `RemoteSpeakers` with server fallback, `worker.handle_speakers`, a GPU-capable
   `WavLMEmbedder(device="auto")`, `seats.analyse` split from caching. Workers need the new image AND a server that knows the kind (deploy the server first). Details and the CPU-torch limit: `docs/plan-speakers-on-worker.md`.
