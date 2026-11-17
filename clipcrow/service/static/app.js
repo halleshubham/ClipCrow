@@ -412,8 +412,16 @@ async function newJobView() {
     if (!file) return fail('Choose a video first.');
     if (file.size > c.max_upload_mb * 1048576) return fail(`That file is larger than the ${c.max_upload_mb} MB limit.`);
     if (!rights.checked) return fail('Confirm that you own this video or have the rights to process it.');
-    const whole = $('length').value === 'whole';
-    const [minClip, maxClip] = whole || $('style').value ? ['', ''] : $('length').value.split('-');   // a style sets the clip length
+    const lo = $('min_clip').value.trim(), hi = $('max_clip').value.trim();
+    if ((lo && !(Number(lo) >= 5)) || (hi && !(Number(hi) >= 10))) return fail('The shortest reel is at least 5 seconds and the longest at least 10.');
+    if (lo && hi && Number(lo) >= Number(hi)) return fail('The shortest reel must be shorter than the longest.');
+    if (Number(lo) > 900 || Number(hi) > 900) return fail('A reel can be at most 15 minutes (900 seconds).');
+    const whole = !lo && !hi && !$('style').value;                       // no length asked for: the whole video is one reel
+    // only one end given: the other follows from it
+    let minClip = lo, maxClip = hi;
+    if (lo && !hi) maxClip = String(Math.min(900, Math.max(Number(lo) * 2, Number(lo) + 30)));
+    if (hi && !lo) minClip = String(Math.max(5, Math.min(Number(hi) - 5, Math.round(Number(hi) / 3))));
+    if ($('style').value) { minClip = ''; maxClip = ''; }               // a style sets the clip length
     const options = {
       style: $('style').value,
       language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
@@ -460,8 +468,12 @@ async function newJobView() {
       el('div', {}, el('label', { class: 'field', for: 'clips', text: 'Clips to make' }),
         el('input', { id: 'clips', type: 'number', min: '1', max: '20', placeholder: 'auto' }),
         el('div', { class: 'hint', text: 'Leave empty for about one per two minutes of video.' })),
-      select('length', 'Clip length', [['15-60', '15–60 seconds'], ['30-90', '30–90 seconds'], ['90-180', '1½–3 minutes'], ['180-300', '3–5 minutes'], ['300-480', '5–8 minutes'], ['whole', 'The whole video as one reel (up to 15 minutes)']],
-        'Longer lengths suit a cleaned raw recording. “The whole video” makes one reel from everything, with one title and hook.'),
+      el('div', {}, el('label', { class: 'field', for: 'min_clip', text: 'Shortest reel (seconds)' }),
+        el('input', { id: 'min_clip', type: 'number', min: '5', max: '900', value: '15', inputmode: 'numeric' }),
+        el('div', { class: 'hint', text: 'Leave both lengths empty and the whole video becomes one reel (up to 15 minutes), with one title and hook.' })),
+      el('div', {}, el('label', { class: 'field', for: 'max_clip', text: 'Longest reel (seconds)' }),
+        el('input', { id: 'max_clip', type: 'number', min: '10', max: '900', value: '60', inputmode: 'numeric' }),
+        el('div', { class: 'hint', text: 'Give only one and the other follows from it. Longer reels suit a cleaned raw recording.' })),
       select('style', 'Style from a reference', [['', 'None'], ...styles.map((x) => [x.id, x.name])],
         styles.length ? 'Uses what was measured in that reference: clip length, caption size, colour and position, and how often the picture pushes in.'
           : 'Measure a reference video on the Styles page, then pick it here.')),
@@ -524,12 +536,18 @@ async function newJobView() {
         el('span', { text: 'I own this video or have the rights to process it.' })),
       el('div', { class: 'row' }, status, cancelBtn, submit))));
   const $ = (id) => form.querySelector('#' + id);
-  const lengthChanged = () => { const whole = $('length').value === 'whole'; $('clips').disabled = whole; $('style').disabled = whole; $('length').disabled = !!$('style').value && !whole; };
-  $('length').addEventListener('change', lengthChanged);
+  const lengthChanged = () => {
+    const whole = !$('min_clip').value.trim() && !$('max_clip').value.trim() && !$('style').value;
+    const styled = !!$('style').value;
+    $('clips').disabled = whole; $('style').disabled = whole;
+    $('min_clip').disabled = styled; $('max_clip').disabled = styled;
+  };
+  $('min_clip').addEventListener('input', lengthChanged); $('max_clip').addEventListener('input', lengthChanged); $('style').addEventListener('change', lengthChanged);
   $('clean').addEventListener('change', () => {
     $('clean-opts').hidden = !$('clean').checked;
-    if ($('clean').checked && !$('style').value && $('length').value.indexOf('-') > -1 && Number($('length').value.split('-')[1]) <= 90) { $('length').value = 'whole'; lengthChanged(); }       // a cleaned recording is one reel
-    else if (!$('clean').checked && $('length').value === 'whole') { $('length').value = '15-60'; lengthChanged(); }
+    const hi = Number($('max_clip').value);
+    if ($('clean').checked && !$('style').value && hi > 0 && hi <= 90) { $('min_clip').value = ''; $('max_clip').value = ''; lengthChanged(); }       // a cleaned recording is one reel
+    else if (!$('clean').checked && !$('min_clip').value.trim() && !$('max_clip').value.trim()) { $('min_clip').value = '15'; $('max_clip').value = '60'; lengthChanged(); }
   });
   $('explainer').addEventListener('change', () => { $('explainer-opts').hidden = !$('explainer').checked; });
   $('style').addEventListener('change', lengthChanged);                                              // the style sets the clip length

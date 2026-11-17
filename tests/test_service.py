@@ -426,3 +426,23 @@ def test_the_graphics_option_is_kept_on_the_job_and_reaches_the_pipeline(tmp_pat
     on = wait(c, upload(c, video_bytes, graphics="true").json()["id"])
     off = wait(c, upload(c, video_bytes).json()["id"])
     assert on["params"]["graphics"] is True and off["params"]["graphics"] is False and seen == [True, False]
+
+
+def test_reel_length_is_a_shortest_and_a_longest_and_none_means_the_whole_video(tmp_path, video_bytes):
+    from clipcrow.service.api import derive_lengths
+    assert derive_lengths(None, None) == (15, 60) and derive_lengths(20, 50) == (20, 50)
+    assert derive_lengths(40, None) == (40, 80) and derive_lengths(100, None) == (100, 200) and derive_lengths(800, None) == (800, 900)
+    assert derive_lengths(None, 90) == (30, 90) and derive_lengths(None, 12) == (5, 12)
+    c, _ = client(tmp_path, FakePipeline())
+
+    def made(**form):
+        r = c.post("/api/jobs", data={"rights": "true", **form}, files={"file": ("a.mp4", video_bytes, "video/mp4")})
+        assert r.status_code == 201, r.text
+        return r.json()["params"]
+    assert made()["whole"] is True                                                   # no length asked for: one reel from the whole video
+    assert made(min_clip="", max_clip="")["whole"] is True
+    p = made(min_clip="5", max_clip="10")
+    assert p["whole"] is False and (p["min_clip"], p["max_clip"]) == (5, 10)
+    p = made(max_clip="90")
+    assert p["whole"] is False and (p["min_clip"], p["max_clip"]) == (30, 90)
+    assert made(whole="true", min_clip="20", max_clip="60")["whole"] is True

@@ -3,6 +3,11 @@
 What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
+## 2026-11-17 (reel length)
+- **Shortest / longest reel (seconds) replace the length dropdown** on the job form (15 and 60 prefilled). One end given: the other follows (`api.derive_lengths`: min only -> max = max(2 x min, min + 30);
+  max only -> min = max/3). **Both empty: the whole video is one reel** (up to 15 minutes), in the UI and for API callers that send no length and no style (`whole` is implied). A style still sets the length.
+  Cleaning a recording (a max of 90 s or less) empties both fields, as the old dropdown switched to "whole".
+
 ## 2026-11-17 (still later: metrics of job 9a4ddd051616, download all, stage times)
 - **Download all reels**: `GET /api/jobs/<id>/clips.zip` (stored zip of the ready clips, named like the single downloads; bucket-only clips are fetched for it) and a button over the clips of a finished job.
 - **Stage times**: `Stage.started/seconds`, shown on the job page ("took 2 min 10 s"). The log had no timings, so the frame stage of the first real several-people job (6 seats found for 4 people,

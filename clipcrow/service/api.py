@@ -159,6 +159,18 @@ def _opt_int(v) -> Optional[int]:
     return int(v) if v not in (None, "") else None
 
 
+def derive_lengths(lo: Optional[int], hi: Optional[int]) -> tuple[int, int]:
+    """The reel length range from what a person gave: both, or one end (the other follows from it), or neither (the usual 15-60 s, which a caller that
+    wants the whole video overrides with ``whole``)."""
+    if lo and hi:
+        return lo, hi
+    if lo:
+        return lo, min(900, max(lo * 2, lo + 30))
+    if hi:
+        return max(5, min(hi - 5, round(hi / 3))), hi
+    return 15, 60
+
+
 def _opt_float(v, default: float) -> float:
     return float(v) if v not in (None, "") else default
 
@@ -585,14 +597,17 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         want_images = truthy(o.get("ai_images"))
         if want_images and not getattr(pipeline, "can_generate_images", False):
             raise HTTPException(422, "AI image generation is not set up on this server.")
+        no_length = o.get("min_clip") in (None, "") and o.get("max_clip") in (None, "") and not str(o.get("style") or "").strip()
         try:
+            lo, hi = derive_lengths(_opt_int(o.get("min_clip")), _opt_int(o.get("max_clip")))
             params = Params(language=o.get("language") or None, clips=_opt_int(o.get("clips")),
-                            min_clip=_opt_int(o.get("min_clip")) or 15, max_clip=_opt_int(o.get("max_clip")) or 60,
+                            min_clip=lo, max_clip=hi,
                             spread=_opt_float(o.get("spread"), 0.5), speaker_name=str(o.get("speaker_name") or "").strip() or None,
                             speaker_title=str(o.get("speaker_title") or "").strip(), cutout=truthy(o.get("cutout")),
                             immersive=truthy(o.get("immersive")), explainer=truthy(o.get("explainer")), pictures=picture_ids,
                             ai_images=want_images, multi=o.get("multi") or "switch", graphics=truthy(o.get("graphics")),
-                            clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", clean_take=o.get("clean_take") or "last", fresh_transcript=truthy(o.get("fresh_transcript")), whole=truthy(o.get("whole")),
+                            clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", clean_take=o.get("clean_take") or "last", fresh_transcript=truthy(o.get("fresh_transcript")), whole=truthy(o.get("whole")) or no_length,           # no length asked for: the whole video is one reel
+                           
                             cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), outro=truthy(o.get("outro")), sounds=truthy(o.get("sounds")), music=truthy(o.get("music")), transition=o.get("transition") or "none")
         except (ValidationError, ValueError, TypeError) as e:
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
