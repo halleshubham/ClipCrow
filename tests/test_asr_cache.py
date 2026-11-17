@@ -94,3 +94,9 @@ def test_a_video_is_one_person_unless_two_faces_are_seen_together_often_enough()
     assert seats.is_one_person([1] * 13 + [2] * 3)                            # a guest walking through for three frames
     assert not seats.is_one_person([2] * 8 + [1] * 8) and not seats.is_one_person([4] * 16)
     assert not seats.is_one_person([])                                         # nothing seen: do not decide
+
+
+def test_one_or_two_people_skip_the_people_search_three_or_more_do_not():
+    assert seats.is_small_group([2] * 16) and seats.is_small_group([1] * 8 + [2] * 8) and seats.is_small_group([2] * 13 + [3] * 3)
+    assert not seats.is_small_group([3] * 8 + [2] * 8) and not seats.is_small_group([4] * 16)
+    assert not seats.is_small_group([])                                        # nothing seen: do not decide

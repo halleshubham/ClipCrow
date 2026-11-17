@@ -154,15 +154,18 @@ def test_the_map_survives_a_round_trip_through_json():
 # --- the whole thing, on a made-up video -------------------------------------------------------------
 
 class FixedFaces:
-    """Two faces at fixed places in a 640x360 frame (the picture is made so), like a camera that stays put."""
+    """Faces at fixed places in a 640x360 frame (the picture is made so), like a camera that stays put. Three by default: one or two people are not searched."""
+
+    def __init__(self, xs=(0.15, 0.5, 0.85)):
+        self.xs = xs
 
     def detect(self, frame):
         h, w = frame.shape[:2]
-        return [Box(0.25 * w - 30, 0.4 * h - 30, 60, 60), Box(0.75 * w - 30, 0.4 * h - 30, 60, 60)]
+        return [Box(x * w - 30, 0.4 * h - 30, 60, 60) for x in self.xs]
 
 
-def make_video(path, audio, plan):
-    """640x360, 10 fps. Two grey faces; the lower half of the face of whoever is speaking flickers (a mouth moving)."""
+def make_video(path, audio, plan, xs=(0.15, 0.5, 0.85)):
+    """640x360, 10 fps. Grey faces (three by default); the lower half of the face of whoever is speaking flickers (a mouth moving)."""
     fps, w, h = 10, 640, 360
     rng = np.random.default_rng(3)
     n = int(len(audio) / SR * fps)
@@ -178,7 +181,7 @@ def make_video(path, audio, plan):
     for k in range(n):
         t = k / fps
         frame = np.full((h, w, 3), 90, np.uint8)
-        for seat_i, cx in enumerate((0.25, 0.75)):
+        for seat_i, cx in enumerate(xs):
             x0, y0 = int(cx * w) - 30, int(0.4 * h) - 30
             frame[y0:y0 + 60, x0:x0 + 60] = 170
             speaking = any(a <= t < b and s == seat_i for a, b, s in plan)
@@ -197,7 +200,7 @@ def test_build_speaker_map_matches_each_voice_to_the_face_that_moves_with_it(tmp
     make_video(video, audio, plan)
     said = []
     sm = seats.build_speaker_map(video, tmp_path / "out", detector=FixedFaces(), embedder=ToneEmbedder(), say=said.append)
-    assert sm is not None and len(sm.seats) == 2 and sm.usable
+    assert sm is not None and len(sm.seats) == 3 and sm.usable
     first = sm.turns[0].voice
     other = sm.turns[1].voice
     assert sm.voice_seat[first] == 0 and sm.voice_seat[other] == 1
@@ -205,7 +208,7 @@ def test_build_speaker_map_matches_each_voice_to_the_face_that_moves_with_it(tmp
     again = seats.build_speaker_map(video, tmp_path / "out", detector=None, embedder=None)           # cached: no detector or model needed
     assert again is not None and again.voice_seat == sm.voice_seat
     f = reframe.plan_framing(str(video), 0.0, 34.0, multi="switch", speakers=sm)
-    assert f.framing == "track" and f.people == 2 and len(f.keyframes) == 3 and f.keyframes[0][1] < 0.5 < f.keyframes[1][1]
+    assert f.framing == "track" and f.people == 2 and len(f.keyframes) == 3 and f.keyframes[0][1] < 0.5 <= f.keyframes[1][1]
 
 
 @ffmpeg
@@ -344,3 +347,16 @@ def test_a_long_search_says_how_far_it_has_got():
     assert 1 <= len(ticks) <= 3 and all(m.startswith("listening for who speaks: ") for m in ticks)       # at most one line per quarter, none at the very end
     counts = [int(m.split(": ")[1].split(" of ")[0]) for m in ticks]
     assert counts == sorted(counts) and counts[-1] < int(ticks[-1].split(" of ")[1].split(" ")[0])
+
+
+@ffmpeg
+def test_two_people_on_screen_cost_no_voice_work_either(tmp_path):
+    class Boom:
+        def embed(self, chunks):
+            raise AssertionError("no voice work for two people")
+    xs = (0.25, 0.75)
+    video = tmp_path / "pair.mp4"
+    make_video(video, talk_audio([(200, 10), (None, 3), (400, 10), (None, 3)]), [(0, 12, 0), (13, 26, 1)], xs)
+    said = []
+    sm = seats.build_speaker_map(video, tmp_path / "o", detector=FixedFaces(xs), embedder=Boom(), say=said.append)
+    assert sm is None and any("two people" in m for m in said)

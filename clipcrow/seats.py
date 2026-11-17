@@ -178,6 +178,14 @@ def is_one_person(counts: list[int]) -> bool:
     return sum(1 for c in counts if c >= 2) < max(2, int(QUICK_GROUP_SHARE * len(counts) + 0.999))
 
 
+def is_small_group(counts: list[int]) -> bool:
+    """One or two people: three faces are never seen together more than now and then. The people search, the voice listening and the mouth watching
+    are made for a table of three or more; one or two people are framed the older, cheaper way (the face in front of the speaker)."""
+    if not counts:
+        return False
+    return sum(1 for c in counts if c >= 3) < max(2, int(QUICK_GROUP_SHARE * len(counts) + 0.999))
+
+
 # --- seats ----------------------------------------------------------------------------------
 
 def find_seats(video: str, duration: float, detector, *, check: Callable[[], None] = lambda: None,
@@ -345,8 +353,9 @@ def analyse(video: str | Path, *, detector=None, embedder=None, audio_loader: Ca
     if duration < 20:
         return None, None
     detector = detector or default_detector()
-    if is_one_person(count_faces(video, duration, detector, check=check)):                   # the usual talking head: seconds, not a pass over the whole video
-        say("one person on screen: nobody to tell apart")
+    counts = count_faces(video, duration, detector, check=check)
+    if is_small_group(counts):                                                                # one or two people: seconds, not a pass over the whole video
+        say("one person on screen: nobody to tell apart" if is_one_person(counts) else "two people on screen: framed the usual way, no voice search")
         return SpeakerMap([], [], {}, {}, duration, {}, sig), None
     say("looking for the people on screen")
     seats, frame = find_seats(video, duration, detector, check=check, say=say)

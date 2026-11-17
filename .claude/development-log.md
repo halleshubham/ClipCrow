@@ -146,6 +146,9 @@ The rules that came out of these are in `development-rules.md`; this file is the
   picked a reference style (a style wins). A brand deleted after the job was made falls back to the copies in the job.
 - UI: Brand page switcher (+ Speaker and Captions sections); New job has a Brand select (shown with two or more brands) that re-fills the logo/ending/music rows.
 
+- **One or two people skip the people search** (`seats.is_small_group`): only a video where three or more faces are seen together in >= 20% of the 16 quick frames gets seats, voice listening and mouth watching; one or two people are
+  framed the older way (`reframe` face/mouth tracking, no `speakers.json`, no who-is-who card). Trade-off: with two people the voice-to-seat matching is no longer used.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

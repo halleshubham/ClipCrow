@@ -589,7 +589,7 @@ async function newJobView() {
       select('spread', 'Spread across the video', [['0.5', 'Balanced (recommended)'], ['0', 'Off: best clips first'], ['0.8', 'Wide']],
         'Keeps clips from being slices of one section.'),
       select('multi', 'Several people on screen', [['switch', 'Cut to whoever is talking (recommended)'], ['split', 'Stack two people'], ['off', 'One person on screen (skip the people check)']],
-        'For interviews and podcasts filmed with a wide shot. A video with one person is detected by itself.'),
+        'For interviews and podcasts filmed with a wide shot. A video with one or two people is detected by itself and cut the usual way, which is quicker.'),
       el('label', { class: 'check', for: 'fresh_transcript' }, el('input', { type: 'checkbox', id: 'fresh_transcript' }),
         el('span', {}, el('strong', { text: 'Listen to the recording again' }), el('br'),
           el('span', { class: 'muted', text: 'If you already made a job from this very file, its words are used again and nothing is transcribed twice. Tick this to transcribe it afresh (for example after changing the recogniser).' }))),
