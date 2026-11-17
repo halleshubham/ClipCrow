@@ -18,6 +18,8 @@
   --warn: #F5BA63; --warn-soft: rgba(245, 186, 99, .13);
   --bad: #FF8C7A; --bad-soft: rgba(255, 140, 122, .13);
   --glass: rgba(12, 13, 17, .72);
+  --plat-youtube: #FF4E45; --plat-instagram: #F0568C; --plat-facebook: #5B9BFF; --plat-linkedin: #4DA3F0; --plat-telegram: #35B0EE; --plat-pinterest: #F5566B; --plat-bluesky: #4C94FF;
+  --plat-reddit: #FF6A3A; --plat-whatsapp: #2FD36E; --plat-snapchat: #FFDD33; --plat-mastodon: #9A8CFF; --plat-x: var(--ink); --plat-tiktok: var(--ink); --plat-threads: var(--ink);   /* a platform's own colour, lifted where the page is dark */
   --shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 12px 36px rgba(0, 0, 0, .38);
   --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --deva: "Noto Serif Devanagari", "Noto Serif", Kokila, "Sanskrit Text", Mangal, serif;
@@ -39,6 +41,8 @@
     --warn: #8A4E07; --warn-soft: rgba(138, 78, 7, .11);
     --bad: #A52F1B; --bad-soft: rgba(165, 47, 27, .09);
     --glass: rgba(244, 244, 241, .78);
+    --plat-youtube: #D00000; --plat-instagram: #C13584; --plat-facebook: #1877F2; --plat-linkedin: #0A66C2; --plat-telegram: #1E88C7; --plat-pinterest: #BD081C; --plat-bluesky: #1185FE;
+    --plat-reddit: #D93A00; --plat-whatsapp: #128C4A; --plat-snapchat: #8A6D00; --plat-mastodon: #5B4FE0;
     --shadow: 0 1px 2px rgba(20, 21, 27, .06), 0 10px 30px rgba(20, 21, 27, .07);
   }
 }
@@ -64,7 +68,7 @@ a:hover { color: var(--accent-text); }
 .brand:hover { color: var(--ink); }
 nav { display: flex; gap: 2px; font-size: 14px; font-weight: 550; overflow-x: auto; scrollbar-width: none; }
 nav::-webkit-scrollbar { display: none; }
-nav a { padding: 7px 14px; border-radius: 999px; color: var(--muted); text-decoration: none; white-space: nowrap; transition: color .15s, background .15s; }
+nav a { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px; border-radius: 999px; color: var(--muted); text-decoration: none; white-space: nowrap; transition: color .15s, background .15s; }
 nav a:hover { color: var(--ink); background: var(--surface-2); }
 nav a[aria-current="page"] { background: var(--raised); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .acct { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
@@ -300,3 +304,29 @@ tbody tr:last-child td { border-bottom: 0; }
 .pic .btn { min-height: 0; padding: 6px 10px; font-size: 13px; }
 .pic img { width: 100%; height: 90px; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--surface-2); }
 .logo-preview { max-width: 220px; max-height: 120px; padding: 8px; border-radius: 8px; background: var(--backdrop-neutral); }
+
+/* icons beside words (a label always stays: an icon alone is guessed wrong far more often) */
+nav a .i { width: 17px; height: 17px; }
+.btn .i { width: 17px; height: 17px; }
+.btn.small .i { width: 15px; height: 15px; }
+summary > .i { width: 18px; height: 18px; margin-right: 8px; vertical-align: -3px; opacity: .85; }
+.i-flip { transform: scaleX(-1); }
+@media (max-width: 440px) { nav a .i { display: none; } }          /* four labels already fill a phone's width */
+.plat { width: 20px; height: 20px; margin-right: 8px; vertical-align: -4px; }
+.plat-youtube { color: var(--plat-youtube); } .plat-instagram { color: var(--plat-instagram); } .plat-facebook { color: var(--plat-facebook); } .plat-linkedin { color: var(--plat-linkedin); }
+.plat-telegram { color: var(--plat-telegram); } .plat-pinterest { color: var(--plat-pinterest); } .plat-bluesky { color: var(--plat-bluesky); } .plat-reddit { color: var(--plat-reddit); }
+.plat-whatsapp { color: var(--plat-whatsapp); } .plat-snapchat { color: var(--plat-snapchat); } .plat-mastodon { color: var(--plat-mastodon); }
+.plat-x { color: var(--plat-x); } .plat-tiktok { color: var(--plat-tiktok); } .plat-threads { color: var(--plat-threads); }
+.check .plat { margin: 0; flex: none; }
+
+/* the "i" that holds the longer explanation (hover, focus or tap; Escape closes it) */
+.info { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin: -4px 0 -4px 4px; padding: 0; border: 0; border-radius: 999px;
+  background: transparent; color: var(--muted); cursor: help; vertical-align: middle; font: inherit; }
+.info .i { width: 16px; height: 16px; }
+.info:hover, .info[aria-expanded="true"] { color: var(--accent-text); background: var(--surface-2); }
+.tip-pop { position: fixed; z-index: 60; max-width: min(320px, calc(100vw - 24px)); padding: 10px 12px; border-radius: var(--r-sm); background: var(--raised); color: var(--ink);
+  border: 1px solid var(--line-strong); box-shadow: var(--shadow); font-size: 13px; font-weight: 450; line-height: 1.5; text-transform: none; letter-spacing: 0; }
+.tip-pop[hidden] { display: none; }
+.jobrow td:first-child .i { margin-right: 8px; vertical-align: -4px; color: var(--muted); }
+h1 > .i, h2 > .i { margin-right: 10px; vertical-align: -4px; color: var(--accent-text); }
+h1 > .i { vertical-align: -3px; }

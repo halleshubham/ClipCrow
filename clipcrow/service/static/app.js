@@ -29,6 +29,112 @@ function icon(name, size = 22) {          // drawn by the stylesheet (a CSS mask
   return i;
 }
 
+// ---- small help: an "i" holds the longer explanation, so the page itself stays short --------------------------
+// Opens on hover, focus or tap; stays open while the pointer is on it; Escape closes it (WCAG 1.4.13). Nothing essential lives only here.
+const tipPop = el('div', { class: 'tip-pop', role: 'tooltip', id: 'tip-pop', hidden: true });
+let tipOwner = null, tipPinned = false, tipTimer = 0;
+function placeTip(btn) {
+  tipPop.hidden = false;
+  const r = btn.getBoundingClientRect(), w = tipPop.offsetWidth, h = tipPop.offsetHeight;
+  const left = Math.min(Math.max(r.left + r.width / 2 - w / 2, 12), Math.max(12, window.innerWidth - w - 12));
+  const top = r.bottom + 8 + h <= window.innerHeight ? r.bottom + 8 : Math.max(12, r.top - 8 - h);
+  tipPop.style.left = `${left}px`;
+  tipPop.style.top = `${top}px`;
+}
+function openTip(btn, pin) {
+  clearTimeout(tipTimer);
+  if (tipOwner && tipOwner !== btn) tipOwner.setAttribute('aria-expanded', 'false');
+  tipOwner = btn;
+  tipPinned = pin;
+  tipPop.textContent = btn.dataset.tip;
+  btn.setAttribute('aria-expanded', 'true');
+  btn.setAttribute('aria-describedby', 'tip-pop');
+  placeTip(btn);
+}
+function closeTip(force) {
+  clearTimeout(tipTimer);
+  if (!tipOwner || (tipPinned && !force)) return;
+  tipOwner.setAttribute('aria-expanded', 'false');
+  tipOwner.removeAttribute('aria-describedby');
+  tipOwner = null;
+  tipPinned = false;
+  tipPop.hidden = true;
+}
+const closeSoon = () => { clearTimeout(tipTimer); tipTimer = setTimeout(() => closeTip(false), 220); };
+tipPop.addEventListener('pointerenter', () => clearTimeout(tipTimer));
+tipPop.addEventListener('pointerleave', closeSoon);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && tipOwner) closeTip(true); });
+document.addEventListener('pointerdown', (e) => { if (tipOwner && e.target !== tipOwner && !tipOwner.contains(e.target) && !tipPop.contains(e.target)) closeTip(true); });
+window.addEventListener('scroll', () => closeTip(true), { passive: true });
+document.body.append(tipPop);
+
+function tip(text, about = '') {
+  const b = el('button', { class: 'info', type: 'button', 'aria-label': about ? `More about ${about}` : 'More about this', 'aria-expanded': 'false' }, icon('info', 16));
+  b.dataset.tip = text;
+  b.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') { clearTimeout(tipTimer); tipTimer = setTimeout(() => openTip(b, false), 120); } });
+  b.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') closeSoon(); });
+  b.addEventListener('focus', () => { if (b.matches(':focus-visible')) openTip(b, false); });
+  b.addEventListener('blur', () => closeTip(false));
+  b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (tipOwner === b && tipPinned) closeTip(true); else openTip(b, true); });
+  return b;
+}
+
+// A platform's logo (its colour comes from a token, in both themes).
+const PLATFORM_ICON = { youtube: 'youtube', instagram: 'instagram', 'instagram-standalone': 'instagram', tiktok: 'tiktok', facebook: 'facebook', x: 'x', linkedin: 'linkedin',
+  'linkedin-page': 'linkedin', telegram: 'telegram', threads: 'threads', pinterest: 'pinterest', bluesky: 'bluesky', reddit: 'reddit', whatsapp: 'whatsapp', snapchat: 'snapchat', mastodon: 'mastodon' };
+function platformMark(platform) {
+  const name = PLATFORM_ICON[platform];
+  return name ? el('span', { class: `i i-plat-${name} plat plat-${name}`, 'aria-hidden': 'true' }) : null;
+}
+
+// ---- the same long explanations, tucked away once and for every page --------------------------------------------
+// A hint longer than a few words, and the grey explanation under a checkbox, become an "i" next to their label. A hint that must stay visible
+// (a limit someone needs before choosing a file) carries data-keep; a status line (role/aria-live) never moves.
+const BUTTON_ICONS = [[/^Download all/, 'archive'], [/^Replace/, 'refresh-cw'], [/^Download/, 'download'], [/^Share$/, 'share-2'], [/^Edit\b/, 'pencil'], [/^(Delete|Remove)/, 'trash-2'], [/^Generate/, 'sparkles'],
+  [/^Upload/, 'upload'], [/^(Save|Apply)/, 'check'], [/^Post\b/, 'send'], [/^(Cancel|Stop)/, 'x'], [/^Cut again/, 'scissors'], [/^Find who/, 'users'], [/^Cover image/, 'image'],
+  [/^(Re-?render|Render)/, 'refresh-cw'], [/^Reset/, 'rotate-ccw'], [/^(Sign out|Log out)/, 'log-out'], [/^(Add|Create|New|Start)\b/, 'plus'], [/^Choose all/, 'circle-check'],
+  [/^Copy/, 'copy'], [/^Back/, 'chevron-right']];
+const HEADING_ICONS = [[/^(Logo|Pictures)/, 'image'], [/^Ending video/, 'film'], [/^Background music/, 'music'], [/^Look/, 'palette'], [/^Clips$/, 'film'], [/^Posts$/, 'send'], [/^Post to/, 'share-2'],
+  [/^What happens next/, 'list'], [/^Speech recognition/, 'mic'], [/^Reference|^Styles?\b/, 'palette'], [/^Jobs$/, 'list'], [/^New job/, 'plus'], [/^Share clip/, 'share-2'], [/^Brand$/, 'badge-check']];
+const SUMMARY_ICONS = [[/^Activity/, 'list'], [/^What was cut/, 'scissors'], [/^Who is who/, 'users'], [/^Check or fix/, 'type'], [/^AI usage/, 'sparkles'], [/^More options/, 'sliders-horizontal']];
+function decorate(root) {
+  for (const hint of root.querySelectorAll('.hint:not([data-done]):not([data-keep])')) {
+    hint.dataset.done = '1';
+    const label = hint.parentElement && hint.parentElement.querySelector(':scope > label.field');
+    if (!label || hint.getAttribute('role') || hint.hasAttribute('aria-live') || hint.children.length || hint.textContent.trim().length < 24) continue;
+    label.append(tip(hint.textContent.trim(), label.textContent.trim()));
+    hint.remove();
+  }
+  for (const note of root.querySelectorAll('label.check > span > .muted:not([data-done])')) {
+    note.dataset.done = '1';
+    const strong = note.parentElement.querySelector(':scope > strong');
+    if (!strong || note.children.length || note.textContent.trim().length < 24) continue;
+    strong.after(tip(note.textContent.trim(), strong.textContent.trim()));
+    const br = note.previousElementSibling;
+    if (br && br.tagName === 'BR') br.remove();
+    note.remove();
+  }
+  for (const b of root.querySelectorAll('.btn:not([data-icon])')) {
+    b.dataset.icon = '1';
+    if (b.querySelector('.i')) continue;
+    const hit = BUTTON_ICONS.find(([re]) => re.test(b.textContent.trim()));
+    if (!hit) continue;
+    const i = icon(hit[1], 17);
+    if (hit[1] === 'chevron-right' && /^Back/.test(b.textContent.trim())) i.classList.add('i-flip');
+    b.prepend(i);
+  }
+  for (const h of root.querySelectorAll('h1:not([data-icon]), .card > h2:not([data-icon]), section > h2:not([data-icon])')) {
+    h.dataset.icon = '1';
+    const hit = HEADING_ICONS.find(([re]) => re.test(h.textContent.trim()));
+    if (hit) h.prepend(icon(hit[1], h.tagName === 'H1' ? 26 : 20));
+  }
+  for (const s of root.querySelectorAll('details > summary:not([data-icon])')) {
+    s.dataset.icon = '1';
+    const hit = SUMMARY_ICONS.find(([re]) => re.test(s.textContent.trim()));
+    if (hit) s.prepend(icon(hit[1], 18));
+  }
+}
+
 class SignInNeeded extends Error {}
 
 async function api(path, opts = {}) {
@@ -927,7 +1033,7 @@ async function jobsView() {
     ? el('div', { class: 'card', style: { padding: '8px 24px' } }, el('table', {},
       el('thead', {}, el('tr', {}, ['Video', 'Status', 'Started', 'Clips'].map((h) => el('th', { text: h })))),
       el('tbody', {}, jobs.map((j) => el('tr', { class: 'jobrow' },
-        el('td', {}, el('a', { href: `#/jobs/${j.id}`, translate: 'no', text: j.name })),
+        el('td', {}, icon('film', 18), el('a', { href: `#/jobs/${j.id}`, translate: 'no', text: j.name })),
         el('td', {}, el('span', { class: `badge ${STATUS_CLASS[j.status]}`, text: statusText(j) })),
         el('td', { text: when(j.created_at) }),
         el('td', { text: j.clips.length ? `${j.clips.filter((c) => c.ready).length} of ${j.clips.length}` : '—' }))))))
@@ -1158,7 +1264,7 @@ async function brandView() {
   const logoBox = el('section', { class: 'card stack' }, el('h2', { text: 'Logo' }),
     brand.logo ? el('img', { src: `/api/brand/logo/file${stamp()}`, alt: 'Your logo', class: 'logo-preview' })
       : el('p', { class: 'small muted', text: 'No logo yet.' }),
-    el('div', {}, el('label', { class: 'field', for: 'logo_file', text: 'PNG, JPEG or WebP, up to 3 MB. A transparent PNG looks best. SVG is not accepted.' }), logoIn),
+    el('div', {}, el('label', { class: 'field', for: 'logo_file' }, 'PNG, JPEG or WebP · up to 3 MB', tip('A transparent PNG looks best. SVG is not accepted.', 'the logo file')), logoIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.logo ? 'Replace logo' : 'Upload logo', onclick: () => send('/brand/logo', logoIn, 'a logo') }),
       brand.logo && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('logo') })));
   const trackSel = el('select', { id: 'music_track' }, [['', brand.uploaded_music ? 'Your upload' : 'None'], ...brand.tracks.map((t) => [t.id, `${t.title}: ${t.mood}`])]
@@ -1172,8 +1278,7 @@ async function brandView() {
     el('div', {}, el('label', { class: 'field', for: 'music_track', text: 'Track' }), trackSel,
       el('div', { class: 'hint', text: 'The built-in tracks are instrumental and made for this app. Or add your own below.' })),
     previewSrc ? el('audio', { src: previewSrc, controls: true, preload: 'none', style: { width: '100%' }, 'aria-label': 'Preview of the chosen track' }) : el('p', { class: 'small muted', text: 'No music chosen.' }),
-    el('div', {}, el('label', { class: 'field', for: 'music_file', text: 'Your own track: MP3, M4A or WAV, 5 seconds to 15 minutes, up to 30 MB.' }), musicIn,
-      el('div', { class: 'hint', text: 'Only upload music you have the right to use in your videos. Platforms can mute or claim music they recognise. It plays under the voice and is lowered further while someone talks.' })),
+    el('div', {}, el('label', { class: 'field', for: 'music_file' }, 'Your own track · MP3, M4A or WAV, up to 30 MB', tip('5 seconds to 15 minutes. Only upload music you have the right to use in your videos: platforms can mute or claim music they recognise. It plays under the voice and is lowered further while someone talks.', 'your own music track')), musicIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.uploaded_music ? 'Replace my upload' : 'Upload music', onclick: async () => {
       if (musicIn.files[0]) { try { await api('/brand', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ music_track: '' }) }); } catch (_) { /* the upload reports its own problem */ } }
       send('/brand/music', musicIn, 'a music file');
@@ -1182,7 +1287,7 @@ async function brandView() {
   const outroBox = el('section', { class: 'card stack' }, el('h2', { text: 'Ending video' }),
     brand.outro ? el('video', { src: `/api/brand/outro/file${stamp()}`, controls: true, playsinline: true, preload: 'metadata', style: { width: '180px' }, 'aria-label': 'Your ending video' })
       : el('p', { class: 'small muted', text: 'No ending video yet.' }),
-    el('div', {}, el('label', { class: 'field', for: 'outro_file', text: 'A short branding clip, 0.5–20 s, up to 90 MB. It is converted to a vertical 1080×1920 video.' }), outroIn),
+    el('div', {}, el('label', { class: 'field', for: 'outro_file' }, 'A short branding clip · up to 90 MB', tip('0.5 to 20 seconds. It is converted to a vertical 1080×1920 video.', 'the ending video file')), outroIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.outro ? 'Replace ending video' : 'Upload ending video', onclick: () => send('/brand/outro', outroIn, 'a video') }),
       brand.outro && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('outro') })));
 
@@ -1223,7 +1328,7 @@ async function brandView() {
     } })));
 
   app.replaceChildren(el('div', { class: 'stack' },
-    el('div', {}, el('h1', { text: 'Brand' }), el('p', { class: 'small muted', text: 'Your logo and ending video are added to clips when you tick them on a new job. Clips already made keep the copy they were made with.' })),
+    el('div', {}, el('h1', { text: 'Brand' }), el('p', { class: 'small muted' }, 'Added to clips when you tick them on a new job.', tip('Clips already made keep the copy they were made with.', 'the brand page'))),
     err, note, el('div', { class: 'pair' }, logoBox, outroBox), musicBox, look));
 }
 
@@ -1282,13 +1387,14 @@ async function shareView(jobId, clipId) {
     return el('div', { class: 'brand-group' },
       el('div', { class: 'brand-head' }, el('h3', { translate: 'no', text: name || 'Other channels' }), el('span', { class: 'chip plain', text: String(rows.length) }), el('span', { class: 'grow' }), all),
       el('div', { class: 'brand-channels' },
-        ...rows.map(({ ch, box }) => el('label', { class: 'check', for: box.id }, box, el('span', {}, el('strong', { translate: 'no', text: ch.name }), el('br'), el('span', { class: 'muted', text: PLATFORM_WORD[ch.platform] || ch.platform }))))));
+        ...rows.map(({ ch, box }) => el('label', { class: 'check', for: box.id }, box, platformMark(ch.platform), el('span', {}, el('strong', { translate: 'no', text: ch.name }), el('br'), el('span', { class: 'muted', text: PLATFORM_WORD[ch.platform] || ch.platform }))))));
   };
 
   function paint(rows) {
+    if (!rows.length) { list.replaceChildren(el('p', { class: 'small muted', text: 'Nothing has been posted from this clip yet.' })); return; }
     list.replaceChildren(...rows.map((r) => el('div', { class: 'row small' },
       el('span', { class: `badge ${r.status === 'failed' ? 'failed' : r.status === 'queued' ? 'running' : 'done'}`, text: STATUS_WORD[r.status] || r.status }),
-      el('span', { translate: 'no', text: `${PLATFORM_WORD[r.platform] || r.platform} · ${r.name}` }),
+      el('span', { translate: 'no' }, platformMark(r.platform), `${PLATFORM_WORD[r.platform] || r.platform} · ${r.name}`),
       r.when && el('span', { class: 'muted', text: `for ${when_(r.when)}` }),
       r.detail && el('span', { class: 'muted', text: r.detail }))));
   }
@@ -1494,3 +1600,16 @@ window.addEventListener('hashchange', route);
   showBanner();
   route();
 })();
+
+// a page is decorated (long hints into "i" popovers, icons on buttons) every time its content changes
+let decorating = false;
+const decorator = new MutationObserver(() => {
+  if (decorating) return;
+  decorating = true;
+  requestAnimationFrame(() => {
+    decorator.disconnect();
+    try { decorate(app); } finally { decorator.observe(app, { childList: true, subtree: true }); decorating = false; }
+  });
+});
+decorator.observe(app, { childList: true, subtree: true });
+decorate(app);

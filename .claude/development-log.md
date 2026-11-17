@@ -3,6 +3,13 @@
 What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
+## 2026-11-17 (interface audit: icons, platform logos, short copy)
+- Audited every page (new job, jobs, job, clip editor, share, styles, brand) at 360 px and desktop in both themes. Findings: text-only buttons and navigation, platform names as plain words on the share page, a long
+  grey paragraph under almost every field and checkbox, an empty "Posts" card, unlabeled technical units on the brand page.
+- Done: icon sheet (64 icons, `icons.css`), icons beside nav items/buttons/summaries/headings (from their words), platform logos with their colours on the share page and the posts list, long hints and checkbox
+  explanations folded into "i" popovers (hover/focus/tap, Escape, hoverable), shorter file-limit labels on the brand page, an empty state for posts, a film icon in the jobs list. Rules in `docs/ui.md`.
+- Not done: Styles page copy was not shortened beyond what `decorate()` does; the clip editor's long tooltips-by-title (`title=`) were left alone.
+
 ## 2026-11-17 (progress while telling people apart)
 - The three slow steps of the speakers search now log a line at each quarter ("looking for the people on screen: 20 of 53 minutes", "listening for who speaks: 450 of 900 stretches", "matching voices to people: ..."), so
   a long video is no longer silent for many minutes (job ba56794375f8, a 53-minute video, showed one line for a long time).
