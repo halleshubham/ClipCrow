@@ -583,7 +583,8 @@ async function jobView(jobId) {
   let logClosed = false;
   const timeline = el('div', {});
   const clipsGrid = el('div', { class: 'clips' });
-  const clipsSection = el('section', { hidden: true }, el('h2', { text: 'Clips' }), timeline, el('div', { style: { height: '20px' } }), clipsGrid);
+  const zipLink = el('a', { class: 'btn dark', href: `/api/jobs/${jobId}/clips.zip`, hidden: true });
+  const clipsSection = el('section', { hidden: true }, el('div', { class: 'row', style: { justifyContent: 'space-between' } }, el('h2', { text: 'Clips' }), zipLink), timeline, el('div', { style: { height: '20px' } }), clipsGrid);
   const usageBody = el('div', { class: 'small muted', text: 'The usage record appears once the plan is ready.' });
   const usage = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'AI usage and disclosure' }), el('div', { style: { marginTop: '12px' } }, usageBody));
   const cutBody = el('div', { class: 'small muted', text: 'Loading…' });
@@ -745,7 +746,8 @@ async function jobView(jobId) {
       return el('div', { class: `stage ${s.state}` },
         el('div', { class: 'k', text: STAGE_LABEL[s.name] }),
         el('div', { class: 'v', text: STATE_TEXT[s.state] }),
-        s.detail && el('div', { class: 'small muted', text: s.detail }));
+        s.detail && el('div', { class: 'small muted', text: s.detail }),
+        s.seconds != null && s.state !== 'pending' && s.seconds >= 1 ? el('div', { class: 'small muted', text: `took ${s.seconds >= 90 ? `${Math.floor(s.seconds / 60)} min ${Math.round(s.seconds % 60)} s` : `${Math.round(s.seconds)} s`}` }) : null);
     }));
   }
 
@@ -814,6 +816,11 @@ async function jobView(jobId) {
 
   function renderClips() {
     clipsSection.hidden = job.clips.length === 0;
+    const ready = job.clips.filter((c) => c.ready).length;                       // once the job has finished: every reel in one file
+    zipLink.hidden = job.status !== 'done' || ready < 1;
+    zipLink.textContent = ready === 1 ? 'Download the reel' : `Download all ${ready} reels (.zip)`;
+    if (ready === 1) zipLink.href = `/api/jobs/${jobId}/clips/${job.clips.find((c) => c.ready).id}/download`;
+    else zipLink.href = `/api/jobs/${jobId}/clips.zip`;
     job.clips.forEach((c, i) => {
       // a card is rebuilt only when something it shows has changed, so a playing video is not interrupted
       const sig = JSON.stringify([c.ready, c.render, c.rev, c.title, c.hook, c.start, c.end, c.framing, c.edited, c.render_error, c.notes, job.status === 'done']);

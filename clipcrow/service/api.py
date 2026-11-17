@@ -18,6 +18,7 @@ import time
 import logging
 import math
 import re
+import shutil
 import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -950,6 +951,44 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if not local:
             raise HTTPException(404, "This clip is not ready yet.")
         return FileResponse(path, media_type="video/mp4", filename=name if download else None)
+
+    @app.get("/api/jobs/{job_id}/clips.zip", dependencies=[Depends(authed)])
+    def clips_zip(job_id: str, request: Request):
+        """Every finished reel of a job in one download (stored, not compressed: an MP4 does not shrink)."""
+        import zipfile
+        from starlette.background import BackgroundTask
+        job = job_or_404(job_id, request)
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(job.name).stem).strip("._") or "clips"
+        ready = [c.id for c in job.clips if c.ready]
+        if not ready:
+            raise HTTPException(404, "No reel is ready yet.")
+        tmpdir = Path(tempfile.mkdtemp(prefix="clipcrow-zip-"))
+        added = 0
+        try:
+            archive = tmpdir / "reels.zip"
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+                for cid in ready:
+                    try:
+                        path = store.clip_path(job_id, cid)
+                    except KeyError:
+                        continue
+                    rel = f"out/{cid}.mp4"
+                    if not path.is_file() and storage and job.remote.get(rel):          # only the bucket has it: fetch it for this download
+                        path = tmpdir / f"{cid}.mp4"
+                        try:
+                            storage.get_file(job_id, rel, path)
+                        except StorageError:
+                            continue
+                    if path.is_file():
+                        z.write(path, f"{stem[:60]}-{cid}.mp4")
+                        added += 1
+            if not added:
+                raise HTTPException(404, "No reel is ready yet.")
+        except BaseException:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            raise
+        return FileResponse(archive, media_type="application/zip", filename=f"{stem[:60]}-reels.zip",
+                            background=BackgroundTask(shutil.rmtree, tmpdir, ignore_errors=True))
 
     @app.get("/api/jobs/{job_id}/clips/{clip_id}/video", dependencies=[Depends(authed)])
     def clip_video(job_id: str, clip_id: str, request: Request):

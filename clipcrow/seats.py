@@ -204,8 +204,20 @@ def find_seats(video: str, duration: float, detector, *, check: Callable[[], Non
         cx = sorted(b.cx for b in bs)[len(bs) // 2]
         cy = sorted(b.cy for b in bs)[len(bs) // 2]
         seats.append(Seat(cx / w, cy / h, mid.w / w, mid.h / h, tr["hits"] / len(samples)))
-    seats.sort(key=lambda s: s.cx)
-    return seats, best_frame
+    return merge_seats(seats), best_frame
+
+
+def merge_seats(seats: list[Seat]) -> list[Seat]:
+    """One seat per person: two tracks whose faces sit on top of each other (the same head found twice, or after it moved) are one seat."""
+    seats = sorted(seats, key=lambda s: -s.seen)                                 # the most seen is the anchor
+    kept: list[Seat] = []
+    for s in seats:
+        twin = next((k for k in kept if abs(k.cx - s.cx) < 0.6 * max(k.w, s.w) and abs(k.cy - s.cy) < 1.0 * max(k.h, s.h)), None)
+        if twin is None:
+            kept.append(Seat(s.cx, s.cy, s.w, s.h, s.seen))
+        else:
+            twin.seen = min(1.0, twin.seen + s.seen)
+    return sorted(kept, key=lambda s: s.cx)
 
 
 def _seat_of_box(box: Box, seats: list[Seat], w: float, h: float) -> Optional[int]:

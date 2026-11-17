@@ -211,6 +211,10 @@ class JobRunner:
         def stage(name: str, state: str, detail: str = "") -> None:
             job.cancel_requested = job.cancel_requested or ev.is_set()      # this thread saves its own copy of the job: keep the flag
             s = job.stage(name)
+            if state == "running" and s.state != "running":
+                s.started, s.seconds = time.time(), None
+            elif state in ("done", "failed", "skipped") and s.started is not None and s.seconds is None:
+                s.seconds = round(time.time() - s.started, 1)
             s.state, s.detail = state, detail
             store.save(job)
 

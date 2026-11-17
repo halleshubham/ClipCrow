@@ -301,3 +301,36 @@ def test_a_finished_job_can_find_its_people_later_and_its_clips_follow_the_voice
     assert c.get(f"/api/jobs/{jid}/speakers").json()["available"] is True
     assert any("who is who" in line for line in c.get(f"/api/jobs/{jid}").json()["log"])
     assert c.post("/api/jobs/zzzzzzzzzzzz/speakers/build").status_code == 404
+
+
+def test_one_head_found_twice_is_one_seat():
+    s = [seats.Seat(0.1162, 0.4418, 0.07, 0.12, 0.6), seats.Seat(0.14, 0.4202, 0.07, 0.12, 0.2), seats.Seat(0.5806, 0.4432, 0.07, 0.12, 0.9),
+         seats.Seat(0.7867, 0.4498, 0.07, 0.12, 0.5), seats.Seat(0.808, 0.4422, 0.07, 0.12, 0.3), seats.Seat(0.3828, 0.4479, 0.07, 0.12, 0.7)]
+    merged = seats.merge_seats(s)
+    assert [round(x.cx, 2) for x in merged] == [0.12, 0.38, 0.58, 0.79] and merged[0].seen == pytest.approx(0.8)
+    near = seats.merge_seats([seats.Seat(0.40, 0.4, 0.07, 0.12, 1.0), seats.Seat(0.50, 0.4, 0.07, 0.12, 1.0)])
+    assert len(near) == 2                                                          # two people side by side are two
+
+
+def test_download_all_reels_is_one_zip_of_the_ready_clips_only(tmp_path, video_bytes):
+    import zipfile
+    from tests.test_service import FakePipeline, client, upload, wait
+    c, app = client(tmp_path, FakePipeline())
+    job = wait(c, upload(c, video_bytes, name="my talk.mp4").json()["id"])
+    ready = [x["id"] for x in job["clips"] if x["ready"]]
+    assert ready
+    r = c.get(f"/api/jobs/{job['id']}/clips.zip")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip" and "my_talk-reels.zip" in r.headers["content-disposition"]
+    zpath = tmp_path / "got.zip"
+    zpath.write_bytes(r.content)
+    names = zipfile.ZipFile(zpath).namelist()
+    assert sorted(names) == sorted(f"my_talk-{cid}.mp4" for cid in ready)
+    assert c.get("/api/jobs/zzzzzzzzzzzz/clips.zip").status_code == 404
+
+
+def test_every_stage_records_how_long_it_took(tmp_path, video_bytes):
+    from tests.test_service import FakePipeline, client, upload, wait
+    c, app = client(tmp_path, FakePipeline())
+    job = wait(c, upload(c, video_bytes).json()["id"])
+    done = [s for s in job["stages"] if s["state"] == "done"]
+    assert done and all(s["seconds"] is not None and s["seconds"] >= 0 for s in done)

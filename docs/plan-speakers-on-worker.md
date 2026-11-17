@@ -1,6 +1,10 @@
 # Plan: telling people apart on the GPU worker (not built)
 
-**Status:** planned, not built. **Decide after measuring** the "frame" stage of a real 20-minute, several-people job (the job log says how long `who is who` took).
+**Status:** planned, not built. **Decision (2026-11-17): not worth building yet.** Measured on a 4-core CPU with a made-up 20-minute 1280x720 video:
+one-person check 3 s; seat discovery (600 frames, YuNet) 23 s; watching mouths ~25 s; voice embeddings ~130 s (650 windows at ~0.2 s). **About 3 minutes in all, 75% of it the voice model.**
+A GPU worker would save roughly 2 minutes, and only on videos with several people, at the price of about a day of work, a new place where a worker's output is trusted, and a server fallback
+that must stay anyway (the worker is a PC that is sometimes off). Stage times are now recorded per job (`Stage.seconds`, shown on the job page): build this if real jobs show the **frame stage over ~4 minutes**
+or the server is seen to stall other jobs while it runs. A cheaper step first: embed fewer windows (a stride) if the voice model is the whole cost.
 
 ## Why it might be worth it
 `seats.build_speaker_map` runs on the server CPU. Its cost for a 20-minute video, rough: face finding (decode at <= 600 frames + YuNet), voice embeddings

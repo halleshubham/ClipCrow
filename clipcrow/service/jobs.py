@@ -68,6 +68,8 @@ class Stage(_M):
     name: str
     state: Literal["pending", "running", "done", "skipped", "failed"] = "pending"
     detail: str = ""
+    started: Optional[float] = None         # when it began running (epoch seconds)
+    seconds: Optional[float] = None         # how long it took, once it has finished
 
 
 class ClipInfo(_M):

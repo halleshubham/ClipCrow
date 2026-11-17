@@ -3,6 +3,13 @@
 What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
+## 2026-11-17 (still later: metrics of job 9a4ddd051616, download all, stage times)
+- **Download all reels**: `GET /api/jobs/<id>/clips.zip` (stored zip of the ready clips, named like the single downloads; bucket-only clips are fetched for it) and a button over the clips of a finished job.
+- **Stage times**: `Stage.started/seconds`, shown on the job page ("took 2 min 10 s"). The log had no timings, so the frame stage of the first real several-people job (6 seats found for 4 people,
+  3 voices, 10 clips) could not be read back; jobs from now on record it.
+- **Seats**: tracks of one head found twice are merged (`seats.merge_seats`); the job showed 6 seats for 4 people (1 and 2, 5 and 6 on top of each other).
+- Worker plan measured, not built (see `docs/plan-speakers-on-worker.md`).
+
 ## 2026-11-17 (later: three improvement ideas)
 - **One person is detected by itself.** `seats.count_faces` looks at 16 frames (a few quick seeks); fewer than ~3 frames with two or more faces = one person: no seat search, no voices, and the empty result is
   cached in `speakers.json`. The form's "Follow one face" is now "One person on screen (skip the people check)" (`multi=off`, the explicit choice).
