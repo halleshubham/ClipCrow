@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, Protocol
@@ -312,7 +313,13 @@ class JobRunner:
             raise ValueError("Wait for the job to finish before editing its clips.")
         with self._edit_lock:
             edl = load_edl(self.store.edl_path(job_id))
-            new, replan = apply_edit(edl, clip_id, edit, source_duration=float(job.source.get("duration", 0)))
+            seat_cx = None
+            if getattr(edit, "follow", None) is not None:
+                from ..seats import load_map, seat_centres
+                sm = load_map(self.store.dir(job_id) / "out")
+                if sm is not None:
+                    seat_cx = seat_centres(sm, float(job.source.get("width") or 16), float(job.source.get("height") or 9))
+            new, replan = apply_edit(edl, clip_id, edit, source_duration=float(job.source.get("duration", 0)), seat_cx=seat_cx)
             if new is edl:
                 return False
             if not self._original(job_id).exists():
@@ -326,6 +333,95 @@ class JobRunner:
         self._changed(job_id)
         self._pool.submit(self._render_clip, job_id, clip_id)
         return True
+
+    def set_speakers(self, job_id: str, overrides: dict[int, int | None]) -> list[str]:
+        """Say which seat each voice belongs to (a person's correction wins over the matching) and plan the framing of every clip that followed the
+        voices again. Raises ValueError (a message for a person). Returns the ids of the clips that render again."""
+        from ..seats import load_map, save_map
+        job = self.store.get(job_id)
+        if job.status != "done":
+            raise ValueError("Wait for the job to finish before changing who is who.")
+        out = self.store.dir(job_id) / "out"
+        sm = load_map(out, usable_only=False)
+        if sm is None or not sm.seats:
+            raise ValueError("This video has no people to choose between.")
+        voices = {t.voice for t in sm.turns}
+        for v, s in overrides.items():
+            if v not in voices:
+                raise ValueError("Unknown voice.")
+            if s is not None and not 0 <= s < len(sm.seats):
+                raise ValueError("Unknown person.")
+        changed = [v for v, s in overrides.items() if sm.seat_of(v) != s]
+        if changed and any(c.render in ("queued", "rendering") for c in job.clips):
+            raise ValueError("A clip is rendering. Try again when it has finished.")
+        if not changed:
+            return []
+        with self._edit_lock:
+            sm.overrides = {**sm.overrides, **overrides}
+            save_map(out, sm)
+        return self._frame_again(job_id)
+
+    def _frame_again(self, job_id: str) -> list[str]:
+        """Plan the framing of every clip that followed faces or voices afresh (with the saved speaker map) and render it again."""
+        queued: list[str] = []
+        with self._edit_lock:
+            edl = load_edl(self.store.edl_path(job_id))
+            if not self._original(job_id).exists():
+                shutil.copyfile(self.store.edl_path(job_id), self._original(job_id))
+            clips = []
+            for c in edl.clips:
+                if c.layout.framing in ("track", "split"):
+                    c = c.model_copy(update={"layout": c.layout.model_copy(update={"framing": "cover", "reframe": [], "split": [], "fit_spans": []})})
+                    queued.append(c.id)
+                clips.append(c)
+            self._write_edl(job_id, edl.model_copy(update={"clips": clips}))
+            for cid in queued:
+                key = (job_id, cid)
+                self._gen[key] = self._gen.get(key, 0) + 1
+                self._replan[key] = "switch"
+                self._mark(job_id, cid, None, render="queued", render_error="", edited=True)
+        for cid in queued:
+            self._pool.submit(self._render_clip, job_id, cid)
+        self._changed(job_id)
+        return queued
+
+    def build_speakers(self, job_id: str) -> bool:
+        """Find who is on screen and which voice is whose for a job that was made without it, then frame its clips again. Runs in the background;
+        ``out/speakers.building`` says so. Returns False when it is already running."""
+        job = self.store.get(job_id)
+        if job.status != "done":
+            raise ValueError("Wait for the job to finish first.")
+        video = self.store.working_video(job_id)
+        if video is None or job.source_removed:
+            raise ValueError("The recording has been removed, so people cannot be told apart in it.")
+        if any(c.render in ("queued", "rendering") for c in job.clips):
+            raise ValueError("A clip is rendering. Try again when it has finished.")
+        flag = self.store.dir(job_id) / "out" / "speakers.building"
+        if flag.exists() and time.time() - flag.stat().st_mtime < 3600:
+            return False
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text("1", encoding="utf-8")
+        self._pool.submit(self._build_speakers, job_id, video, flag)
+        return True
+
+    def _build_speakers(self, job_id: str, video, flag) -> None:
+        from ..seats import build_speaker_map
+
+        def say(msg: str) -> None:
+            self.store.update(job_id, lambda j: j.add_log(msg))
+        try:
+            (flag.parent / "speakers.json").unlink(missing_ok=True)
+            sm = build_speaker_map(video, flag.parent, say=say)
+            if sm is None:
+                say("no people could be told apart in this video; the clips stay as they are")
+            else:
+                n = len(self._frame_again(job_id))
+                say(f"{n} clip(s) are being framed again to follow whoever speaks")
+        except Exception as e:                                                     # never show internals; the log says what happened
+            log.exception("speakers of %s failed", job_id)
+            say(f"telling the people apart failed ({type(e).__name__}); the clips stay as they are")
+        finally:
+            flag.unlink(missing_ok=True)
 
     def edit_transcript(self, job_id: str, edit) -> list[str]:
         """Correct words of the plan's transcript and queue a re-render of the clips that show them. Raises ValueError (a message for a person).
@@ -410,7 +506,8 @@ class JobRunner:
                 with self._edit_lock:
                     edl = load_edl(self.store.edl_path(job_id))
                 sub = edl.model_copy(update={"clips": [c for c in edl.clips if c.id == clip_id]})
-                planned = apply_framing(sub, str(video), multi=replan, graphics=job.params.graphics).clips[0]
+                from ..seats import load_map
+                planned = apply_framing(sub, str(video), multi=replan, graphics=job.params.graphics, speakers=load_map(self.store.dir(job_id) / "out")).clips[0]
                 with self._edit_lock:                            # merge into the CURRENT plan: another edit may have landed
                     edl = load_edl(self.store.edl_path(job_id))
                     clips = []

@@ -50,6 +50,7 @@ class ClipEdit(_M):
     speaker_title: Optional[str] = Field(default=None, max_length=60)
     stat: Optional[str] = Field(default=None, max_length=40)
     framing: Optional[Literal["auto", "cover", "fit_blur"]] = None
+    follow: Optional[int] = Field(default=None, ge=-1, le=9)    # a person on screen to stay on for the whole clip (0 = the first from the left); -1 = back to following the voice
     multi: Optional[Literal["switch", "split", "off"]] = None
     punch_ins: Optional[bool] = None            # slow push-ins at sentence starts: on or off
     drop_pictures: Optional[list[str]] = Field(default=None, max_length=8)   # ids of picture overlays to remove
@@ -163,7 +164,7 @@ def max_seconds_for(clip) -> float:
     return max(MAX_SECONDS, clip.duration)
 
 
-def apply_edit(edl: EDL, clip_id: str, edit: ClipEdit, *, source_duration: float) -> tuple[EDL, Optional[str]]:
+def apply_edit(edl: EDL, clip_id: str, edit: ClipEdit, *, source_duration: float, seat_cx: list[float] | None = None) -> tuple[EDL, Optional[str]]:
     """The edited EDL and, when the framing must be planned again, the multi-speaker mode to plan with.
 
     Framing is re-planned when a person asks for ``auto`` (or a ``multi`` mode), or when they move the cut
@@ -239,11 +240,16 @@ def apply_edit(edl: EDL, clip_id: str, edit: ClipEdit, *, source_duration: float
 
     replan: Optional[str] = None
     layout = d["layout"]
-    if edit.framing in ("cover", "fit_blur"):
+    if edit.follow is not None and edit.follow >= 0:
+        if not seat_cx or edit.follow >= len(seat_cx):
+            raise ValueError("This video has no such person to follow.")
+        d["layout"] = {**layout, "framing": "track", "reframe": [{"t": 0.0, "cx": seat_cx[edit.follow]}], "split": [], "fit_spans": []}
+        changed.append("framing")
+    elif edit.framing in ("cover", "fit_blur"):
         if layout["framing"] != edit.framing or layout.get("reframe") or layout.get("split"):
             d["layout"] = {**layout, "framing": edit.framing, "reframe": [], "split": []}
             changed.append("framing")
-    elif edit.framing == "auto" or edit.multi is not None:
+    elif edit.follow == -1 or edit.framing == "auto" or edit.multi is not None:
         replan = edit.multi or "switch"
         changed.append("framing")
     elif trimmed and layout["framing"] in ("track", "split"):

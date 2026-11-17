@@ -194,3 +194,9 @@ History, incidents and open items are in `development-log.md`: add an entry ther
 
 ## CI
 A green pipeline closes a task, not the push: after pushing, confirm the commit's workflow is green.
+
+## Several people on screen
+- Who is shown is decided by the VOICE (`voices.py` turns -> `seats.py` voice-to-seat map -> `reframe.plan_voices`), never by mouth movement alone; the mouth-movement path in `reframe.py` is the fallback.
+- `speakers.json` belongs to the video it was made from (size + mtime signature); a re-cut or a new working video rebuilds it. A person's corrections live in its `overrides` and always win.
+- Anything a model downloads is pinned (`voices.MODEL_REVISION` once checked) and its failure must degrade to the old behaviour, never fail the job. The YuNet model is MIT (OpenCV zoo): keep its licence note.
+- Tests never download a model: `CLIPCROW_SPEAKERS=0` in `tests/conftest.py`; the speaker tests pass a tone-pitch embedder and a fixed-faces detector.

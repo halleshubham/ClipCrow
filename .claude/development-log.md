@@ -3,6 +3,18 @@
 What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
+## 2026-11-17 (job 1f01b69cd70b: four people on screen, one or two talk, the reel showed the wrong one)
+- **The voice decides who is shown.** `voices.py` finds who speaks when (WavLM speaker embeddings via `transformers`, 1.5 s windows, average-linkage clustering, turns snapped to pauses); `seats.py`
+  finds the fixed seats (YuNet face detector, vendored ONNX in `clipcrow/models/`, MIT; falls back to the Haar cascade) and matches each voice to the seat whose mouth is busier while it is heard
+  (lift >= 1.15 on a few watched turns per voice, one voice per seat, brute-force assignment). A voice with no seat is off screen. Saved as `out/speakers.json` (+ `speakers.jpg`, not mirrored to R2).
+  `reframe.plan_voices` cuts to the speaker's seat at each change of voice (hard cut), ignores turns under 1 s, groups seats that fit one window, holds the last speaker through a short off-screen voice
+  and shows the whole frame through one longer than 4 s. The old mouth-movement guess is only the fallback (no map, one voice, graphics mode, `multi=off`).
+- **Cost/limits.** Only videos with >= 2 seats pay for voices (a few seconds of face finding otherwise); a 20-minute video takes a few minutes on the server CPU (face finding at <= 600 frames,
+  ~0.2 s per voice window, a few hundred mouth frames). It assumes a camera that stays put. `CLIPCROW_SPEAKERS=0` switches voices off (tests set it). A model that will not load never fails a job.
+- **Person in the loop.** Job page card "Who is who on screen" (picture with numbered seats, a sample of each voice, a menu per voice) -> `PUT /api/jobs/<id>/speakers` -> the clips that followed voices
+  are framed again. A job made before this can run "Find who is speaking" (`POST .../speakers/build`, background). Clip editor: "Which person" (stay on person N, or follow the voice).
+- **Not verified on the real source** (it cannot be fetched): checked on made-up videos with known speakers, and the real YuNet + WavLM components on a wide copy of a real reel (2 seats, 2 voices).
+
 ## 2026-11-16 (market research on retake removal: Descript, Gling, Tella, FireCut, Smart-Cut)
 - **Reviewable cuts.** `GET /api/jobs/<id>/cleanup` lists every applied cut AND the AI's unapplied suggestions with a number; the job page has a switch for each and "Cut again with my choices"
   (`POST .../cleanup/review {applied: [numbers]}`). The choices are saved as `out/cleanup.review.json`; the job runs again from the saved words (`transcript.original.json`) and the ORIGINAL upload with

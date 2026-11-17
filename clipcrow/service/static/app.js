@@ -587,6 +587,62 @@ async function jobView(jobId) {
   const cutCard = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'What was cut from your recording' }), el('div', { style: { marginTop: '12px' } }, cutBody));
   const trBody = el('div', { class: 'small muted', text: 'Loading…' });
   const trCard = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'Check or fix the words (optional)' }), el('div', { style: { marginTop: '12px' } }, trBody));
+  const whoBody = el('div', { class: 'small muted', text: 'Loading…' });
+  const whoCard = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'Who is who on screen (optional)' }), el('div', { style: { marginTop: '12px' } }, whoBody));
+  let whoLoaded = false;
+  async function loadWho() {
+    if (whoLoaded || job.status !== 'done' || job.source_removed) return;
+    whoLoaded = true;
+    try {
+      const r = await api(`/jobs/${jobId}/speakers`);
+      if (!r.available) {
+        if (!r.can_build && !r.building) { whoCard.hidden = true; return; }
+        whoCard.hidden = false;
+        const go = el('button', { class: 'btn', type: 'button', text: 'Find who is speaking', disabled: !!r.building });
+        const note = el('div', { class: 'small', role: 'status', text: r.building ? 'Working on it. This takes a few minutes; the activity log says how far it is.' : '' });
+        go.addEventListener('click', async () => {
+          go.disabled = true;
+          try { await api(`/jobs/${jobId}/speakers/build`, { method: 'POST' }); note.textContent = 'Started. This takes a few minutes; the clips are framed again when it is done.'; } catch (ex) { note.textContent = ex.message; go.disabled = false; }
+        });
+        whoBody.className = '';
+        whoBody.replaceChildren(el('p', { class: 'small muted', text: 'If several people sit in the picture and one or two talk at a time, the app can listen to the voices and show the one who is speaking. This video was made without it.' }), el('div', { class: 'row' }, go, note));
+        setTimeout(() => { whoLoaded = false; }, 15000);
+        return;
+      }
+      whoCard.hidden = false;
+      const msg = el('div', { class: 'small', role: 'status' });
+      const save = el('button', { class: 'btn primary', type: 'button', text: 'Save and frame the clips again', disabled: true });
+      const picks = [];
+      const rows = r.voices.map((v) => {
+        const sel = el('select', { id: `voice-${v.voice}` }, [el('option', { value: '', text: 'Off screen (nobody here)' }), ...r.seats.map((s) => el('option', { value: String(s.n), text: `Person ${s.n}` }))]);
+        sel.value = v.seat ? String(v.seat) : '';
+        sel.addEventListener('change', () => { save.disabled = !picks.some(([vv, ss]) => ss.value !== (vv.seat ? String(vv.seat) : '')); });
+        picks.push([v, sel]);
+        const mins = v.seconds >= 90 ? `${Math.round(v.seconds / 60)} min` : `${v.seconds} s`;
+        return el('div', { class: 'who-row' },
+          el('div', {}, el('strong', { text: `Voice ${v.voice + 1}` }), el('span', { class: 'muted', text: ` · speaks for about ${mins}${v.changed ? ' · set by you' : ''}` })),
+          el('audio', { controls: true, preload: 'none', src: `/api/jobs/${jobId}/speakers/${v.voice}/sample`, 'aria-label': `Hear voice ${v.voice + 1}` }),
+          el('div', {}, el('label', { class: 'field', for: sel.id, text: 'Whose voice is this?' }), sel));
+      });
+      save.addEventListener('click', async () => {
+        const voices = {};
+        for (const [v, sel] of picks) voices[String(v.voice)] = sel.value ? parseInt(sel.value, 10) : null;
+        save.disabled = true;
+        msg.textContent = 'Saving…';
+        try {
+          const done = await api(`/jobs/${jobId}/speakers`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voices }) });
+          msg.textContent = done.clips.length ? `Saved. ${done.clips.length} clip(s) are being framed again.` : 'Nothing changed.';
+          whoLoaded = false;
+          setTimeout(() => { whoBody.replaceChildren(); loadWho(); }, 1200);
+        } catch (ex) { msg.textContent = ex.message; }
+      });
+      whoBody.className = '';
+      whoBody.replaceChildren(...[
+        el('p', { class: 'small muted', text: 'Each clip cuts to the person whose voice you hear. The app matched the voices to the people by watching whose mouth moves. If a voice is matched to the wrong person, or to nobody because the speaker is off camera, say so here: only the clips that followed the voices are framed again.' }),
+        r.picture ? el('img', { class: 'who-pic', src: `/api/jobs/${jobId}/speakers/picture`, alt: 'The people on screen, numbered from the left' }) : null,
+        el('div', {}, rows), el('div', { class: 'row' }, save, msg)].filter(Boolean));
+    } catch (_) { whoLoaded = false; whoCard.hidden = true; }
+  }
   let trLoaded = false;
   async function loadTranscript() {
     if (trLoaded || job.status !== 'done' || job.source_removed) return;
@@ -808,6 +864,7 @@ async function jobView(jobId) {
     renderClips();
     loadUsage();
     loadCuts();
+    loadWho();
     loadTranscript();
   }
 
@@ -830,7 +887,7 @@ async function jobView(jobId) {
       el('section', { class: 'card' }, stages),
       clipsSection,
       logCard,
-      cutCard, trCard, usage));
+      cutCard, whoCard, trCard, usage));
   update();
   timer = setTimeout(poll, 1500);
   return { cleanup() { dead = true; clearTimeout(timer); } };
@@ -854,6 +911,8 @@ async function jobsView() {
 
 async function clipEditorView(jobId, clipId) {
   let view = await api(`/jobs/${jobId}/clips/${clipId}`);
+  let seatInfo = null;
+  try { seatInfo = await api(`/jobs/${jobId}/speakers`); } catch (_) { seatInfo = null; }        // only a video with several people has seats
   let timer = null, dead = false, pick = 'start', shownRev = null;
   const base = `/jobs/${jobId}/clips/${clipId}`;
   const f = {};
@@ -911,6 +970,9 @@ async function clipEditorView(jobId, clipId) {
     ['auto', 'Follow the faces (plan it again)'], ['cover', 'Centre crop'], ['fit_blur', 'Whole frame over a blurred copy']], '');
   choose('multi', [['switch', 'Cut to whoever is talking'], ['split', 'Stack two people'], ['off', 'Follow one face']], 'switch');
   const multiField = field('When several people are on screen', f.multi);
+  choose('follow', [['', 'Leave as it is'], ['-1', 'Follow whoever is speaking'], ...(seatInfo ? seatInfo.seats.map((s) => [String(s.n - 1), `Stay on person ${s.n} (from the left)`]) : [])], '');
+  const followField = field('Which person', f.follow, 'The picture stays on one person for the whole clip, or follows the voices.');
+  followField.hidden = !seatInfo;
   const syncMulti = () => { multiField.hidden = f.framing.value !== 'auto'; };
   f.framing.addEventListener('change', syncMulti); syncMulti();
   f.punch = el('input', { id: 'punch', type: 'checkbox' }); f.punch.checked = view.punch_ins;
@@ -948,6 +1010,7 @@ async function clipEditorView(jobId, clipId) {
     const drop = [...app.querySelectorAll('[data-drop]')].filter((x) => x.checked).map((x) => x.dataset.drop);
     if (drop.length) out.drop_pictures = drop;
     if (f.framing.value) { out.framing = f.framing.value; if (f.framing.value === 'auto') out.multi = f.multi.value; }
+    if (f.follow.value !== '') out.follow = parseInt(f.follow.value, 10);
     return out;
   }
 
@@ -1027,7 +1090,7 @@ async function clipEditorView(jobId, clipId) {
         group('Sound', el('label', { class: view.music.available ? 'check' : 'check muted', for: 'music_on' }, f.music, el('span', { text: view.music.available ? 'Background music (ducks under the speech)' : 'Background music (this job has none)' })),
           el('label', { class: 'check', for: 'sfx_on' }, f.sfx, el('span', {}, el('strong', { text: 'Quiet sound cues' }), el('br'),
           el('span', { class: 'muted', text: 'A soft pop, whoosh or tick under the speech where a title, card, picture or push-in appears. Never on every word.' })))),
-        group('Framing', field('Picture', f.framing), multiField,
+        group('Framing', field('Picture', f.framing), multiField, followField,
           el('label', { class: 'check', for: 'punch' }, f.punch, el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
             el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back.' })))),
         err,

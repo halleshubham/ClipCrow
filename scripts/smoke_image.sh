@@ -17,6 +17,7 @@ docker run --rm --shm-size=1g -v "$vol/data:/data" -v "$vol/models:/models" "$IM
 
 say "libraries the server needs import"
 docker run --rm "$IMG" python -c "import faster_whisper, cv2, boto3, fastapi, anthropic, playwright, torch, transformers, sentencepiece, soundfile; print('imports ok')"
+docker run --rm "$IMG" python -c "from clipcrow import seats; import cv2; assert seats.FACE_MODEL.is_file() and hasattr(cv2, 'FaceDetectorYN'); seats.YuNetDetector()._load(64, 64); print('face model ok')"
 if [ "$VARIANT" = "gpu" ]; then
   docker run --rm "$IMG" python -c "import nvidia.cudnn, nvidia.cublas; print('CUDA libraries present')"
 fi

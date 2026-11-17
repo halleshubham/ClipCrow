@@ -325,23 +325,38 @@ def smooth_path(subject: list[tuple[float, Optional[float]]], duration: float, c
     return out
 
 
+def _default_detector():
+    from .seats import default_detector          # YuNet when available (finds small and turned faces), else the Haar cascade
+    return default_detector()
+
+
 def plan_framing(video: str, start: float, end: float, *, detector: FaceDetector | None = None,
                  out_aspect: float = OUT_ASPECT, min_coverage: float = MIN_COVERAGE,
-                 multi: str = "switch", graphics: bool = False) -> Framing:
-    """``multi``: what to do when two or more people are on screen: "switch" (cut to whoever talks),
+                 multi: str = "switch", graphics: bool = False, speakers=None) -> Framing:
+    """``speakers``: a ``seats.SpeakerMap`` (who sits where, which voice is whose). With one, the picture follows the VOICE: it cuts to the seat of whoever is
+    heard (see ``plan_voices``); the mouth-movement guess below is only the fallback for a recording with no usable map.
+    ``multi``: what to do when two or more people are on screen: "switch" (cut to whoever talks),
     "split" (stack two people) or "off" (follow the main face only, as before).
     ``graphics``: the source has slides, cards or b-roll between shots of the speaker. Those stretches are found (``graphics.graphic_spans``)
     and shown whole; the camera ignores faces on them (a portrait on a slide is not a speaker)."""
     src_w, src_h = probe_size(video)
     if src_w / src_h <= out_aspect * 1.05:               # already vertical (or nearly): a centre crop is right
         return Framing("cover")
-    samples = sample_faces(video, start, end, detector or HaarDetector(), patches=multi != "off", thumbs=graphics)
+    if speakers is not None and multi != "off" and not graphics:                     # the voices decide: no need to watch mouths at all
+        f = plan_voices(speakers, start, end, (src_h * out_aspect) / src_w, multi)
+        if f:
+            return f
+    samples = sample_faces(video, start, end, detector or _default_detector(), patches=multi != "off", thumbs=graphics)
     spans = graphic_spans(samples, end - start, src_w, src_h) if graphics else []
     if spans:
         if sum(b - a for a, b in spans) >= 0.9 * (end - start):
             return Framing("fit_blur", coverage=0.0)             # it is all graphics: nothing to track
         samples = [Sample(s.t, [], [], s.thumb) if any(a <= s.t < b for a, b in spans) else s for s in samples]
     crop_frac = (src_h * out_aspect) / src_w
+    if speakers is not None and multi != "off" and spans == []:
+        f = plan_voices(speakers, start, end, crop_frac, multi)
+        if f:
+            return f
     people = speaker_tracks(samples, src_w, src_h) if multi != "off" else []
     if len(people) >= 2:
         f = _plan_people(people, samples, end - start, crop_frac, src_w, src_h, multi)
@@ -380,3 +395,115 @@ def _plan_people(people: list[dict], samples: list[Sample], duration: float, cro
     segs = segments(times, active_speakers(people, times), duration)
     path = cut_path(people, segs, crop_frac, src_w)
     return Framing("track", [(round(t, 3), round(cx, 4)) for t, cx in path], coverage, people=2)
+
+
+# --- the voice decides ---------------------------------------------------------------------------
+
+MIN_TURN = 1.0             # a turn shorter than this ("हो", a laugh) does not move the picture
+OFFSCREEN_WHOLE = 4.0      # a voice with no seat (the interviewer) for longer than this: show the whole frame; shorter: stay on the last speaker
+
+
+def _seat_groups(seats, crop_frac: float) -> list[list[int]]:
+    """Seats that fit one crop window are one picture (no cut between two people sitting shoulder to shoulder)."""
+    groups: list[list[int]] = []
+    for i in sorted(range(len(seats)), key=lambda k: seats[k].cx):
+        if groups and seats[i].cx - seats[groups[-1][0]].cx < GROUP_SPAN * crop_frac:
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    return groups
+
+
+def voice_segments(sm, start: float, end: float, crop_frac: float) -> tuple[list[tuple[float, float, Optional[int]]], list[list[int]]]:
+    """The clip cut into ``(t0, t1, picture)`` by who is heard (clip time). ``picture`` indexes the seat groups; None is "nobody on screen"."""
+    groups = _seat_groups(sm.seats, crop_frac)
+    group_of = {i: g for g, members in enumerate(groups) for i in members}
+    dur = end - start
+    raw: list[list] = []
+    for t in sm.turns:
+        a, b = max(t.start, start) - start, min(t.end, end) - start
+        if b - a <= 0.05:
+            continue
+        seat = sm.seat_of(t.voice)
+        raw.append([a, b, group_of.get(seat) if seat is not None else None])
+    raw.sort()
+    if not raw:
+        return [], groups
+    for a, b in zip(raw, raw[1:]):                                          # the pause between two turns goes to the one that just spoke
+        if b[0] > a[1]:
+            a[1] = b[0]
+    raw[0][0] = 0.0
+    raw[-1][1] = dur
+    segs: list[list] = []
+    for a, b, g in raw:                                                     # a short turn is absorbed by the neighbour before it
+        if segs and (segs[-1][2] == g or b - a < MIN_TURN):
+            segs[-1][1] = b
+        else:
+            segs.append([a, b, g])
+    merged: list[list] = []
+    for a, b, g in segs:
+        if merged and merged[-1][2] == g:
+            merged[-1][1] = b
+        else:
+            merged.append([a, b, g])
+    return [(a, b, g) for a, b, g in merged], groups
+
+
+def plan_voices(sm, start: float, end: float, crop_frac: float, multi: str) -> Optional[Framing]:
+    """Framing from who is heard: cut to the seat of the speaker at every change of voice (no pan: a hard cut), hold the last speaker through
+    a short off-screen voice, show the whole frame through a long one. None when the map says nothing about this stretch."""
+    if not sm.usable:
+        return None
+    segs, groups = voice_segments(sm, start, end, crop_frac)
+    if not segs or all(g is None for _, _, g in segs):
+        return None
+    dur = end - start
+    lo, hi = crop_frac / 2, 1 - crop_frac / 2
+
+    def centre(g: int) -> float:
+        xs = [sm.seats[i].cx for i in groups[g]]
+        return min(max(sum(xs) / len(xs), lo), hi)
+    shown: list[list] = []                                                  # [t0, t1, group | None, whole]
+    for a, b, g in segs:
+        if g is None:
+            if b - a >= OFFSCREEN_WHOLE:
+                shown.append([a, b, None, True])
+                continue
+            g = shown[-1][2] if shown and shown[-1][2] is not None else None
+        if g is None and not shown:                                         # starts off screen: take the first seat that speaks
+            g = next((x for _, _, x in segs if x is not None), None)
+        if shown and shown[-1][2] == g and not shown[-1][3] and not (g is None):
+            shown[-1][1] = b
+        else:
+            shown.append([a, b, g, False])
+    if multi == "split":                                                    # two seats stacked: the two that are heard most
+        time_by = {}
+        for a, b, g in segs:
+            if g is not None:
+                time_by[g] = time_by.get(g, 0.0) + (b - a)
+        top = sorted(time_by, key=lambda g: -time_by[g])[:2]
+        if len(top) == 2:
+            top.sort(key=lambda g: centre(g))
+            pts = [(sum(sm.seats[i].cx for i in groups[g]) / len(groups[g]), sum(sm.seats[i].cy for i in groups[g]) / len(groups[g])) for g in top]
+            return Framing("split", coverage=1.0, split=pts, people=2)
+    keys: list[tuple[float, float]] = []
+    wholes: list[tuple[float, float]] = []
+    for a, b, g, whole in shown:
+        if whole or g is None:
+            wholes.append((round(a, 3), round(b, 3)))
+            if not keys:
+                keys.append((0.0, 0.5))
+            continue
+        cx = round(centre(g), 4)
+        if not keys or keys[-1][1] != cx:
+            t = round(a, 3)
+            if keys and keys[-1][0] >= t:
+                keys.pop()
+            keys.append((t, cx))
+    if not keys:
+        return None
+    if keys[0][0] > 0:
+        keys.insert(0, (0.0, keys[0][1]))
+    heard = sum(b - a for a, b, g, whole in shown if not whole and g is not None)
+    people = len({g for _, _, g, whole in shown if g is not None and not whole})
+    return Framing("track", keys, heard / max(dur, 0.001), people=max(1, people), fit_spans=wholes)

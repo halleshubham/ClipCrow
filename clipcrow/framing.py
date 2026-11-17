@@ -6,7 +6,7 @@ from .reframe import FaceDetector, plan_framing
 
 
 def apply_framing(edl: EDL, video: str, *, detector: FaceDetector | None = None, say=lambda _m: None,
-                  multi: str = "switch", graphics: bool = False) -> EDL:
+                  multi: str = "switch", graphics: bool = False, speakers=None) -> EDL:
     """A new EDL whose clips carry ``layout.framing`` / ``layout.reframe``. A clip whose layout already
     asks for a framing other than ``cover`` is left alone (a person's choice wins over the analysis)."""
     clips = []
@@ -14,8 +14,8 @@ def apply_framing(edl: EDL, video: str, *, detector: FaceDetector | None = None,
         if c.layout.framing != "cover" or c.layout.reframe:
             clips.append(c)
             continue
-        f = plan_framing(video, c.source_in, c.source_out, detector=detector, multi=multi, graphics=graphics)
-        say(f"{c.id}: {f.framing}" + (f" (face in {f.coverage:.0%} of samples)" if f.framing != "cover" else "")
+        f = plan_framing(video, c.source_in, c.source_out, detector=detector, multi=multi, graphics=graphics, speakers=speakers)
+        say(f"{c.id}: {f.framing}" + (f" ({'a voice is heard' if speakers is not None and f.people else 'face'} in {f.coverage:.0%} of samples)" if f.framing != "cover" else "")
             + (f", {f.people} people" if f.people > 1 else "")
             + (f", {len(f.fit_spans)} graphic(s) shown whole ({sum(b - a for a, b in f.fit_spans):.0f} s)" if f.fit_spans else ""))
         layout = c.layout.model_copy(update={

@@ -105,3 +105,6 @@ def pytest_unconfigure(config):
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(code)
+
+
+os.environ.setdefault("CLIPCROW_SPEAKERS", "0")       # no voice model is ever downloaded by a test; the speaker tests pass their own embedder

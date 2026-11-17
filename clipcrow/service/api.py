@@ -13,6 +13,8 @@ import hashlib
 import os
 import hmac
 import json
+import subprocess
+import time
 import logging
 import math
 import re
@@ -25,7 +27,7 @@ from pathlib import Path
 from typing import Literal, Optional, Union
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
@@ -63,6 +65,10 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' 
 # A failure of something we call (SocioBird, the payment service, the bucket) is 424, never 502: Cloudflare, which sits in front of a
 # hosted server, replaces an origin's 502/504 with its own page, and the person would never see our message.
 UPSTREAM = 424
+
+
+class SpeakerChoice(BaseModel):
+    voices: dict[str, Optional[int]] = Field(max_length=30)     # voice number -> person (1 = first from the left), null = off screen
 
 
 class CleanupReview(BaseModel):
@@ -1262,6 +1268,73 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         except ValueError as e:
             raise HTTPException(422, str(e)[:300])
         return {"changed": changed, "render": store.get(job_id).clip(clip_id).model_dump()}
+
+    @app.get("/api/jobs/{job_id}/speakers", dependencies=[Depends(authed)])
+    def speakers_get(job_id: str, request: Request) -> dict:
+        """Who is on screen and which voice is whose, for the "who is who" card. 404 when the video has one person (or a single camera shot is not fixed)."""
+        from ..seats import load_map
+        job = job_or_404(job_id, request)
+        out = store.dir(job_id) / "out"
+        sm = load_map(out)
+        flag = out / "speakers.building"
+        building = flag.exists() and time.time() - flag.stat().st_mtime < 3600
+        if sm is None:
+            wide = (job.source.get("width") or 0) > 1.2 * (job.source.get("height") or 1)
+            return {"available": False, "building": building, "can_build": bool(job.status == "done" and wide and not job.source_removed and store.working_video(job_id) is not None)}
+        spoken: dict[int, float] = {}
+        for t in sm.turns:
+            spoken[t.voice] = spoken.get(t.voice, 0.0) + (t.end - t.start)
+        return {"available": True, "building": building, "seats": [{"n": i + 1, "cx": s.cx, "cy": s.cy} for i, s in enumerate(sm.seats)],
+                "voices": [{"voice": v, "seconds": round(spoken[v]), "seat": (None if sm.seat_of(v) is None else sm.seat_of(v) + 1),
+                            "changed": v in sm.overrides} for v in sorted(spoken)],
+                "picture": (store.dir(job_id) / "out" / "speakers.jpg").is_file()}
+
+    @app.post("/api/jobs/{job_id}/speakers/build", dependencies=[Depends(authed)])
+    def speakers_build(job_id: str, request: Request) -> dict:
+        """Find who is on screen and whose voice is whose, for a job made without it. Takes a few minutes; the clips are framed again when it is done."""
+        job_or_404(job_id, request)
+        try:
+            started = runner.build_speakers(job_id)
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        return {"started": started}
+
+    @app.get("/api/jobs/{job_id}/speakers/picture", dependencies=[Depends(authed)])
+    def speakers_picture(job_id: str, request: Request):
+        job_or_404(job_id, request)
+        path = store.dir(job_id) / "out" / "speakers.jpg"
+        if not path.is_file():
+            raise HTTPException(404, "No picture.")
+        return FileResponse(path, media_type="image/jpeg")
+
+    @app.get("/api/jobs/{job_id}/speakers/{voice}/sample", dependencies=[Depends(authed)])
+    def speakers_sample(job_id: str, voice: int, request: Request):
+        """A few seconds of one voice (its longest turn), so a person can hear who it is."""
+        from ..seats import load_map
+        job_or_404(job_id, request)
+        sm = load_map(store.dir(job_id) / "out")
+        video = store.working_video(job_id)
+        turns = [t for t in (sm.turns if sm else []) if t.voice == voice]
+        if not turns or video is None or not 0 <= voice <= 20:
+            raise HTTPException(404, "No such voice.")
+        t = max(turns, key=lambda x: x.end - x.start)
+        start, length = t.start + max(0.0, (t.end - t.start - 6.0) / 2), min(6.0, t.end - t.start)
+        r = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{length:.2f}", "-i", str(video), "-vn", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "64k", "-f", "mp3", "-"],
+                           capture_output=True, timeout=60)
+        if r.returncode != 0 or not r.stdout:
+            raise HTTPException(404, "No sample.")
+        return Response(r.stdout, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+    @app.put("/api/jobs/{job_id}/speakers", dependencies=[Depends(authed)])
+    def speakers_put(job_id: str, body: SpeakerChoice, request: Request) -> dict:
+        """Say which person each voice is (1 = the first from the left, null = off screen); the clips that followed the voices are planned again."""
+        job_or_404(job_id, request)
+        try:
+            overrides = {int(k): (None if v is None else int(v) - 1) for k, v in body.voices.items()}
+            clips = runner.set_speakers(job_id, overrides)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(409, str(e))
+        return {"clips": clips}
 
     @app.get("/api/jobs/{job_id}/transcript", dependencies=[Depends(authed)])
     def transcript_get(job_id: str, request: Request) -> dict:
