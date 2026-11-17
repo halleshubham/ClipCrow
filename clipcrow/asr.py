@@ -257,6 +257,11 @@ def transcribe(media: str, language: str | None = None, *, config: AsrConfig | N
     if lang in indic.INDIC_LANGS and cfg.indic_model and cfg.indic_model != cfg.model:
         say(f"Indic audio: using {cfg.indic_model}")
         model = load(cfg, cfg.indic_model)
+    if lang in ("hi", "mr") and not language:                            # Whisper hears Marathi as Hindi often: the words of a short sample decide
+        settled = indic.settle_hi_mr(model, media, lang)
+        if settled != lang:
+            say(f"the speech reads as {'Marathi' if settled == 'mr' else 'Hindi'}, not {'Marathi' if lang == 'mr' else 'Hindi'}: using {settled}")
+            params, lang = {"language": settled, **indic.prompt_params(model, settled)}, settled
     if lang in asr_sravaani.LANGS and asr_sravaani.enabled():
         try:
             say(f"recognising {lang} with SraVaani")

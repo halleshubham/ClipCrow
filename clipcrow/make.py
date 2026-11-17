@@ -121,6 +121,12 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
             takes_check = "check" in inspect.signature(transcribe_fn).parameters      # a double in a test may not
             tr = transcribe_fn(str(video), language, progress=say, **({"check": hk.check} if takes_check else {}))
             release_models()
+            if not language and tr.language in ("hi", "mr"):                       # a worker or an older recogniser may have labelled Marathi as Hindi (or the reverse): the words decide
+                from .indic import language_from_text
+                said = language_from_text(" ".join(w.w for w in tr.words))
+                if said and said != tr.language:
+                    say(f"the words are {'Marathi' if said == 'mr' else 'Hindi'}, not {'Marathi' if tr.language == 'mr' else 'Hindi'}: the titles and the text correction use {'Marathi' if said == 'mr' else 'Hindi'}")
+                    tr.language = said
             (out / "transcript.json").write_text(json.dumps(
                 {"language": tr.language, "words": [w.model_dump(exclude_none=True) for w in tr.words]},
                 ensure_ascii=False, indent=1), encoding="utf-8")

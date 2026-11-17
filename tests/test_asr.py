@@ -390,3 +390,54 @@ def test_one_word_stretched_over_seconds_of_speech_is_cut_down_and_the_speech_is
 def test_a_slow_but_real_word_is_left_alone():
     from clipcrow.asr import LONG_WORD
     assert LONG_WORD >= 1.5                                                 # a drawn-out word of a second is normal speech
+
+
+# --- Hindi or Marathi: the words decide --------------------------------------------------------------------------
+
+MR_TEXT = "नेमकं लिंगायतांचं तत्वज्ञान काय आहे आणि म्हणजे आपण नाही तर काय आहेत आम्ही पण म्हणून तुम्ही मी होतं झालं केलं असतं आहोत"
+HI_TEXT = "यह एक बहुत अच्छी बात है और हम सब जानते हैं कि क्या हो रहा है लेकिन वह नहीं कर सकता था और उन्होंने कहा कि यह सही है और हम यहाँ हैं"
+
+
+def test_the_words_tell_marathi_from_hindi_and_say_nothing_when_unsure():
+    assert indic.language_from_text(MR_TEXT) == "mr" and indic.language_from_text(HI_TEXT) == "hi"
+    assert indic.language_from_text("तो की जो का होता तो की जो का") is None                  # only words both languages use
+    assert indic.language_from_text("आहे नाही " * 3 + HI_TEXT) is None or indic.language_from_text("आहे नाही " * 3 + HI_TEXT) == "hi"
+    assert indic.language_from_text(MR_TEXT[:20]) is None                                      # too few marker words
+    assert indic.language_from_text("") is None
+
+
+def test_whisper_hearing_marathi_as_hindi_is_corrected_by_what_the_decoded_words_say():
+    m = FakeModel([seg(MR_TEXT, W(" नेमकं", 0.0, 0.5), W(" आहे", 0.5, 1.1))], language="hi", detect=("hi", 0.8))
+    said = []
+    tr = asr.transcribe("x.mp4", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}), progress=said.append)
+    assert m.transcribe_kwargs["language"] == "mr"                                               # the real decode ran in Marathi
+    assert any("reads as Marathi, not Hindi" in x for x in said) and tr.language in ("mr", "hi")
+
+
+def test_a_pinned_language_is_never_second_guessed_and_hindi_stays_hindi():
+    m = FakeModel([seg(MR_TEXT, W(" आहे", 0.0, 0.5))], language="hi", detect=("hi", 0.8))
+    asr.transcribe("x.mp4", "hi", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": m}))
+    assert m.transcribe_kwargs["language"] == "hi"                                               # the person said Hindi
+    h = FakeModel([seg(HI_TEXT, W(" है", 0.0, 0.5))], language="hi", detect=("hi", 0.8))
+    asr.transcribe("x.mp4", config=asr.AsrConfig(model="small", indic_model=None), model_loader=loader({"small": h}))
+    assert h.transcribe_kwargs["language"] == "hi"
+
+
+def test_a_recogniser_that_labelled_marathi_as_hindi_is_corrected_after_transcription(tmp_path):
+    from clipcrow.make import make
+    from clipcrow.planner import FakeLLM, PlannerOptions
+    from clipcrow.planner.transcript import parse_transcript
+    words = [{"w": w, "s": i * 0.4, "e": i * 0.4 + 0.3} for i, w in enumerate((MR_TEXT + " ") .split() * 6)]
+    said, seen = [], {}
+
+    def fake_asr(media, language=None, progress=None):
+        return parse_transcript({"language": "hi", "words": words})
+
+    def boom_llm(purpose, prompt, schema):
+        seen["lang"] = prompt[:2000]
+        raise RuntimeError("stop here")
+    try:
+        make(str(tmp_path / "v.mp4"), tmp_path / "o", transcribe_fn=fake_asr, llm=FakeLLM(boom_llm), render=False, say=said.append, refine_text=False)
+    except Exception:
+        pass
+    assert any("the words are Marathi, not Hindi" in m for m in said)

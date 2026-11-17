@@ -3,6 +3,13 @@
 What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
+## 2026-11-17 (job ba56794375f8: Marathi labelled Hindi)
+- A 53-minute Marathi podcast was labelled Hindi (`vote_language`: Whisper's sound-only guess on 3 x 30 s windows, majority wins). The cost was visible: the planner wrote every title and hook in HINDI
+  (`language_instruction("hi")`), while the captions (the speaker's words) stayed Marathi. The words themselves were unmistakable (852 Marathi-only function words against ~0 Hindi-only ones).
+- Fix, two layers: `indic.settle_hi_mr` decodes the vote windows in the chosen language and lets `language_from_text` (Marathi-only vs Hindi-only function words, >= 8 of one and >= 3x the other) overrule the
+  label BEFORE the long decode, and `make()` relabels after any transcription (a worker's, SraVaani's, a reused one) with the same rule. A language the person picked is never second-guessed.
+  Workaround for older jobs: pick Marathi in "Spoken language" instead of Auto-detect.
+
 ## 2026-11-17 (interface audit: icons, platform logos, short copy)
 - Audited every page (new job, jobs, job, clip editor, share, styles, brand) at 360 px and desktop in both themes. Findings: text-only buttons and navigation, platform names as plain words on the share page, a long
   grey paragraph under almost every field and checkbox, an empty "Posts" card, unlabeled technical units on the brand page.

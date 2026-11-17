@@ -95,6 +95,53 @@ def vote_language(model, media: str, *, duration=None, window=None):
     return lang, best[lang]
 
 
+# Words that settle Marathi against Hindi once there is text. Only words that belong to ONE of the two (तो, की, जो, का, होता are both) and that every few sentences use.
+MARATHI_MARKERS = frozenset("""आहे आहेत आहोत आहात नाही नाहीत नाहीये नाहीयेत आणि काय म्हणजे म्हणून आपण आम्ही तुम्ही मी पण तर होतं होतो होती झालं झाला झाली केलं केला
+केली असतं असते नसतं मध्ये त्यांनी त्यांच्या आपल्या माझं माझी तुमचं आमचं म्हणतात म्हणाले करतात करतो करते होऊ ज्या ज्याला कुणी कोणी असं तसं एक ही हे हा""".split())
+HINDI_MARKERS = frozenset("""है हैं हूँ हो नहीं और क्या में था थे थी लेकिन यह वह हम मैं आप कि से को के रहा रही रहे करना कर होगा गया गई गए हुआ हुई हुए सकता सकती चाहिए
+बहुत अपने उनके इसके इसलिए जिसे तुम उसे उन्हें इन्हें कुछ सब""".split())
+for _both in ("हो", "के", "को", "कर", "एक", "ही", "हे", "हा", "से", "सब"):               # a marker must not be a word the other language also uses
+    MARATHI_MARKERS = MARATHI_MARKERS - {_both}
+    HINDI_MARKERS = HINDI_MARKERS - {_both}
+MARKER_MIN = 8             # at least this many marker words, and ...
+MARKER_RATIO = 3.0         # ... this many times more of one language's than of the other's, before text overrules a label
+
+
+def language_from_text(text: str) -> str | None:
+    """"mr" or "hi" when the words themselves are clearly one of the two (Whisper's guess from sound alone often is not), else None."""
+    import re
+    tokens = re.findall(r"[\u0900-\u097F]+", text)
+    mr = sum(1 for t in tokens if t in MARATHI_MARKERS)
+    hi = sum(1 for t in tokens if t in HINDI_MARKERS)
+    if mr >= MARKER_MIN and mr >= MARKER_RATIO * max(hi, 1):
+        return "mr"
+    if hi >= MARKER_MIN and hi >= MARKER_RATIO * max(mr, 1):
+        return "hi"
+    return None
+
+
+def settle_hi_mr(model, media: str, lang: str, *, duration=None, window=None) -> str:
+    """Whisper tells Hindi from Marathi by sound, a few windows at a time, and often says Hindi for Marathi. Decode up to three windows in the language it chose and
+    read the WORDS: when they are clearly the other one, that is the language. Any failure leaves ``lang`` as it was."""
+    if lang not in ("hi", "mr"):
+        return lang
+    try:
+        duration = duration or media_duration
+        window = window or audio_window
+        total = duration(media) or 60
+        offsets = [0] + ([int(total / 3)] if total > 90 else []) + ([int(2 * total / 3)] if total > 180 else [])
+        text = []
+        for off in offsets:
+            samples = window(media, off)
+            if len(samples) < 4000:
+                continue
+            segments, _ = model.transcribe(samples, language=lang, beam_size=1, condition_on_previous_text=False, word_timestamps=False)
+            text.append(" ".join(getattr(s, "text", "") for s in segments))
+        return language_from_text(" ".join(text)) or lang
+    except Exception:
+        return lang
+
+
 def _takes(model, name: str) -> bool:
     """Does ``model.transcribe`` accept the keyword ``name``? (A faster-whisper older than the option, or a test double, may not.)"""
     try:
