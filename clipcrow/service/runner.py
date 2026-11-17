@@ -250,6 +250,10 @@ class JobRunner:
             src = store.source_path(job_id)
             if src is None:
                 raise ValueError("the uploaded video is missing")
+            if not job.source_sha:                              # the bytes' fingerprint: the same file uploaded again reuses its transcript (asr_cache)
+                from .asr_cache import file_sha256
+                job.source_sha = file_sha256(src)
+                store.save(job)
             self.pipeline.run(job, src, store.dir(job_id) / "out", hooks, say)
             work = store.working_video(job_id)
             if work is not None and work != src:                 # the cleanup cut a new video: the editor's limits are ITS length

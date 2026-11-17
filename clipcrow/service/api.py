@@ -199,6 +199,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                     storage=storage if os.environ.get("CLIPCROW_WORKER_DIRECT", "1") != "0" else None) if worker_token else None
     if hub is not None:
         pipeline.hub = hub                                  # RealPipeline sends speech recognition to a worker when one is online
+    pipeline.store = store                                  # ... and reuses the transcript of a file this account already made a job from
     style_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-style")
     for _owner, _rec in styles.stale_analyzing():           # a restart interrupted these: nothing is measuring them now
         styles.fail(_owner, _rec.id, "The server restarted while this was being measured. Upload the reference again.")
@@ -590,7 +591,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                             speaker_title=str(o.get("speaker_title") or "").strip(), cutout=truthy(o.get("cutout")),
                             immersive=truthy(o.get("immersive")), explainer=truthy(o.get("explainer")), pictures=picture_ids,
                             ai_images=want_images, multi=o.get("multi") or "switch", graphics=truthy(o.get("graphics")),
-                            clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", clean_take=o.get("clean_take") or "last", whole=truthy(o.get("whole")),
+                            clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", clean_take=o.get("clean_take") or "last", fresh_transcript=truthy(o.get("fresh_transcript")), whole=truthy(o.get("whole")),
                             cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), outro=truthy(o.get("outro")), sounds=truthy(o.get("sounds")), music=truthy(o.get("music")), transition=o.get("transition") or "none")
         except (ValidationError, ValueError, TypeError) as e:
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
@@ -782,7 +783,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          spread: Optional[str] = Form(None), speaker_name: Optional[str] = Form(None),
                          speaker_title: Optional[str] = Form(""), cutout: Optional[str] = Form(None),
                          multi: Optional[str] = Form(None), graphics: Optional[str] = Form(None),
-                         clean: Optional[str] = Form(None), clean_pace: Optional[str] = Form(None), clean_take: Optional[str] = Form(None), whole: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
+                         clean: Optional[str] = Form(None), clean_pace: Optional[str] = Form(None), clean_take: Optional[str] = Form(None), fresh_transcript: Optional[str] = Form(None), whole: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
                          explainer: Optional[str] = Form(None), links: Optional[str] = Form(None), pictures_ids: Optional[str] = Form(None, alias="pictures"),
                          ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
                          logo: Optional[str] = Form(None), outro: Optional[str] = Form(None), sounds: Optional[str] = Form(None), music: Optional[str] = Form(None), transition: Optional[str] = Form(None),
@@ -793,7 +794,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if declared > limit + 1_000_000:
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
-                                   speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, clean_take=clean_take, whole=whole,
+                                   speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, clean_take=clean_take, fresh_transcript=fresh_transcript, whole=whole,
                                    immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, outro=outro, sounds=sounds, music=music, transition=transition,
                                    style=style),
                               brand_owner(request))
@@ -1145,7 +1146,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             return {"ok": hub.finish(task_id, body.worker, result={"warnings": body.warnings})}
         if not body.words:
             return {"ok": hub.finish(task_id, body.worker, error="the worker found no speech")}
-        return {"ok": hub.finish(task_id, body.worker, result={"language": body.language, "words": [w.model_dump() for w in body.words]})}
+        return {"ok": hub.finish(task_id, body.worker, result={"language": body.language, "engine": body.engine, "words": [w.model_dump() for w in body.words]})}
 
     # --- the brand kit: logo, ending video, how the cover and logo look ----------------------------------------
     @app.get("/api/brand", dependencies=[Depends(authed)])

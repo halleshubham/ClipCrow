@@ -52,6 +52,7 @@ class Params(_M):
     graphics: bool = False                  # the source cuts to slides, cards or b-roll: show those whole instead of cropping them
     clean: bool = False                     # cut fumbles, fillers, retakes and dead air out of a raw recording first
     clean_pace: Literal["natural", "fast", "tight"] = "natural"
+    fresh_transcript: bool = False          # listen to the recording again even when an earlier job of this account already transcribed the same file
     clean_take: Literal["last", "best"] = "last"     # which take of a repeated passage stays: the last one, or the one the AI judges best
     cover: bool = False                     # a bold title for the first ~250 ms (and a cover PNG)
     logo: bool = False                      # the account's logo in a corner
@@ -111,6 +112,7 @@ class Job(_M):
     owner: Optional[str] = None             # the user id when accounts are on; None in single-user mode
     reserved_minutes: float = 0             # source minutes taken from the owner's allowance for this job
     source_removed: bool = False            # the uploaded original was deleted by retention
+    source_sha: Optional[str] = None        # SHA-256 of the uploaded original (set when the job starts): an earlier transcript of the same bytes can be reused
     source_pending: Optional[str] = None    # the original is in the bucket (a direct upload) and has not been fetched yet
     cancel_requested: bool = False          # a person asked to stop while it was running: a restart must not start it again
     attempts: int = 0                       # times a restart interrupted this job and it was queued again (one automatic retry)

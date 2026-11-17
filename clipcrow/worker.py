@@ -316,7 +316,7 @@ def handle(transport: Transport, name: str, task: dict, transcribe: Callable, lo
                 transport.download(f"/api/worker/tasks/{tid}/audio?worker={name}", audio)
                 log(f"task {tid[:8]}: transcribing {audio.stat().st_size / 1e6:.1f} MB of audio")
                 tr = transcribe(str(audio), task.get("language"))
-                body = {"worker": name, "language": tr.language,
+                body = {"worker": name, "language": tr.language, "engine": getattr(tr, "engine", "") or "",
                         "words": [{"w": w.w, "s": round(float(w.s), 3), "e": round(float(w.e), 3)} for w in tr.words]}
         except Exception as e:
             _report_failure(transport, name, tid, e, log)

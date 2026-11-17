@@ -262,7 +262,9 @@ def transcribe(media: str, language: str | None = None, *, config: AsrConfig | N
             say(f"recognising {lang} with SraVaani")
             words = asr_sravaani.transcribe_words(media, say=say, check=check)
             if words:
-                return parse_transcript({"language": lang, "words": words})
+                tr = parse_transcript({"language": lang, "words": words})
+                tr.engine = "sravaani"
+                return tr
             say("SraVaani heard no speech: using Whisper")
         except Exception as e:                          # a missing package, no access to the gated repo, no memory: the Whisper path still works
             say(f"SraVaani unavailable ({type(e).__name__}): using Whisper")
@@ -281,4 +283,6 @@ def transcribe(media: str, language: str | None = None, *, config: AsrConfig | N
     words = merge_fragments(raw)
     if not words:
         raise TranscriptError("no speech was recognised in this media")
-    return parse_transcript({"language": getattr(info, "language", None) or lang or "en", "words": words})
+    tr = parse_transcript({"language": getattr(info, "language", None) or lang or "en", "words": words})
+    tr.engine = "whisper"
+    return tr

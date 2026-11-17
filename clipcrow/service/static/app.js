@@ -417,7 +417,7 @@ async function newJobView() {
     const options = {
       style: $('style').value,
       language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
-      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, clean_take: $('clean_take').value, speaker_name: $('speaker').value, speaker_title: $('role').value,
+      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, clean_take: $('clean_take').value, fresh_transcript: $('fresh_transcript').checked ? 'true' : '', speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', pictures: pics.ids(), ai_images: $('ai_images').checked ? 'true' : '',
       cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '', music: $('music').checked ? 'true' : '', transition: $('transition').value,
@@ -470,8 +470,11 @@ async function newJobView() {
       el('div', { class: 'grid2', style: { marginTop: 0 } },
       select('spread', 'Spread across the video', [['0.5', 'Balanced (recommended)'], ['0', 'Off: best clips first'], ['0.8', 'Wide']],
         'Keeps clips from being slices of one section.'),
-      select('multi', 'Several people on screen', [['switch', 'Cut to whoever is talking (recommended)'], ['split', 'Stack two people'], ['off', 'Follow one face']],
-        'For interviews and podcasts filmed with a wide shot.'),
+      select('multi', 'Several people on screen', [['switch', 'Cut to whoever is talking (recommended)'], ['split', 'Stack two people'], ['off', 'One person on screen (skip the people check)']],
+        'For interviews and podcasts filmed with a wide shot. A video with one person is detected by itself.'),
+      el('label', { class: 'check', for: 'fresh_transcript' }, el('input', { type: 'checkbox', id: 'fresh_transcript' }),
+        el('span', {}, el('strong', { text: 'Listen to the recording again' }), el('br'),
+          el('span', { class: 'muted', text: 'If you already made a job from this very file, its words are used again and nothing is transcribed twice. Tick this to transcribe it afresh (for example after changing the recogniser).' }))),
       text('speaker', 'Speaker name (lower third)', { autocomplete: 'off', class: 'deva' }),
       text('role', 'Role', { autocomplete: 'off', class: 'deva' })),
       el('div', { class: 'stack' },
@@ -968,7 +971,7 @@ async function clipEditorView(jobId, clipId) {
 
   choose('framing', [['', `Keep (${{ track: 'face-tracked crop', fit_blur: 'whole frame', cover: 'centre crop', split: 'two people stacked' }[view.framing]})`],
     ['auto', 'Follow the faces (plan it again)'], ['cover', 'Centre crop'], ['fit_blur', 'Whole frame over a blurred copy']], '');
-  choose('multi', [['switch', 'Cut to whoever is talking'], ['split', 'Stack two people'], ['off', 'Follow one face']], 'switch');
+  choose('multi', [['switch', 'Cut to whoever is talking'], ['split', 'Stack two people'], ['off', 'One person on screen']], 'switch');
   const multiField = field('When several people are on screen', f.multi);
   choose('follow', [['', 'Leave as it is'], ['-1', 'Follow whoever is speaking'], ...(seatInfo ? seatInfo.seats.map((s) => [String(s.n - 1), `Stay on person ${s.n} (from the left)`]) : [])], '');
   const followField = field('Which person', f.follow, 'The picture stays on one person for the whole clip, or follows the voices.');

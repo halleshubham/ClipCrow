@@ -42,6 +42,7 @@ class Transcript:
     language: str
     sentences: list[Sentence]
     timing: str = "word"      # "word": real word timestamps; "cue": interpolated inside subtitle cues
+    engine: str = ""          # what recognised it ("sravaani", "whisper", "worker" when a worker did not say); "" when unknown
 
     @property
     def duration(self) -> float:

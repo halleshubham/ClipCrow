@@ -3,6 +3,15 @@
 What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
+## 2026-11-17 (later: three improvement ideas)
+- **One person is detected by itself.** `seats.count_faces` looks at 16 frames (a few quick seeks); fewer than ~3 frames with two or more faces = one person: no seat search, no voices, and the empty result is
+  cached in `speakers.json`. The form's "Follow one face" is now "One person on screen (skip the people check)" (`multi=off`, the explicit choice).
+- **The same file twice reuses its transcript.** The runner fingerprints every upload (`Job.source_sha`, SHA-256); every job saves the recogniser's own output as `out/asr.json` (words, language, `engine`, date);
+  `service/asr_cache.CachedTranscriber` wraps the transcribe function: a job of the SAME account with the same bytes and the same language setting starts from it (the log says when and by which recogniser);
+  everything after (text correction, cleanup, planning, framing, render) runs as before. "Listen to the recording again" (`Params.fresh_transcript`) switches it off. Workers now report their `engine`
+  (optional field; older workers show as "worker"). Not reused: other accounts' files, a different language setting, a damaged file, jobs made before this.
+- **Planned, not built:** the speakers step on the GPU worker (`docs/plan-speakers-on-worker.md`); build it only if the measured stage takes more than ~4 minutes.
+
 ## 2026-11-17 (job 1f01b69cd70b: four people on screen, one or two talk, the reel showed the wrong one)
 - **The voice decides who is shown.** `voices.py` finds who speaks when (WavLM speaker embeddings via `transformers`, 1.5 s windows, average-linkage clustering, turns snapped to pauses); `seats.py`
   finds the fixed seats (YuNet face detector, vendored ONNX in `clipcrow/models/`, MIT; falls back to the Haar cascade) and matches each voice to the seat whose mouth is busier while it is heard

@@ -151,6 +151,31 @@ def read_frames(video: str, t0: float, t1: float, rate: float, *, width: int = F
         proc.wait()
 
 
+# --- one person or several? -------------------------------------------------------------------
+
+QUICK_SAMPLES = 16          # frames looked at to tell a one-person video from a group shot
+QUICK_GROUP_SHARE = 0.2     # a group shot has two or more faces in at least this share of them (and in at least two frames)
+
+
+def count_faces(video: str, duration: float, detector, *, samples: int = QUICK_SAMPLES, check: Callable[[], None] = lambda: None) -> list[int]:
+    """How many faces are in each of ``samples`` frames spread over the video (a handful of quick seeks, not a pass over the whole file)."""
+    counts: list[int] = []
+    for k in range(samples):
+        check()
+        t = duration * (k + 0.5) / samples
+        for _, frame in read_frames(video, t, t + 1.0, 1.0, check=check):
+            counts.append(len(detector.detect(frame)))
+            break
+    return counts
+
+
+def is_one_person(counts: list[int]) -> bool:
+    """No group shot among the sampled frames: faces are found, but never two at once more than now and then."""
+    if not counts:
+        return False
+    return sum(1 for c in counts if c >= 2) < max(2, int(QUICK_GROUP_SHARE * len(counts) + 0.999))
+
+
 # --- seats ----------------------------------------------------------------------------------
 
 def find_seats(video: str, duration: float, detector, *, check: Callable[[], None] = lambda: None) -> tuple[list[Seat], object]:
@@ -297,10 +322,14 @@ def build_speaker_map(video: str | Path, out_dir: str | Path, *, detector=None, 
     if duration < 20:
         return None
     detector = detector or default_detector()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if is_one_person(count_faces(video, duration, detector, check=check)):                   # the usual talking head: seconds, not a pass over the whole video
+        say("one person on screen: nobody to tell apart")
+        (out_dir / "speakers.json").write_text(json.dumps(SpeakerMap([], [], {}, {}, duration, {}, sig).to_json()), encoding="utf-8")
+        return None
     say("looking for the people on screen")
     seats, frame = find_seats(video, duration, detector, check=check)
     sm = SpeakerMap(seats, [], {}, {}, duration, {}, sig)
-    out_dir.mkdir(parents=True, exist_ok=True)
     if len(seats) >= 2:
         say(f"{len(seats)} people on screen")
         embedder = embedder or vc.default_embedder()

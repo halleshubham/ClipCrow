@@ -120,6 +120,10 @@ class RealPipeline:
                              clean_cuts=[cut_from_report(c) for c in data["cuts"]], clean_reading=data.get("reading") or {})
             except (OSError, ValueError, KeyError, TypeError):
                 recut = {}
+        if getattr(self, "store", None) is not None and not recut:            # the same file again: reuse its transcript (the rest of the job runs as always)
+            from .asr_cache import CachedTranscriber
+            from .workers import _local_transcribe
+            transcribe_fn = CachedTranscriber(transcribe_fn or _local_transcribe, self.store, job, out, fresh=job.params.fresh_transcript)
         return make(video, out, language=job.params.language, clean_take=job.params.clean_take, **recut, llm=Interruptible(AnthropicLLM(), hooks.check), opts=planner_options(job, out.parent / "pictures"),
                     hooks=hooks, say=say, multi=job.params.multi, graphics=job.params.graphics, clean=job.params.clean, clean_pace=job.params.clean_pace, transcribe_fn=transcribe_fn, render_fn=render_fn,
                     images=self._images() if job.params.ai_images else None,

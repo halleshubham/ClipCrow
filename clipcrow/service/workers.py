@@ -99,6 +99,7 @@ class ResultIn(_M):
     language: Optional[str] = Field(default=None, pattern=r"^[a-z]{2,3}$")
     words: list[WordIn] = Field(default_factory=list, max_length=MAX_WORDS)
     error: str = Field(default="", max_length=300)
+    engine: str = Field(default="", pattern=r"^[a-z0-9_.-]{0,30}$")        # what recognised the speech (shown in the job log; part of the transcript reuse record)
     warnings: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=20)     # a render's notes, each shown in the job log
 
 
@@ -469,6 +470,7 @@ class RemoteTranscriber:
                 result = self.hub.wait(task, self.check)
                 tr = parse_transcript({"language": result.get("language") or language or "en",
                                        "words": [{"w": w["w"], "s": w["s"], "e": w["e"]} for w in result.get("words", [])]})
+                tr.engine = str(result.get("engine") or "worker")
                 say(f"the GPU worker transcribed {len(tr.words)} words")
                 return tr
             except (WorkerError, TranscriptError, KeyError, TypeError, ValueError) as e:      # a cancelled job raises something else
