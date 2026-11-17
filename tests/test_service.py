@@ -446,3 +446,18 @@ def test_reel_length_is_a_shortest_and_a_longest_and_none_means_the_whole_video(
     p = made(max_clip="90")
     assert p["whole"] is False and (p["min_clip"], p["max_clip"]) == (30, 90)
     assert made(whole="true", min_clip="20", max_clip="60")["whole"] is True
+
+
+def test_a_cancelled_job_can_be_run_again_but_a_finished_one_cannot(tmp_path, video_bytes):
+    gate = threading.Event()
+    c, _ = client(tmp_path, FakePipeline(gate=gate))
+    jid = upload(c, video_bytes).json()["id"]
+    wait(c, jid, status=("running",))
+    assert c.post(f"/api/jobs/{jid}/retry").status_code == 409                    # still running
+    c.post(f"/api/jobs/{jid}/cancel")
+    assert wait(c, jid)["status"] == "cancelled"
+    gate.set()
+    assert c.post(f"/api/jobs/{jid}/retry").status_code == 200
+    assert wait(c, jid)["status"] == "done"
+    assert c.post(f"/api/jobs/{jid}/retry").status_code == 409                    # done: nothing to run again
+    assert c.post("/api/jobs/" + "0" * 12 + "/retry").status_code == 404

@@ -949,6 +949,34 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         runner.submit(job_id)
         return view(store.get(job_id))
 
+    @app.post("/api/jobs/{job_id}/retry", dependencies=[Depends(authed)])
+    def retry_job(job_id: str, request: Request) -> dict:
+        """Run a failed or cancelled job again from its saved video, with the options it had. Minutes are taken again (the failed run gave them back)."""
+        job = job_or_404(job_id, request)
+        if job.status not in ("failed", "cancelled"):
+            raise HTTPException(409, "Only a job that failed or was cancelled can be run again.")
+        if store.source_path(job_id) is None:
+            raise HTTPException(409, "The video of this job is no longer on the server, so it cannot be run again. Upload it again.")
+        problem = pipeline.check_ready()
+        if problem:
+            raise HTTPException(503, problem)
+        minutes = 0
+        if accounts and job.owner:
+            minutes = max(1, math.ceil(float(job.source.get("duration") or 0) / 60))
+            plan = effective_plan(request.state.user)
+            if accounts.reserve(job.owner, job.id, minutes, plan.monthly_minutes) is None:
+                raise HTTPException(402, f"This video is {minutes} min long and you do not have that many minutes left this month.")
+
+        def reset(j: Job) -> None:
+            j.status, j.error, j.cancel_requested, j.attempts = "queued", None, False, 0
+            j.reserved_minutes = minutes
+            for st in j.stages:
+                st.state, st.detail = "pending", ""
+            j.add_log("run again by request")
+        store.update(job_id, reset)
+        runner.submit(job_id)
+        return view(store.get(job_id))
+
     @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(authed)])
     def cancel_job(job_id: str, request: Request) -> dict:
         job_or_404(job_id, request)

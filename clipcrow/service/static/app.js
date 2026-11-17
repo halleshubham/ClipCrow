@@ -91,7 +91,7 @@ function platformMark(platform) {
 // A hint longer than a few words, and the grey explanation under a checkbox, become an "i" next to their label. A hint that must stay visible
 // (a limit someone needs before choosing a file) carries data-keep; a status line (role/aria-live) never moves.
 const BUTTON_ICONS = [[/^Download all/, 'archive'], [/^Replace/, 'refresh-cw'], [/^Download/, 'download'], [/^Share$/, 'share-2'], [/^Edit\b/, 'pencil'], [/^(Delete|Remove)/, 'trash-2'], [/^Generate/, 'sparkles'],
-  [/^Upload/, 'upload'], [/^(Save|Apply)/, 'check'], [/^Post\b/, 'send'], [/^(Cancel|Stop)/, 'x'], [/^Cut again/, 'scissors'], [/^Find who/, 'users'], [/^Cover image/, 'image'],
+  [/^Upload/, 'upload'], [/^(Save|Apply)/, 'check'], [/^Post\b/, 'send'], [/^(Cancel|Stop)/, 'x'], [/^Cut again/, 'scissors'], [/^Run again/, 'refresh-cw'], [/^Find who/, 'users'], [/^Cover image/, 'image'],
   [/^(Re-?render|Render)/, 'refresh-cw'], [/^Reset/, 'rotate-ccw'], [/^(Sign out|Log out)/, 'log-out'], [/^(Add|Create|New|Start)\b/, 'plus'], [/^Choose all/, 'circle-check'],
   [/^Copy/, 'copy'], [/^Back/, 'chevron-right']];
 const HEADING_ICONS = [[/^(Logo|Pictures)/, 'image'], [/^Ending video/, 'film'], [/^Background music/, 'music'], [/^Look/, 'palette'], [/^Clips$/, 'film'], [/^Posts$/, 'send'], [/^Post to/, 'share-2'],
@@ -713,6 +713,10 @@ async function jobView(jobId) {
     cancelBtn.disabled = true;
     try { job = await api(`/jobs/${jobId}/cancel`, { method: 'POST' }); update(); } catch (e) { cancelBtn.disabled = false; alert(e.message); }
   } });
+  const retryBtn = el('button', { class: 'btn primary', type: 'button', text: 'Run again', hidden: true, onclick: async () => {
+    retryBtn.disabled = true;
+    try { job = await api(`/jobs/${jobId}/retry`, { method: 'POST' }); retryBtn.disabled = false; update(); } catch (e) { retryBtn.disabled = false; alert(e.message); }
+  } });
   const deleteBtn = el('button', { class: 'btn', type: 'button', text: 'Delete', onclick: async () => {
     if (!confirm('Delete this job and its clips?')) return;
     try { await api(`/jobs/${jobId}`, { method: 'DELETE' }); location.hash = '#/jobs'; } catch (e) { alert(e.message); }
@@ -1004,6 +1008,7 @@ async function jobView(jobId) {
     badge.className = `badge ${STATUS_CLASS[job.status]}`;
     cancelBtn.hidden = !['queued', 'running'].includes(job.status);
     deleteBtn.hidden = ['queued', 'running'].includes(job.status);
+    retryBtn.hidden = !['failed', 'cancelled'].includes(job.status);
     errBox.hidden = !job.error;
     errBox.textContent = job.error || '';
     renderStages();
@@ -1033,7 +1038,7 @@ async function jobView(jobId) {
 
   app.replaceChildren(
     el('div', { class: 'stack' },
-      el('div', { class: 'row' }, el('div', { class: 'grow' }, title, meta), badge, cancelBtn, deleteBtn),
+      el('div', { class: 'row' }, el('div', { class: 'grow' }, title, meta), badge, cancelBtn, retryBtn, deleteBtn),
       errBox,
       el('section', { class: 'card' }, stages),
       clipsSection,
