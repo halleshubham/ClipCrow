@@ -94,6 +94,7 @@ class SpeakerMap:
     duration: float = 0.0
     overrides: dict[int, Optional[int]] = field(default_factory=dict)       # a person's corrections: win over ``voice_seat``
     signature: str = ""
+    picture_t: Optional[float] = None          # where in the video the most people were seen together (the picture is cut from there)
 
     def seat_of(self, voice: int) -> Optional[int]:
         if voice in self.overrides:
@@ -110,13 +111,14 @@ class SpeakerMap:
                 "seats": [{"cx": round(s.cx, 4), "cy": round(s.cy, 4), "w": round(s.w, 4), "h": round(s.h, 4), "seen": round(s.seen, 3)} for s in self.seats],
                 "turns": [[t.start, t.end, t.voice] for t in self.turns],
                 "voice_seat": {str(k): v for k, v in self.voice_seat.items()}, "lift": {str(k): round(v, 3) for k, v in self.lift.items()},
-                "overrides": {str(k): v for k, v in self.overrides.items()}}
+                "overrides": {str(k): v for k, v in self.overrides.items()}, "picture_t": self.picture_t}
 
     @staticmethod
     def from_json(d: dict) -> "SpeakerMap":
         return SpeakerMap([Seat(**s) for s in d["seats"]], [vc.Turn(float(a), float(b), int(v)) for a, b, v in d["turns"]],
                           {int(k): (None if v is None else int(v)) for k, v in d["voice_seat"].items()}, {int(k): float(v) for k, v in d.get("lift", {}).items()},
-                          float(d.get("duration", 0.0)), {int(k): (None if v is None else int(v)) for k, v in d.get("overrides", {}).items()}, str(d.get("signature", "")))
+                          float(d.get("duration", 0.0)), {int(k): (None if v is None else int(v)) for k, v in d.get("overrides", {}).items()}, str(d.get("signature", "")),
+                          None if d.get("picture_t") is None else float(d["picture_t"]))
 
 
 def video_signature(video: str | Path) -> str:
@@ -189,7 +191,7 @@ def find_seats(video: str, duration: float, detector, *, check: Callable[[], Non
         size = (frame.shape[1], frame.shape[0])
         samples.append(Sample(t, boxes))
         if len(boxes) > best_n:
-            best_n, best_frame = len(boxes), (frame.copy(), boxes)
+            best_n, best_frame = len(boxes), (frame.copy(), boxes, t)
     if not samples or size is None:
         return [], None
     w, h = size
@@ -306,47 +308,45 @@ def assign(rows: list[tuple[int, int, float]], seen: dict[int, tuple[int, int]],
     return result, {v: lift.get((v, s), 0.0) for v, s in result.items() if s is not None}
 
 
-def build_speaker_map(video: str | Path, out_dir: str | Path, *, detector=None, embedder=None, audio_loader: Callable | None = None,
-                      say: Callable[[str], None] = lambda _m: None, check: Callable[[], None] = lambda: None) -> Optional[SpeakerMap]:
-    """The ``SpeakerMap`` of ``video`` (cached in ``out_dir/speakers.json``), or None when there is nobody to tell apart or no way to hear
-    voices. Single-person videos cost a few seconds of face finding and nothing else."""
-    out_dir, video = Path(out_dir), str(video)
-    cache = out_dir / "speakers.json"
+def cached_map(video: str | Path, out_dir: str | Path) -> tuple[bool, Optional[SpeakerMap]]:
+    """``(found, map)``: whether ``out_dir/speakers.json`` was made from this very video, and its usable map (None for "one person")."""
     try:
         sig = video_signature(video)
-    except OSError:
-        return None
-    if cache.is_file():
-        try:
-            sm = SpeakerMap.from_json(json.loads(cache.read_text(encoding="utf-8")))
-            if sm.signature == sig:
-                return sm if sm.usable else None
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
+        sm = SpeakerMap.from_json(json.loads((Path(out_dir) / "speakers.json").read_text(encoding="utf-8")))
+    except (OSError, ValueError, KeyError, TypeError):
+        return False, None
+    return (True, sm if sm.usable else None) if sm.signature == sig else (False, None)
+
+
+def analyse(video: str | Path, *, detector=None, embedder=None, audio_loader: Callable | None = None,
+            say: Callable[[str], None] = lambda _m: None, check: Callable[[], None] = lambda: None) -> tuple[Optional[SpeakerMap], Optional[tuple]]:
+    """Look at the video and listen to it: ``(map, best_frame)``. ``map`` is None when the video is not one this applies to (vertical, short, unreadable);
+    an empty map (no seats) says "one person". ``best_frame`` is ``(frame, boxes, t)`` where the most seats were visible together. Nothing is read from or
+    written to disk: the server caches the result, a worker sends it back."""
+    video = str(video)
     try:
+        sig = video_signature(video)
         w, h = probe_size(video)
-    except ValueError:
-        return None
+    except (OSError, ValueError):
+        return None, None
     if w / h <= 9 / 16 * 1.05:
-        return None
+        return None, None
     from .indic import media_duration
     duration = media_duration(video) or 0.0
     if duration < 20:
-        return None
+        return None, None
     detector = detector or default_detector()
-    out_dir.mkdir(parents=True, exist_ok=True)
     if is_one_person(count_faces(video, duration, detector, check=check)):                   # the usual talking head: seconds, not a pass over the whole video
         say("one person on screen: nobody to tell apart")
-        (out_dir / "speakers.json").write_text(json.dumps(SpeakerMap([], [], {}, {}, duration, {}, sig).to_json()), encoding="utf-8")
-        return None
+        return SpeakerMap([], [], {}, {}, duration, {}, sig), None
     say("looking for the people on screen")
     seats, frame = find_seats(video, duration, detector, check=check)
-    sm = SpeakerMap(seats, [], {}, {}, duration, {}, sig)
+    sm = SpeakerMap(seats, [], {}, {}, duration, {}, sig, picture_t=(frame[2] if frame else None))
     if len(seats) >= 2:
         say(f"{len(seats)} people on screen")
         embedder = embedder or vc.default_embedder()
         if embedder is None:
-            say("voices cannot be told apart on this server: the picture alone decides who is shown")
+            say("voices cannot be told apart here: the picture alone decides who is shown")
         else:
             from .asr import load_audio
             try:
@@ -361,16 +361,41 @@ def build_speaker_map(video: str | Path, out_dir: str | Path, *, detector=None, 
                 rows, seen = mouth_series(video, _watch_windows(sm.turns), seats, detector, check=check)
                 sm.voice_seat, sm.lift = assign(rows, seen, voices, len(seats))
                 say("who is who: " + ", ".join(f"voice {v + 1} = person {s + 1}" if s is not None else f"voice {v + 1} = off screen" for v, s in sm.voice_seat.items()))
+    return sm, frame
+
+
+def build_speaker_map(video: str | Path, out_dir: str | Path, *, detector=None, embedder=None, audio_loader: Callable | None = None,
+                      say: Callable[[str], None] = lambda _m: None, check: Callable[[], None] = lambda: None) -> Optional[SpeakerMap]:
+    """The ``SpeakerMap`` of ``video`` (cached in ``out_dir/speakers.json``), or None when there is nobody to tell apart or no way to hear
+    voices. Single-person videos cost a few seconds of face finding and nothing else."""
+    found, sm = cached_map(video, out_dir)
+    if found:
+        return sm
+    sm, frame = analyse(video, detector=detector, embedder=embedder, audio_loader=audio_loader, say=say, check=check)
+    if sm is None:
+        return None
+    return store_map(out_dir, video, sm, frame)
+
+
+def store_map(out_dir: str | Path, video: str | Path, sm: SpeakerMap, frame: Optional[tuple]) -> Optional[SpeakerMap]:
+    """Save a map and its numbered picture (``frame`` is the best frame, or None: the picture is cut from the video at ``sm.picture_t`` when it has one)."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if len(sm.seats) >= 2:
+        if frame is None and sm.picture_t is not None:
+            for _, img in read_frames(str(video), sm.picture_t, sm.picture_t + 1.0, 1.0):
+                frame = (img, [], sm.picture_t)
+                break
         if frame is not None:
-            _save_picture(out_dir / "speakers.jpg", frame, seats)
-    cache.write_text(json.dumps(sm.to_json()), encoding="utf-8")
+            _save_picture(out_dir / "speakers.jpg", frame, sm.seats)
+    (out_dir / "speakers.json").write_text(json.dumps(sm.to_json()), encoding="utf-8")
     return sm if sm.usable else None
 
 
 def _save_picture(path: Path, frame_boxes, seats: list[Seat]) -> None:
     """One frame with every seat numbered: what the person looks at to say who is who."""
     import cv2
-    frame, _ = frame_boxes
+    frame = frame_boxes[0]
     img = frame.copy()
     h, w = img.shape[:2]
     for i, s in enumerate(seats):

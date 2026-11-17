@@ -175,7 +175,7 @@ def poll_render(c, name="w", pin=PIN):
 
 def test_poll_validates_what_a_worker_claims_it_can_do(tmp_path):
     c, _, _ = app_with_worker(tmp_path)
-    for body in ({"worker": "w", "can": ["format-disk"]}, {"worker": "w", "can": ["render"] * 3}, {"worker": "w", "pin": "x" * 41}):
+    for body in ({"worker": "w", "can": ["format-disk"]}, {"worker": "w", "can": ["render"] * 4}, {"worker": "w", "pin": "x" * 41}):
         assert c.post("/api/worker/poll", json={**body, "wait": 0}, headers=AUTH).status_code == 422, body
     assert c.get("/api/config").json()["gpu_worker"]["render"] is False
     poll_render(c)

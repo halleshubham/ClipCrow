@@ -3,6 +3,10 @@
 What was built, what real recordings taught us, and what is still open. Newest first. Add an entry (date, what, why, what to watch) whenever behaviour changes.
 The rules that came out of these are in `development-rules.md`; this file is the story behind them.
 
+## 2026-11-17 (the speakers task on the GPU worker)
+- Built on the owner's request although the measurement said ~2 min saved: `speakers` task kind, `SpeakersIn` validation, `RemoteSpeakers` with server fallback, `worker.handle_speakers`, a GPU-capable
+  `WavLMEmbedder(device="auto")`, `seats.analyse` split from caching. Workers need the new image AND a server that knows the kind (deploy the server first). Details and the CPU-torch limit: `docs/plan-speakers-on-worker.md`.
+
 ## 2026-11-17 (reel length)
 - **Shortest / longest reel (seconds) replace the length dropdown** on the job form (15 and 60 prefilled). One end given: the other follows (`api.derive_lengths`: min only -> max = max(2 x min, min + 30);
   max only -> min = max/3). **Both empty: the whole video is one reel** (up to 15 minutes), in the UI and for API callers that send no length and no style (`whole` is implied). A style still sets the length.

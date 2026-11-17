@@ -235,13 +235,13 @@ def run_worker(transport: Transport, name: str, *, model: str = "large-v3", tran
                label: str = "", stop: Callable[[], bool] = lambda: False, log: Callable[[str], None] = print,
                max_tasks: Optional[int] = None, poll_wait: float = POLL_WAIT, can_render: bool = False,
                render_fn: Optional[Callable] = None, cache: Optional[Path] = None, cache_gb: float = 20.0,
-               pin: Optional[str] = None) -> int:
+               pin: Optional[str] = None, can_speakers: bool = False, speakers_fn: Optional[Callable] = None) -> int:
     """Poll, do the task, upload; until ``stop()`` or ``max_tasks`` tasks. Returns the number of tasks finished."""
     if transcribe is None:
         transcribe, label = default_transcribe(model)
     if pin is None:
         from .render import HYPERFRAMES_VERSION as pin
-    can = ["transcribe"] + (["render"] if can_render else [])
+    can = ["transcribe"] + (["render"] if can_render else []) + (["speakers"] if can_speakers else [])
     done, failures = 0, 0
     while not stop() and (max_tasks is None or done < max_tasks):
         try:
@@ -264,6 +264,8 @@ def run_worker(transport: Transport, name: str, *, model: str = "large-v3", tran
             continue
         if task.get("kind") == "render":
             ok = handle_render(transport, name, task, log, cache=cache or cache_root(), render_fn=render_fn, cache_gb=cache_gb)
+        elif task.get("kind") == "speakers":
+            ok = handle_speakers(transport, name, task, log, cache=cache or cache_root(), speakers_fn=speakers_fn, cache_gb=cache_gb)
         else:
             ok = handle(transport, name, task, transcribe, log)
         if ok:
@@ -397,6 +399,77 @@ def handle_render(transport: Transport, name: str, task: dict, log: Callable[[st
     return bool(ok)
 
 
+def speakers_ready() -> tuple[bool, str]:
+    """Can this machine find out who is who in a video? It needs the face model, OpenCV's YuNet and torch with transformers (the voice model downloads on first use)."""
+    try:
+        import cv2
+        import torch  # noqa: F401
+        import transformers  # noqa: F401
+        from .seats import FACE_MODEL
+    except ImportError as e:
+        return False, f"{e.name or 'a package'} is missing"
+    if not hasattr(cv2, "FaceDetectorYN") or not FACE_MODEL.is_file():
+        return False, "OpenCV has no YuNet face detector"
+    import torch
+    return True, "voices on the GPU" if torch.cuda.is_available() else "voices on the CPU: this image's torch cannot see a GPU"
+
+
+def default_speakers(video: Path, say: Callable[[str], None], check: Callable[[], None]) -> dict:
+    """The answer to a speakers task: ``SpeakerMap`` as JSON (no cache, no picture: the server makes its own)."""
+    from .seats import analyse
+    sm, _ = analyse(video, say=say, check=check)
+    if sm is None:
+        raise ValueError("this video is not one the people search applies to")
+    data = sm.to_json()
+    return {k: data[k] for k in ("duration", "seats", "turns", "voice_seat", "lift", "picture_t")}
+
+
+def handle_speakers(transport: Transport, name: str, task: dict, log: Callable[[str], None], *, cache: Path,
+                    speakers_fn: Optional[Callable] = None, cache_gb: float = 20.0, beat_seconds: Optional[float] = None) -> bool:
+    """A speakers task: fetch the video (cached per job, under the name a render of this job uses), find the people and the voices, send back JSON only."""
+    tid, meta, files = task["id"], task.get("meta") or {}, task.get("files") or {}
+    started = time.monotonic()
+    job_id = str(meta.get("job_id", ""))
+    if not job_id.replace("-", "").isalnum() or len(files) != 1:
+        _report_failure(transport, name, tid, ValueError("bad job id or manifest"), log)
+        return False
+    jobdir = cache / job_id
+    with Lease(transport, name, tid, float(task.get("lease_seconds") or 90), beat_seconds) as lease:
+        try:
+            (fname, size), = files.items()
+            if not fname.startswith("media/"):
+                raise ValueError(f"unexpected file {fname!r}")
+            jobdir.mkdir(parents=True, exist_ok=True)
+            os.utime(jobdir)
+            dest = safe_join(jobdir / "media", fname[len("media/"):])
+            if not (dest.is_file() and dest.stat().st_size == size):
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                log(f"task {tid[:8]}: took a who-is-who search for job {job_id}: fetching the video ({size / 1e6:.0f} MB)")
+                transport.download(f"/api/worker/tasks/{tid}/files/{fname}?worker={name}", dest)
+            else:
+                log(f"task {tid[:8]}: took a who-is-who search for job {job_id}: the video is cached")
+
+            def check() -> None:
+                if lease.lost.is_set():
+                    raise RuntimeError("the server gave this task up")
+            answer = (speakers_fn or default_speakers)(dest, lambda m: log(f"task {tid[:8]}: {m}"), check)
+        except Exception as e:
+            _report_failure(transport, name, tid, e, log)
+            return False
+        finally:
+            evict_cache(cache, int(cache_gb * 1e9), keep=jobdir)
+    if lease.lost.is_set():
+        log(f"task {tid[:8]}: the server no longer wants this result; dropped")
+        return False
+    try:
+        ok = transport.post(f"/api/worker/tasks/{tid}/result", {"worker": name, "speakers": answer}, timeout=120).get("ok")
+    except Exception as e:
+        log(f"task {tid[:8]}: could not deliver the result ({type(e).__name__})")
+        return False
+    log(f"task {tid[:8]}: who is who found in {time.monotonic() - started:.0f} s" + ("" if ok else " (the server had already moved on)"))
+    return bool(ok)
+
+
 def main(server: str, name: str, model: str, *, render: bool = True, cache_gb: float = 20.0) -> int:
     token = os.environ.get("CLIPCROW_WORKER_TOKEN", "")
     if len(token) < 16:
@@ -408,10 +481,12 @@ def main(server: str, name: str, model: str, *, render: bool = True, cache_gb: f
     if render:
         can_render, why = render_ready()
         print("rendering: " + ("ready, this worker will also render clips" if can_render else f"off ({why}); transcription only"), file=sys.stderr)
+    can_speakers, why = speakers_ready()
+    print("who is who: " + (f"ready, this worker will also tell the people in a video apart ({why})" if can_speakers else f"off ({why})"), file=sys.stderr)
     print(f"worker {name!r} serving {server} with model {model}; Ctrl-C to stop", file=sys.stderr)
     try:
         run_worker(transport, name, model=model, stop=stop.is_set, log=lambda m: print(m, file=sys.stderr, flush=True),
-                   can_render=can_render, cache_gb=cache_gb)
+                   can_render=can_render, cache_gb=cache_gb, can_speakers=can_speakers)
     except KeyboardInterrupt:
         stop.set()
         print("stopped", file=sys.stderr)

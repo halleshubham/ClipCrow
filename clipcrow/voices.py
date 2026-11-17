@@ -43,8 +43,8 @@ class Embedder(Protocol):
 class WavLMEmbedder:
     """Speaker embeddings from WavLM-base-plus-sv (x-vector head). Loaded on first use; ``release()`` frees it."""
 
-    def __init__(self, batch: int = 8):
-        self.batch = batch
+    def __init__(self, batch: int = 8, device: str = "auto"):
+        self.batch, self.device = batch, device                       # "auto": the GPU when torch can see one (a worker), else the CPU
         self._model = self._fe = None
 
     def _load(self):
@@ -52,7 +52,10 @@ class WavLMEmbedder:
             from transformers import AutoFeatureExtractor, WavLMForXVector
             kw = {"revision": MODEL_REVISION} if MODEL_REVISION else {}
             self._fe = AutoFeatureExtractor.from_pretrained(MODEL, **kw)
-            self._model = WavLMForXVector.from_pretrained(MODEL, **kw).eval()
+            import torch
+            if self.device == "auto":
+                self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self._model = WavLMForXVector.from_pretrained(MODEL, **kw).eval().to(self.device)
         return self._model
 
     def embed(self, chunks: list):
@@ -64,7 +67,8 @@ class WavLMEmbedder:
             for i in range(0, len(chunks), self.batch):
                 inp = self._fe([np.asarray(c, dtype=np.float32) for c in chunks[i:i + self.batch]], sampling_rate=SAMPLE_RATE,
                                return_tensors="pt", padding=True)
-                out.append(torch.nn.functional.normalize(model(**inp).embeddings, dim=-1).numpy())
+                inp = {k: v.to(self.device) for k, v in inp.items()}
+                out.append(torch.nn.functional.normalize(model(**inp).embeddings, dim=-1).cpu().numpy())
         return np.concatenate(out) if out else np.zeros((0, 1), np.float32)
 
     def release(self) -> None:

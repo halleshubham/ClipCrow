@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Callable, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ..planner.transcript import Transcript, TranscriptError, parse_transcript
 
@@ -64,7 +64,7 @@ class PollIn(_M):
     wait: float = Field(default=20.0, ge=0.0, le=25.0)             # how long the server may hold the request open
     device: str = Field(default="", max_length=60)                 # e.g. "NVIDIA GeForce RTX 4060 (cuda)" or "cpu"
     model: str = Field(default="", max_length=40)
-    can: list[Literal["transcribe", "render"]] = Field(default_factory=lambda: ["transcribe"], max_length=2)
+    can: list[Literal["transcribe", "render", "speakers"]] = Field(default_factory=lambda: ["transcribe"], max_length=3)
     pin: str = Field(default="", max_length=40)                    # the HyperFrames version this worker renders with
     direct: bool = False                                           # can send a finished clip straight to the bucket (see DirectIn)
 
@@ -94,11 +94,44 @@ class WordIn(_M):
     e: float = Field(ge=0.0, le=86_400.0)
 
 
+MAX_SEATS, MAX_VOICES_IN, MAX_TURNS = 12, 20, 4000
+
+
+class SeatIn(_M):
+    cx: float = Field(ge=0.0, le=1.0)
+    cy: float = Field(ge=0.0, le=1.0)
+    w: float = Field(gt=0.0, le=1.0)
+    h: float = Field(gt=0.0, le=1.0)
+    seen: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class SpeakersIn(_M):
+    """A worker's answer to "who is who in this video": untrusted, so every number is bounded and every index checked before it becomes a ``SpeakerMap``."""
+    duration: float = Field(ge=0.0, le=36000.0)
+    seats: list[SeatIn] = Field(default_factory=list, max_length=MAX_SEATS)
+    turns: list[tuple[float, float, int]] = Field(default_factory=list, max_length=MAX_TURNS)
+    voice_seat: dict[int, Optional[int]] = Field(default_factory=dict, max_length=MAX_VOICES_IN)
+    lift: dict[int, float] = Field(default_factory=dict, max_length=MAX_VOICES_IN)
+    picture_t: Optional[float] = Field(default=None, ge=0.0, le=36000.0)
+
+    @model_validator(mode="after")
+    def _consistent(self):
+        for a, b, v in self.turns:
+            if not (0.0 <= a < b <= self.duration + 1.0) or not 0 <= v < MAX_VOICES_IN:
+                raise ValueError("a turn is outside the video or has a voice number out of range")
+        if any(not 0 <= v < MAX_VOICES_IN or (s is not None and not 0 <= s < len(self.seats)) for v, s in self.voice_seat.items()):
+            raise ValueError("a voice is matched to a seat that does not exist")
+        if any(not 0 <= v < MAX_VOICES_IN or not 0.0 <= x <= 100.0 for v, x in self.lift.items()):
+            raise ValueError("a lift is out of range")
+        return self
+
+
 class ResultIn(_M):
     worker: str = Field(pattern=WORKER_NAME)
     language: Optional[str] = Field(default=None, pattern=r"^[a-z]{2,3}$")
     words: list[WordIn] = Field(default_factory=list, max_length=MAX_WORDS)
     error: str = Field(default="", max_length=300)
+    speakers: Optional[SpeakersIn] = None                                   # the answer to a "speakers" task
     engine: str = Field(default="", pattern=r"^[a-z0-9_.-]{0,30}$")        # what recognised the speech (shown in the job log; part of the transcript reuse record)
     warnings: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=20)     # a render's notes, each shown in the job log
 
@@ -210,6 +243,13 @@ class WorkerHub:
         """A transcription task."""
         return self._add(Task(uuid.uuid4().hex, job_id, "transcribe", {"audio": audio}, {"language": language}, self._clock(),
                               language=language))
+
+    def submit_speakers(self, job_id: str, files: dict[str, Path], meta: dict, max_seconds: float = 1800.0) -> Task:
+        """A "who is who in this video" task. ``files`` is the manifest (the video under ``media/<name>``, the name a render of this job uses, so it is cached for the renders)."""
+        for name in files:
+            if not _clean_name(name) or not name.startswith("media/"):
+                raise WorkerError("a file in this task has a name the worker protocol does not allow")
+        return self._add(Task(uuid.uuid4().hex, job_id, "speakers", dict(files), dict(meta), self._clock(), max_seconds=max_seconds))
 
     def submit_render(self, job_id: str, files: dict[str, Path], meta: dict, upload_dir: Path, max_seconds: float = 3600.0,
                       direct: bool = False) -> Task:
@@ -478,6 +518,56 @@ class RemoteTranscriber:
                 return self.fallback(media, language, progress=say, **({"check": local_check} if self.fallback is _local_transcribe else {}))
         finally:
             audio.unlink(missing_ok=True)
+
+
+# --- the job side: who is who in the video, on a worker when one can ---------------------------------------------------------
+
+def speaker_map_from_result(got: "SpeakersIn", video: Path) -> "object":
+    """A worker's validated answer as a ``SpeakerMap`` for THIS server's copy of the video (its signature is ours, never the worker's)."""
+    from .. import seats
+    real = 0.0
+    from ..indic import media_duration
+    real = media_duration(str(video)) or 0.0
+    if real and abs(real - got.duration) > 2.0:
+        raise WorkerError(f"the worker looked at a video of {got.duration:.0f} s, this one is {real:.0f} s")
+    from .. import voices
+    return seats.SpeakerMap([seats.Seat(s.cx, s.cy, s.w, s.h, s.seen) for s in got.seats], [voices.Turn(a, b, v) for a, b, v in sorted(got.turns)],
+                            dict(got.voice_seat), dict(got.lift), got.duration, {}, seats.video_signature(video), got.picture_t)
+
+
+@dataclass
+class RemoteSpeakers:
+    """Drop-in for ``seats.build_speaker_map`` (``make(speakers_fn=...)``): ask a worker that can (it has the GPU for the voice model), else do it here."""
+    hub: WorkerHub
+    job_id: str
+    check: Callable[[], None] = lambda: None
+    say: Callable[[str], None] = lambda _m: None
+    fallback: Optional[Callable] = None
+    max_seconds: float = 1800.0
+
+    def __call__(self, video, out_dir, *, detector=None, say=None, check=None, **kw):
+        from .. import seats
+        say, check = say or self.say, check or self.check
+        found, cached = seats.cached_map(video, out_dir)
+        if found:
+            return cached
+
+        def local():
+            return (self.fallback or seats.build_speaker_map)(video, out_dir, detector=detector, say=say, check=check, **kw)
+        if not self.hub.online("speakers"):
+            return local()
+        video = Path(video)
+        task = None
+        try:
+            say("asking the GPU worker who is who in the video")
+            task = self.hub.submit_speakers(self.job_id, {f"media/{video.name}": video}, {"job_id": self.job_id}, self.max_seconds)
+            result = self.hub.wait(task, check)
+            sm = speaker_map_from_result(SpeakersIn.model_validate(result["speakers"]), video)
+            say("the GPU worker matched the voices to the people")
+            return seats.store_map(out_dir, video, sm, None)
+        except (WorkerError, ValidationError, KeyError, TypeError, ValueError, OSError) as e:      # a cancelled job raises something else
+            say(f"the GPU worker did not deliver ({str(e)[:120]}); working it out on the server instead")
+            return local()
 
 
 # --- the job side: a render function that prefers a worker -------------------------------------------------------------

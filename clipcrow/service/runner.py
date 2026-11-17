@@ -419,6 +419,10 @@ class JobRunner:
             self.store.update(job_id, lambda j: j.add_log(msg))
         try:
             (flag.parent / "speakers.json").unlink(missing_ok=True)
+            hub = getattr(self.pipeline, "hub", None)
+            if hub is not None:
+                from .workers import RemoteSpeakers
+                build_speaker_map = RemoteSpeakers(hub, job_id, check=lambda: None)          # noqa: F811 (a worker with a GPU first, else here)
             sm = build_speaker_map(video, flag.parent, say=say)
             if sm is None:
                 say("no people could be told apart in this video; the clips stay as they are")

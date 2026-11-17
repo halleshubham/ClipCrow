@@ -1,6 +1,6 @@
 # Plan: telling people apart on the GPU worker (not built)
 
-**Status:** planned, not built. **Decision (2026-11-17): not worth building yet.** Measured on a 4-core CPU with a made-up 20-minute 1280x720 video:
+**Status:** BUILT 2026-11-17 on the owner's request (see the end of this file). The decision at the time of writing was: **not worth building yet.** Measured on a 4-core CPU with a made-up 20-minute 1280x720 video:
 one-person check 3 s; seat discovery (600 frames, YuNet) 23 s; watching mouths ~25 s; voice embeddings ~130 s (650 windows at ~0.2 s). **About 3 minutes in all, 75% of it the voice model.**
 A GPU worker would save roughly 2 minutes, and only on videos with several people, at the price of about a day of work, a new place where a worker's output is trusted, and a server fallback
 that must stay anyway (the worker is a PC that is sometimes off). Stage times are now recorded per job (`Stage.seconds`, shown on the job page): build this if real jobs show the **frame stage over ~4 minutes**
@@ -40,3 +40,12 @@ So the video does not cross the network twice if the speakers task is taken by t
 ## Effort and risk
 About a day. Main risks: another place a worker's output is trusted (hence the strict validation and the server-drawn picture) and a job that waits for a worker that is asleep
 (hence the pickup timeout and the fallback). Do not do it before the measurement says it pays.
+
+## As built
+- `WorkerHub.submit_speakers` (kind `speakers`, manifest = the video as `media/<its name>`, the name a render of the job uses, so the worker's per-job cache serves the renders too); a worker offers
+  it by listing `speakers` in `can` (`worker.speakers_ready()`: OpenCV YuNet + the model file + torch + transformers).
+- The worker runs `seats.analyse` (no cache, no picture) and sends JSON only; the server validates it with `SpeakersIn` (every number bounded, every index checked, extra fields refused), rejects an answer whose
+  duration differs from its own copy by more than 2 s, takes the video signature from ITS file, and cuts the numbered picture from its own copy at `picture_t`.
+- `RemoteSpeakers` (the job side, also used by the "Find who is speaking" button) tries a worker first and falls back to the server on no worker, an error, a timeout or a bad answer.
+- **Limit found while building:** the image's torch is the CPU wheel in the GPU variant too (`pip install ... whl/cpu`), so the voice model runs on the worker PC's CPU until the GPU image installs a CUDA torch.
+  The worker says which at start-up ("voices on the CPU"). It still takes the work off the server. Switching the GPU image to CUDA torch is a separate, larger change (image size, driver match) and has not been made.
