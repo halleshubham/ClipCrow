@@ -154,6 +154,11 @@ The rules that came out of these are in `development-rules.md`; this file is the
 
 - The New job form now starts on **One person on screen** (`multi=off`, the quickest); "Several people" is a choice. `POST /api/jobs/{id}/retry` also takes `{"multi": ...}` and then runs a FINISHED job again with that option (its clips are replaced, minutes taken again).
 
+- **Faces that are not people** (job ba56794375f8: a statue and a caption graphic were seats; the main voice got no seat and clip 2 cut to the statue): (1) `plausible` keeps a detection only when the detector scores >= 0.8 and the box is
+  2.5-40% of the frame wide and 0.6-1.7 tall; (2) every seat carries `live`, the median change of its face picture between samples 1 s apart, and a seat that stays below 1.5 while another is above 3 is dropped ("never move" in the log);
+  (3) seats within 3.5% of the frame are one place; (4) `assign` never gives a voice to a seat whose mouth region never changes (p90 < `ACT_FLOOR`) and a seat's own scale is floored at the noise; (5) the quick one-or-two-people check
+  runs on the same filters, so a statue no longer makes a third person. Thresholds are first guesses checked on made-up videos only: watch the "never move" line on real recordings. Old `speakers.json` files stay as they were until "Find who is who" is run again.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

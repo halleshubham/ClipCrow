@@ -42,6 +42,7 @@ class Box:
     y: float
     w: float
     h: float
+    score: float = 1.0               # the detector's own confidence (1.0 when it gives none)
 
     @property
     def cx(self) -> float:

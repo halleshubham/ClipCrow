@@ -38,6 +38,12 @@ MIN_LIFT = 1.15             # a seat's mouth must be this much busier while the 
 MIN_SAMPLES = 8             # ... measured on at least this many frame pairs in each group
 MIN_SEEN = 0.5              # ... and the seat must be in view in at least this share of the voice's frames
 FRAME_WIDTH = 960
+MIN_FACE_SCORE = 0.8        # a face the detector is less sure of is not a seat (captions, icons and sculpted faces score lower than people)
+MIN_FACE_WIDTH, MAX_FACE_WIDTH = 0.025, 0.4     # a face is this share of the frame width: a speck is an icon, a half-frame box is not a head
+MIN_ASPECT, MAX_ASPECT = 0.6, 1.7               # height / width of a face box
+STATIC_LIVE = 1.5           # a face whose picture changes less than this (grey levels, 1 s apart) is not alive: a statue, a poster, a caption on the picture
+ACT_FLOOR = 1.0             # a seat whose mouth region never changes more than this (its 90th percentile) is no speaker, whatever the ratios say
+SAME_PLACE = 0.035          # seats (or faces) this close, as a fraction of the frame, are one place
 
 
 class YuNetDetector:
@@ -62,7 +68,7 @@ class YuNetDetector:
         _, found = self._load(small.shape[1], small.shape[0]).detect(small)
         if found is None:
             return []
-        return [Box(float(f[0]) / scale, float(f[1]) / scale, float(f[2]) / scale, float(f[3]) / scale) for f in found if f[2] > 8 and f[3] > 8]
+        return [Box(float(f[0]) / scale, float(f[1]) / scale, float(f[2]) / scale, float(f[3]) / scale, float(f[-1])) for f in found if f[2] > 8 and f[3] > 8]
 
 
 def default_detector():
@@ -83,6 +89,7 @@ class Seat:
     w: float                   # size of the face box, as a fraction of the frame
     h: float
     seen: float = 0.0          # share of the frames the face was found in
+    live: float = -1.0         # how much the face's picture changes from one second to the next (-1: not measured)
 
 
 @dataclass
@@ -108,7 +115,7 @@ class SpeakerMap:
 
     def to_json(self) -> dict:
         return {"version": MAP_VERSION, "signature": self.signature, "duration": round(self.duration, 2),
-                "seats": [{"cx": round(s.cx, 4), "cy": round(s.cy, 4), "w": round(s.w, 4), "h": round(s.h, 4), "seen": round(s.seen, 3)} for s in self.seats],
+                "seats": [{"cx": round(s.cx, 4), "cy": round(s.cy, 4), "w": round(s.w, 4), "h": round(s.h, 4), "seen": round(s.seen, 3), "live": round(s.live, 2)} for s in self.seats],
                 "turns": [[t.start, t.end, t.voice] for t in self.turns],
                 "voice_seat": {str(k): v for k, v in self.voice_seat.items()}, "lift": {str(k): round(v, 3) for k, v in self.lift.items()},
                 "overrides": {str(k): v for k, v in self.overrides.items()}, "picture_t": self.picture_t}
@@ -153,6 +160,39 @@ def read_frames(video: str, t0: float, t1: float, rate: float, *, width: int = F
         proc.wait()
 
 
+# --- what is a face worth a seat ----------------------------------------------------------
+
+def plausible(box: Box, w: float, h: float) -> bool:
+    """Sure enough, and the size and shape of a head in a shot: not a speck on an icon, not a text box."""
+    return (box.score >= MIN_FACE_SCORE and MIN_FACE_WIDTH <= box.w / w <= MAX_FACE_WIDTH and MIN_ASPECT <= box.h / max(box.w, 1.0) <= MAX_ASPECT)
+
+
+def face_patch(frame_bgr, box: Box):
+    """The whole face as a tiny grey array with its mean taken off (a change of light is not life)."""
+    import cv2
+    h, w = frame_bgr.shape[:2]
+    x0, x1, y0, y1 = max(0, int(box.x)), min(w, int(box.x + box.w)), max(0, int(box.y)), min(h, int(box.y + box.h))
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return None
+    p = cv2.resize(cv2.cvtColor(frame_bgr[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY), (16, 16), interpolation=cv2.INTER_AREA).astype("float32")
+    return p - p.mean()
+
+
+def liveness(patches: list) -> float:
+    """The typical change of a face's picture between neighbouring samples; -1 when there are too few to say."""
+    import numpy as np
+    diffs = [float(np.abs(b - a).mean()) for a, b in zip(patches, patches[1:])]
+    return float(np.median(diffs)) if len(diffs) >= 2 else -1.0
+
+
+def static_ones(lives: list[float]) -> set[int]:
+    """Indices of the places that do not move at all while another one does: sculpture, pictures, graphics. Never all of them."""
+    top = max(lives, default=-1.0)
+    if top < 2 * STATIC_LIVE:
+        return set()
+    return {i for i, v in enumerate(lives) if 0 <= v < STATIC_LIVE}
+
+
 # --- one person or several? -------------------------------------------------------------------
 
 QUICK_SAMPLES = 16          # frames looked at to tell a one-person video from a group shot
@@ -161,14 +201,28 @@ QUICK_GROUP_SHARE = 0.2     # a group shot has two or more faces in at least thi
 
 def count_faces(video: str, duration: float, detector, *, samples: int = QUICK_SAMPLES, check: Callable[[], None] = lambda: None) -> list[int]:
     """How many faces are in each of ``samples`` frames spread over the video (a handful of quick seeks, not a pass over the whole file)."""
-    counts: list[int] = []
+    rows: list[list[tuple[int, object]]] = []                       # per sampled frame: (place number, face patch) of each plausible face
+    places: list[tuple[float, float]] = []                          # where faces were seen, as fractions of the frame
     for k in range(samples):
         check()
         t = duration * (k + 0.5) / samples
         for _, frame in read_frames(video, t, t + 1.0, 1.0, check=check):
-            counts.append(len(detector.detect(frame)))
+            h, w = frame.shape[:2]
+            row = []
+            for b in detector.detect(frame):
+                if not plausible(b, w, h):
+                    continue
+                fx, fy = b.cx / w, b.cy / h
+                i = next((i for i, c in enumerate(places) if abs(c[0] - fx) < SAME_PLACE and abs(c[1] - fy) < SAME_PLACE), None)
+                if i is None:
+                    places.append((fx, fy))
+                    i = len(places) - 1
+                row.append((i, face_patch(frame, b)))
+            rows.append(row)
             break
-    return counts
+    series = [[p for row in rows for j, p in row if j == i and p is not None] for i in range(len(places))]
+    still = static_ones([liveness(sr) for sr in series])             # a statue seen in every frame is not a third person
+    return [sum(1 for j, _ in row if j not in still) for row in rows]
 
 
 def is_one_person(counts: list[int]) -> bool:
@@ -200,9 +254,9 @@ def find_seats(video: str, duration: float, detector, *, check: Callable[[], Non
         if duration > 120 and int(t * 4 / duration) > quarter:                            # a long video: say how far the search has got
             quarter = int(t * 4 / duration)
             say(f"looking for the people on screen: {int(t // 60)} of {int(duration // 60)} minutes")
-        boxes = detector.detect(frame)
         size = (frame.shape[1], frame.shape[0])
-        samples.append(Sample(t, boxes))
+        boxes = [b for b in detector.detect(frame) if plausible(b, size[0], size[1])]
+        samples.append(Sample(t, boxes, [face_patch(frame, b) for b in boxes]))
         if len(boxes) > best_n:
             best_n, best_frame = len(boxes), (frame.copy(), boxes, t)
     if not samples or size is None:
@@ -218,8 +272,13 @@ def find_seats(video: str, duration: float, detector, *, check: Callable[[], Non
         mid = bs[len(bs) // 2]
         cx = sorted(b.cx for b in bs)[len(bs) // 2]
         cy = sorted(b.cy for b in bs)[len(bs) // 2]
-        seats.append(Seat(cx / w, cy / h, mid.w / w, mid.h / h, tr["hits"] / len(samples)))
-    return merge_seats(seats), best_frame
+        ts = sorted(tr["patches"])
+        seats.append(Seat(cx / w, cy / h, mid.w / w, mid.h / h, tr["hits"] / len(samples), liveness([tr["patches"][t] for t in ts])))
+    seats = merge_seats(seats)
+    gone = static_ones([s.live for s in seats])
+    if gone:
+        say(f"{len(gone)} face(s) that never move (a statue, a picture or a caption) are not people")
+    return [s for i, s in enumerate(seats) if i not in gone], best_frame
 
 
 def merge_seats(seats: list[Seat]) -> list[Seat]:
@@ -227,11 +286,12 @@ def merge_seats(seats: list[Seat]) -> list[Seat]:
     seats = sorted(seats, key=lambda s: -s.seen)                                 # the most seen is the anchor
     kept: list[Seat] = []
     for s in seats:
-        twin = next((k for k in kept if abs(k.cx - s.cx) < 0.6 * max(k.w, s.w) and abs(k.cy - s.cy) < 1.0 * max(k.h, s.h)), None)
+        twin = next((k for k in kept if abs(k.cx - s.cx) < max(0.6 * max(k.w, s.w), SAME_PLACE) and abs(k.cy - s.cy) < max(1.0 * max(k.h, s.h), SAME_PLACE)), None)
         if twin is None:
-            kept.append(Seat(s.cx, s.cy, s.w, s.h, s.seen))
+            kept.append(Seat(s.cx, s.cy, s.w, s.h, s.seen, s.live))
         else:
             twin.seen = min(1.0, twin.seen + s.seen)
+            twin.live = max(twin.live, s.live)
     return sorted(kept, key=lambda s: s.cx)
 
 
@@ -297,7 +357,8 @@ def assign(rows: list[tuple[int, int, float]], seen: dict[int, tuple[int, int]],
     by_seat: dict[int, list[float]] = {s: [] for s in range(n_seats)}
     for _, s, a in rows:
         by_seat[s].append(a)
-    ref = {s: max(float(np.percentile(a, 90)), 1e-6) if a else 1.0 for s, a in by_seat.items()}       # each person's own scale: a still sitter is not drowned by a lively one
+    p90 = {s: float(np.percentile(a, 90)) if a else 0.0 for s, a in by_seat.items()}
+    ref = {s: max(p90[s], ACT_FLOOR) for s in by_seat}                    # each person's own scale (a still sitter is not drowned by a lively one), but never below the noise: a statue's flicker is not a mouth
     acts: dict[tuple[int, int], list[float]] = {}
     for v, s, a in rows:
         acts.setdefault((v, s), []).append(min(a / ref[s], 2.0))
@@ -307,7 +368,7 @@ def assign(rows: list[tuple[int, int, float]], seen: dict[int, tuple[int, int]],
             mine = acts.get((v, s), [])
             others = [x for (vv, ss), xs in acts.items() if ss == s and vv != v for x in xs]
             a_seen, a_all = seen.get(s, (0, 0))
-            if len(mine) < MIN_SAMPLES or a_all == 0 or a_seen / a_all < MIN_SEEN:
+            if len(mine) < MIN_SAMPLES or a_all == 0 or a_seen / a_all < MIN_SEEN or p90[s] < ACT_FLOOR:
                 continue
             if len(voices) > 1 and len(others) >= MIN_SAMPLES:                       # one voice alone has nothing to be compared with: the picture decides
                 lift[(v, s)] = (sum(mine) / len(mine)) / max(sum(others) / len(others), 0.05)

@@ -164,7 +164,7 @@ class FixedFaces:
         return [Box(x * w - 30, 0.4 * h - 30, 60, 60) for x in self.xs]
 
 
-def make_video(path, audio, plan, xs=(0.15, 0.5, 0.85)):
+def make_video(path, audio, plan, xs=(0.15, 0.5, 0.85), statues=()):
     """640x360, 10 fps. Grey faces (three by default); the lower half of the face of whoever is speaking flickers (a mouth moving)."""
     fps, w, h = 10, 640, 360
     rng = np.random.default_rng(3)
@@ -184,7 +184,9 @@ def make_video(path, audio, plan, xs=(0.15, 0.5, 0.85)):
         for seat_i, cx in enumerate(xs):
             x0, y0 = int(cx * w) - 30, int(0.4 * h) - 30
             frame[y0:y0 + 60, x0:x0 + 60] = 170
-            speaking = any(a <= t < b and s == seat_i for a, b, s in plan)
+            if seat_i not in statues:                                                            # a living face is never still: the top half (eyes, hair) shifts a little all the time
+                frame[y0:y0 + 30, x0:x0 + 60] = np.clip(170 + rng.normal(0, 25, (30, 60, 1)), 0, 255).astype(np.uint8)
+            speaking = seat_i not in statues and any(a <= t < b and s == seat_i for a, b, s in plan)
             if speaking:
                 frame[y0 + 30:y0 + 60, x0:x0 + 60] = rng.integers(60, 230, (30, 60, 1), dtype=np.uint8)
         proc.stdin.write(frame.tobytes())
@@ -360,3 +362,54 @@ def test_two_people_on_screen_cost_no_voice_work_either(tmp_path):
     said = []
     sm = seats.build_speaker_map(video, tmp_path / "o", detector=FixedFaces(xs), embedder=Boom(), say=said.append)
     assert sm is None and any("two people" in m for m in said)
+
+
+# --- statues, captions and other faces that are not people ----------------------------------------------------------
+
+def test_plausible_faces_are_sure_and_head_sized():
+    assert seats.plausible(Box(100, 100, 120, 150), 960, 540)
+    assert not seats.plausible(Box(100, 100, 120, 150, score=0.75), 960, 540)            # not sure enough
+    assert not seats.plausible(Box(100, 100, 10, 12), 960, 540)                          # a speck: an icon
+    assert not seats.plausible(Box(100, 100, 500, 600), 960, 540)                        # half the frame
+    assert not seats.plausible(Box(100, 100, 200, 60), 960, 540)                         # a text box
+
+
+def test_a_face_that_never_changes_is_static_only_while_another_one_moves():
+    assert seats.static_ones([0.3, 6.0, 5.0]) == {0}
+    assert seats.static_ones([0.3, 0.4]) == set()                  # nobody moves: nothing is decided
+    assert seats.static_ones([-1.0, 6.0]) == set()                 # not measured
+    assert seats.static_ones([3.0, 6.0]) == set()
+
+
+def test_seats_on_top_of_each_other_are_one_place():
+    near = [seats.Seat(0.5965, 0.3578, 0.04, 0.06, 0.4), seats.Seat(0.6096, 0.3547, 0.03, 0.05, 0.2), seats.Seat(0.6279, 0.3536, 0.03, 0.05, 0.1), seats.Seat(0.12, 0.64, 0.05, 0.08, 0.3)]
+    assert len(seats.merge_seats(near)) == 2
+
+
+def test_a_still_seat_is_never_a_speaker_whatever_the_ratios_say():
+    rows = [(0, 0, 0.1)] * 20 + [(1, 0, 0.05)] * 20 + [(0, 1, 9.0)] * 20 + [(1, 1, 2.0)] * 20          # seat 0 only flickers at the noise level
+    seen = {0: (40, 40), 1: (40, 40)}
+    vs, _ = seats.assign(rows, seen, [0, 1], 2)
+    assert vs[0] != 0 and vs[1] != 0
+
+
+@ffmpeg
+def test_a_statue_among_three_people_is_not_a_seat_and_a_statue_among_two_does_not_start_the_voice_work(tmp_path):
+    xs = (0.15, 0.4, 0.65, 0.88)
+    audio = talk_audio([(200, 10), (None, 2), (400, 10), (None, 2), (200, 10)])
+    video = tmp_path / "t.mp4"
+    make_video(video, audio, [(0, 10, 0), (12, 22, 1), (24, 34, 0), (0, 34, 2)], xs, statues=(3,))            # four faces, the right one is a statue
+    said = []
+    sm = seats.build_speaker_map(video, tmp_path / "o", detector=FixedFaces(xs), embedder=ToneEmbedder(), say=said.append)
+    assert sm is not None and len(sm.seats) == 3 and any("never move" in m for m in said)
+    assert all(s.cx < 0.8 for s in sm.seats)
+
+    class Boom:
+        def embed(self, chunks):
+            raise AssertionError("no voice work for two people and a statue")
+    xs2 = (0.2, 0.5, 0.8)
+    video2 = tmp_path / "t2.mp4"
+    make_video(video2, audio, [(0, 12, 0), (13, 26, 1)], xs2, statues=(1,))
+    said2 = []
+    assert seats.build_speaker_map(video2, tmp_path / "o2", detector=FixedFaces(xs2), embedder=Boom(), say=said2.append) is None
+    assert any("two people" in m for m in said2)
