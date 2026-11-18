@@ -413,3 +413,14 @@ def test_a_statue_among_three_people_is_not_a_seat_and_a_statue_among_two_does_n
     said2 = []
     assert seats.build_speaker_map(video2, tmp_path / "o2", detector=FixedFaces(xs2), embedder=Boom(), say=said2.append) is None
     assert any("two people" in m for m in said2)
+
+
+def test_the_who_is_who_picture_comes_from_a_typical_moment_not_the_first_or_the_busiest():
+    from clipcrow.reframe import Sample
+    st = [seats.Seat(0.25, 0.4, 0.1, 0.15, 0.5), seats.Seat(0.75, 0.4, 0.1, 0.15, 0.5)]
+    both = [Box(0.25 * 1000 - 50, 0.4 * 500 - 50, 100, 100), Box(0.75 * 1000 - 50, 0.4 * 500 - 50, 100, 100)]
+    one = both[:1]
+    samples = [Sample(float(t), both if t in (1, 5, 6, 7, 9) else one) for t in range(10)]               # both seats are in view at 1, 5, 6, 7 and 9
+    frame = seats._typical_frame(samples, st, 1000, 500)
+    assert frame is not None and frame[0] is None and frame[2] == 6.0                                      # the middle of those, not the first (1) or the last (9)
+    assert seats._typical_frame([], st, 1000, 500) is None and seats._typical_frame(samples, [], 1000, 500) is None

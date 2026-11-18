@@ -278,7 +278,21 @@ def find_seats(video: str, duration: float, detector, *, check: Callable[[], Non
     gone = static_ones([s.live for s in seats])
     if gone:
         say(f"{len(gone)} face(s) that never move (a statue, a picture or a caption) are not people")
-    return [s for i, s in enumerate(seats) if i not in gone], best_frame
+    seats = [s for i, s in enumerate(seats) if i not in gone]
+    return seats, _typical_frame(samples, seats, w, h) or best_frame
+
+
+def _typical_frame(samples: list[Sample], seats: list[Seat], w: float, h: float) -> Optional[tuple]:
+    """Where to cut the who-is-who picture from: among the sampled moments where the most of the final seats have a face, the middle one in time (not an
+    intro or an end card, which is what "the most faces at once" tends to find). Returned as ``(None, [], t)``: the picture is cut from the video there."""
+    if not seats or not samples:
+        return None
+    count = [len({i for b in sm.boxes if (i := _seat_of_box(b, seats, w, h)) is not None}) for sm in samples]
+    top = max(count)
+    if top == 0:
+        return None
+    times = sorted(sm.t for sm, c in zip(samples, count) if c == top)
+    return None, [], times[len(times) // 2]
 
 
 def merge_seats(seats: list[Seat]) -> list[Seat]:
@@ -461,11 +475,12 @@ def store_map(out_dir: str | Path, video: str | Path, sm: SpeakerMap, frame: Opt
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     if len(sm.seats) >= 2:
-        if frame is None and sm.picture_t is not None:
+        if (frame is None or frame[0] is None) and sm.picture_t is not None:
+            frame = None
             for _, img in read_frames(str(video), sm.picture_t, sm.picture_t + 1.0, 1.0):
                 frame = (img, [], sm.picture_t)
                 break
-        if frame is not None:
+        if frame is not None and frame[0] is not None:
             _save_picture(out_dir / "speakers.jpg", frame, sm.seats)
     (out_dir / "speakers.json").write_text(json.dumps(sm.to_json()), encoding="utf-8")
     return sm if sm.usable else None

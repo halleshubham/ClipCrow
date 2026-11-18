@@ -1446,7 +1446,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         spoken: dict[int, float] = {}
         for t in sm.turns:
             spoken[t.voice] = spoken.get(t.voice, 0.0) + (t.end - t.start)
-        return {"available": True, "building": building, "seats": [{"n": i + 1, "cx": s.cx, "cy": s.cy} for i, s in enumerate(sm.seats)],
+        return {"available": True, "building": building, "seats": [{"n": i + 1, "cx": s.cx, "cy": s.cy, "w": round(s.w, 3), "h": round(s.h, 3), "seen": round(s.seen, 2), "live": round(s.live, 2)} for i, s in enumerate(sm.seats)],     # size, share of frames seen and the still-face value: what a "who is who" that looks wrong needs to be explained
                 "voices": [{"voice": v, "seconds": round(spoken[v]), "seat": (None if sm.seat_of(v) is None else sm.seat_of(v) + 1),
                             "changed": v in sm.overrides} for v in sorted(spoken)],
                 "picture": (store.dir(job_id) / "out" / "speakers.jpg").is_file()}

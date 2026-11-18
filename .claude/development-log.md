@@ -159,6 +159,9 @@ The rules that came out of these are in `development-rules.md`; this file is the
   (3) seats within 3.5% of the frame are one place; (4) `assign` never gives a voice to a seat whose mouth region never changes (p90 < `ACT_FLOOR`) and a seat's own scale is floored at the noise; (5) the quick one-or-two-people check
   runs on the same filters, so a statue no longer makes a third person. Thresholds are first guesses checked on made-up videos only: watch the "never move" line on real recordings. Old `speakers.json` files stay as they were until "Find who is who" is run again.
 
+- **The who-is-who picture is a typical moment** (`_typical_frame`): the middle, in time, of the sampled moments where the most of the final seats have a face, cut from the video at `picture_t` (before: the single frame with the most
+  faces, which on a podcast is the intro card). `/api/jobs/{id}/speakers` also returns each seat's `w`, `h`, `seen` and `live` so a map that looks wrong can be explained from the job itself.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.
