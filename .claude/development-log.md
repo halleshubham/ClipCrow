@@ -184,6 +184,8 @@ The rules that came out of these are in `development-rules.md`; this file is the
   (+about 50 MB) from the @expo-google-fonts packages at pinned versions. A brand has two caption fonts: `caption_font` (Marathi/Hindi/Nepali/Sanskrit clips) and `caption_font_latin` (the rest; else the first one); the preview draws them from `/api/fonts/file`.
   A font missing on the machine that renders (a worker image older than the list) falls back to the default with a note instead of failing the render. To add a family: add it to the catalogue (name, pkg, ver, deva/latin coverage, files) and rebuild the image.
 
+- **Banner scene and HyperFrames' lint** (job cd1ab619104a failed its check): a CSS `transform` on an element GSAP also moves (`y`) is flagged. The banner now starts with `opacity: 0` in CSS only and `tl.fromTo(... y: 24 -> 0)`; a test pins it. Checked with the real `npx hyperframes@0.9.29 check` on a compiled banner scene: no banner finding left.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

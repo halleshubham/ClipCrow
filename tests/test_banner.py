@@ -40,6 +40,8 @@ def test_the_banner_scene_has_the_words_the_mark_and_the_name_escaped(make_edl, 
     assert "top: 1400px" in html and "<svg" in html and "#FF0000" in html
     idx = (res.project_dir / "index.html").read_text()
     assert 'data-composition-id="banner"' in idx
+    assert "transform" not in html.split("</style>")[0].split("#banner {")[1].split("}")[0]     # HyperFrames' lint: a CSS transform on an element GSAP moves (y) is overwritten
+    assert 'tl.fromTo("#banner", { opacity: 0, y: 24 }' in html
 
 
 def test_a_banner_for_the_last_seconds_starts_late_and_a_disabled_one_writes_nothing(make_edl, tmp_path, gsap, fonts_available):

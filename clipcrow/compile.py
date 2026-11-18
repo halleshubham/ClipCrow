@@ -415,7 +415,7 @@ def _banner_scene(bn, words: str, stack: str, face: str, start: float, dur: floa
     size2 = round(min(54.0, 700 / (0.62 * max(len(bn.handle), 1))))
     css = f"""    {face}
     #banner {{ position: absolute; left: 0; right: 0; top: {bn.top_px}px; display: flex; flex-direction: column; align-items: center; gap: 14px;
-      opacity: 0; transform: translateY(24px); }}
+      opacity: 0; }}
     #banner .b1 {{ background: rgba(0,0,0,.84); color: #FFFFFF; border-radius: 16px; padding: 12px 34px; white-space: nowrap;
       font-family: {stack}, sans-serif; font-weight: 700; font-size: {size1}px; line-height: 1.25; }}
     #banner .b2 {{ background: #FFFFFF; border-radius: 999px; padding: 12px 38px 12px 26px; display: flex; align-items: center; gap: 18px;
@@ -425,7 +425,7 @@ def _banner_scene(bn, words: str, stack: str, face: str, start: float, dur: floa
     body = (f'    <div id="banner" class="clip" data-start="{_num(start)}" data-duration="{_num(dur)}">'
             f'<div class="b1">{_esc(words)}</div>'
             f'<div class="b2"><svg viewBox="0 0 24 24" aria-hidden="true">{shapes}</svg><div class="h">{_esc(bn.handle)}</div></div></div>')
-    script = f'    tl.to("#banner", {{ opacity: 1, y: 0, duration: 0.3, ease: "power1.out" }}, {_num(start)});'
+    script = f'    tl.fromTo("#banner", {{ opacity: 0, y: 24 }}, {{ opacity: 1, y: 0, duration: 0.3, ease: "power1.out" }}, {_num(start)});'
     return _scene("banner", w, h, css, body, script)
 
 
