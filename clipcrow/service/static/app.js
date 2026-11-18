@@ -105,7 +105,7 @@ function decorate(root) {
     label.append(tip(hint.textContent.trim(), label.textContent.trim()));
     hint.remove();
   }
-  for (const note of root.querySelectorAll('label.check > span > .muted:not([data-done])')) {
+  for (const note of root.querySelectorAll('label.check > span > .muted:not([data-done]):not([data-keep])')) {
     note.dataset.done = '1';
     const strong = note.parentElement.querySelector(':scope > strong');
     if (!strong || note.children.length || note.textContent.trim().length < 24) continue;
@@ -534,7 +534,7 @@ async function newJobView() {
       multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, clean_take: $('clean_take').value, fresh_transcript: $('fresh_transcript').checked ? 'true' : '', brand: $('brand') ? $('brand').value : '', speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', pictures: pics.ids(), ai_images: $('ai_images').checked ? 'true' : '',
-      cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '', music: $('music').checked ? 'true' : '', transition: $('transition').value,
+      cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', banner: $('show_banner').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '', music: $('music').checked ? 'true' : '', transition: $('transition').value,
     };
     submit.disabled = true;
     progress.hidden = false;
@@ -621,13 +621,16 @@ async function newJobView() {
           el('span', { class: 'muted', text: 'A bold title (the hook line) for the first quarter-second, so the poster frame says what the clip is about. You also get it as a picture. Platforms choose their own thumbnail, so this raises the odds, it cannot force it.' }))),
       el('label', { class: brand.logo ? 'check' : 'check muted', for: 'logo' }, el('input', { type: 'checkbox', id: 'logo', disabled: !brand.logo, checked: brand.logo && !!brand.settings.default_logo }),
         el('span', {}, el('strong', { text: 'Logo in a corner' }), el('br'),
-          el('span', { class: 'muted', id: 'logo-hint' }, brand.logo ? 'Your logo, from the Brand page.' : ['No logo yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
+          el('span', { class: 'muted', id: 'logo-hint', 'data-keep': '1' }, brand.logo ? 'Your logo, from the Brand page.' : ['No logo yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
+      el('label', { class: brand.settings.banner_handle ? 'check' : 'check muted', for: 'show_banner' }, el('input', { type: 'checkbox', id: 'show_banner', disabled: !brand.settings.banner_handle, checked: !!brand.settings.banner_handle && !!brand.settings.default_banner }),
+        el('span', {}, el('strong', { text: 'Watch-full-video banner' }), el('br'),
+          el('span', { class: 'muted', id: 'show_banner-hint', 'data-keep': '1' }, brand.settings.banner_handle ? `Your channel: ${brand.settings.banner_handle}.` : ['No channel name yet. ', el('a', { href: '#/brand', text: 'Add it on the Brand page' }), '.']))),
       el('label', { class: brand.outro ? 'check' : 'check muted', for: 'outro' }, el('input', { type: 'checkbox', id: 'outro', disabled: !brand.outro, checked: brand.outro && !!brand.settings.default_outro }),
         el('span', {}, el('strong', { text: 'Ending video after each clip' }), el('br'),
-          el('span', { class: 'muted', id: 'outro-hint' }, brand.outro ? `Your branding video (${brand.outro_seconds} s), added at the end.` : ['No ending video yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
+          el('span', { class: 'muted', id: 'outro-hint', 'data-keep': '1' }, brand.outro ? `Your branding video (${brand.outro_seconds} s), added at the end.` : ['No ending video yet. ', el('a', { href: '#/brand', text: 'Add one on the Brand page' }), '.']))),
       el('label', { class: brand.music ? 'check' : 'check muted', for: 'music' }, el('input', { type: 'checkbox', id: 'music', disabled: !brand.music, checked: brand.music && !!brand.settings.default_music }),
         el('span', {}, el('strong', { text: 'Background music (ducks under the speech)' }), el('br'),
-          el('span', { class: 'muted', id: 'music-hint' }, brand.music ? `${brand.music_name} (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music chosen. ', el('a', { href: '#/brand', text: 'Pick a track or add your own on the Brand page' }), '.']))),
+          el('span', { class: 'muted', id: 'music-hint', 'data-keep': '1' }, brand.music ? `${brand.music_name} (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music chosen. ', el('a', { href: '#/brand', text: 'Pick a track or add your own on the Brand page' }), '.']))),
       el('label', { class: 'check', for: 'clean' }, el('input', { type: 'checkbox', id: 'clean' }),
         el('span', {}, el('strong', { text: 'Raw recording: cut fumbles and dead air' }), el('br'),
           el('span', { class: 'muted', text: 'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.' }))),
@@ -663,6 +666,7 @@ async function newJobView() {
     const set = (id, have, on, hint) => { const box = $(id); box.disabled = !have; box.checked = have && !!on; box.closest('label').className = have ? 'check' : 'check muted'; $(id + '-hint').replaceChildren(...[].concat(hint)); };
     const link = (t) => [t, el('a', { href: '#/brand', text: 'Open the Brand page' }), '.'];
     $('cover').checked = !!b.settings.default_cover;
+    set('show_banner', !!b.settings.banner_handle, b.settings.default_banner, b.settings.banner_handle ? `Your channel: ${b.settings.banner_handle}.` : link('No channel name for this brand. '));
     set('logo', b.logo, b.settings.default_logo, b.logo ? 'Your logo, from the Brand page.' : link('No logo for this brand. '));
     set('outro', b.outro, b.settings.default_outro, b.outro ? `Your branding video (${b.outro_seconds} s), added at the end.` : link('No ending video for this brand. '));
     set('music', b.music, b.settings.default_music, b.music ? `${b.music_name} (${b.music_seconds} s), kept below the voice and lowered further while someone talks.` : link('No music for this brand. '));
@@ -1135,6 +1139,7 @@ async function clipEditorView(jobId, clipId) {
   f.cover = el('input', { id: 'cover_on', type: 'checkbox' }); f.cover.checked = view.cover.on;
   textIn('cover_text', view.cover.text, 80);
   f.logo = el('input', { id: 'logo_on', type: 'checkbox', disabled: !view.logo.available }); f.logo.checked = view.logo.on;
+  f.banner = el('input', { id: 'banner_on', type: 'checkbox', disabled: !view.banner.available }); f.banner.checked = view.banner.on;
   f.outro = el('input', { id: 'outro_on', type: 'checkbox', disabled: !view.outro.available }); f.outro.checked = view.outro.on;
   f.sfx = el('input', { id: 'sfx_on', type: 'checkbox' }); f.sfx.checked = view.sfx.on;
   f.music = el('input', { id: 'music_on', type: 'checkbox', disabled: !view.music.available }); f.music.checked = view.music.on;
@@ -1159,6 +1164,7 @@ async function clipEditorView(jobId, clipId) {
     if (f.cover.checked !== view.cover.on) out.cover = f.cover.checked;
     if (f.cover.checked && f.cover_text.value.trim() !== view.cover.text) out.cover_text = f.cover_text.value;
     if (f.logo.checked !== view.logo.on) out.logo = f.logo.checked;
+    if (f.banner.checked !== view.banner.on) out.banner = f.banner.checked;
     if (f.outro.checked !== view.outro.on) out.outro = f.outro.checked;
     if (f.sfx.checked !== view.sfx.on) out.sfx = f.sfx.checked;
     if (f.music.checked !== view.music.on) out.music = f.music.checked;
@@ -1239,6 +1245,7 @@ async function clipEditorView(jobId, clipId) {
             el('span', { class: 'muted', text: 'Shown for the first fraction of a second, so the poster frame carries the title.' }))),
           field('Cover words', f.cover_text, 'Leave empty to use the hook line.'),
           el('label', { class: view.logo.available ? 'check' : 'check muted', for: 'logo_on' }, f.logo, el('span', { text: view.logo.available ? 'Logo in a corner' : 'Logo (this job has none)' })),
+          el('label', { class: view.banner.available ? 'check' : 'check muted', for: 'banner_on' }, f.banner, el('span', { text: view.banner.available ? 'Watch-full-video banner' : 'Banner (this job has none)' })),
           el('label', { class: view.outro.available ? 'check' : 'check muted', for: 'outro_on' }, f.outro, el('span', { text: view.outro.available ? 'Ending video' : 'Ending video (this job has none)' }))),
         group('Cuts', field('Effect on every cut', f.tx, view.transition.cuts
           ? `This clip has ${view.transition.cuts} hard cut${view.transition.cuts > 1 ? 's' : ''} (a joined stretch, a speaker change or a slide).`
@@ -1276,11 +1283,11 @@ async function brandView(bid) {
     const fd = new FormData();
     fd.append('file', input.files[0]);
     note.textContent = 'Uploading…';
-    try { await api(path + q, { method: 'POST', body: fd }); await route(); } catch (e) { note.textContent = ''; fail(e); }
+    try { if (!(await save(true))) return; await api(path + q, { method: 'POST', body: fd }); await route(); } catch (e) { note.textContent = ''; fail(e); }
   }
   async function remove(what) {
     if (!confirm('Remove it? Clips already made keep their copy.')) return;
-    try { await api(`/brand/${what}${q}`, { method: 'DELETE' }); await route(); } catch (e) { fail(e); }
+    try { if (!(await save(true))) return; await api(`/brand/${what}${q}`, { method: 'DELETE' }); await route(); } catch (e) { fail(e); }
   }
 
   const switcher = el('section', { class: 'card stack' },
@@ -1306,23 +1313,27 @@ async function brandView(bid) {
   const logoIn = el('input', { type: 'file', id: 'logo_file', accept: 'image/png,image/jpeg,image/webp' });
   const outroIn = el('input', { type: 'file', id: 'outro_file', accept: 'video/*' });
   const musicIn = el('input', { type: 'file', id: 'music_file', accept: 'audio/*' });
+  logoIn.addEventListener('change', () => { if (logoIn.files[0]) send('/brand/logo', logoIn, 'a logo'); });
+  outroIn.addEventListener('change', () => { if (outroIn.files[0]) send('/brand/outro', outroIn, 'a video'); });
   const logoBox = el('section', { class: 'card stack' }, el('h2', { text: 'Logo' }),
     brand.logo ? el('img', { src: `/api/brand/logo/file${q}&v=${Date.now()}`, alt: 'Your logo', class: 'logo-preview' })
       : el('p', { class: 'small muted', text: 'No logo yet.' }),
     el('div', {}, el('label', { class: 'field', for: 'logo_file' }, 'PNG, JPEG or WebP · up to 3 MB', tip('A transparent PNG looks best. SVG is not accepted.', 'the logo file')), logoIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.logo ? 'Replace logo' : 'Upload logo', onclick: () => send('/brand/logo', logoIn, 'a logo') }),
       brand.logo && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('logo') })));
-  const trackSel = el('select', { id: 'music_track' }, [['', brand.uploaded_music ? 'Your upload' : 'None'], ...brand.tracks.map((t) => [t.id, `${t.title}: ${t.mood}`])]
+  const trackSel = el('select', { id: 'music_track' }, [['', brand.uploaded_music ? 'Your upload' : 'None'], ...brand.tracks.map((t) => [t.id, `${t.title} (${t.mood})`])]
     .map(([v, t]) => el('option', { value: v, text: t })));
   trackSel.value = brand.settings.music_track || '';
-  trackSel.addEventListener('change', async () => {
-    try { await api('/brand' + q, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ music_track: trackSel.value }) }); await route(); } catch (e) { fail(e); }
+  trackSel.addEventListener('change', () => {                                       // saved with everything else; here only the sample you hear changes
+    const a = document.getElementById('music_sample');
+    if (a) { a.src = trackSel.value ? `/api/brand/tracks/${trackSel.value}/file` : (brand.music ? `/api/brand/music/file${q}&v=${Date.now()}` : ''); }
+    note.textContent = 'Not saved yet.';
   });
   const previewSrc = brand.settings.music_track ? `/api/brand/tracks/${brand.settings.music_track}/file` : (brand.music ? `/api/brand/music/file${q}&v=${Date.now()}` : '');
   const musicBox = el('section', { class: 'card stack' }, el('h2', { text: 'Background music' }),
     el('div', {}, el('label', { class: 'field', for: 'music_track', text: 'Track' }), trackSel,
       el('div', { class: 'hint', text: 'The built-in tracks are instrumental and made for this app. Or add your own below.' })),
-    previewSrc ? el('audio', { src: previewSrc, controls: true, preload: 'none', style: { width: '100%' }, 'aria-label': 'Preview of the chosen track' }) : el('p', { class: 'small muted', text: 'No music chosen.' }),
+    previewSrc ? el('audio', { id: 'music_sample', src: previewSrc, controls: true, preload: 'none', style: { width: '100%' }, 'aria-label': 'Preview of the chosen track' }) : el('p', { class: 'small muted', text: 'No music chosen.' }),
     el('div', {}, el('label', { class: 'field', for: 'music_file' }, 'Your own track · MP3, M4A or WAV, up to 30 MB', tip('5 seconds to 15 minutes. Only upload music you have the right to use in your videos: platforms can mute or claim music they recognise. It plays under the voice and is lowered further while someone talks.', 'your own music track')), musicIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.uploaded_music ? 'Replace my upload' : 'Upload music', onclick: async () => {
       if (musicIn.files[0]) { try { await api('/brand' + q, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ music_track: '' }) }); } catch (_) { /* the upload reports its own problem */ } }
@@ -1348,48 +1359,76 @@ async function brandView(bid) {
   const color = (id, label, value) => { f[id] = el('input', { id, type: 'color', value }); return el('div', {}, el('label', { class: 'field', for: id, text: label }), f[id]); };
   const tick = (id, label, value) => { f[id] = el('input', { id, type: 'checkbox' }); f[id].checked = value; return el('label', { class: 'check', for: id }, f[id], el('span', { text: label })); };
 
-  const look = el('section', { class: 'card stack' }, el('h2', { text: 'Look' }),
+  const group = (title, hint, ...kids) => el('details', { class: 'card', open: true }, el('summary', { text: title }), el('div', { class: 'stack', style: { marginTop: '16px' } }, hint ? el('p', { class: 'small muted', text: hint }) : null, ...kids));
+  const text = (id, label, value, max, placeholder = '') => { f[id] = el('input', { id, maxlength: String(max), value: value || '', placeholder, autocomplete: 'off' }); return el('div', {}, el('label', { class: 'field', for: id, text: label }), f[id]); };
+  const optional = (id, label, min, max, step, value, placeholder) => {                // empty = the app's own default (no magic 0)
+    f[id] = el('input', { id, type: 'number', min: String(min), max: String(max), step: String(step), value: value ? String(value) : '', placeholder, inputmode: 'numeric' });
+    return el('div', {}, el('label', { class: 'field', for: id, text: label }), f[id]);
+  };
+  const coverBg = color('cover_bg_color', 'Cover solid colour', s.cover_bg_color);
+  const logoPlacement = group('Logo placement', 'Where the logo sits on every clip. When a face or the captions would be covered, a clip moves it down the side or makes it smaller; the preview shows the same.',
     el('div', { class: 'grid2', style: { marginTop: 0 } },
-      opt('logo_position', 'Logo corner', [['tr', 'Top right'], ['tl', 'Top left'], ['br', 'Bottom right'], ['bl', 'Bottom left']], s.logo_position),
-      num('logo_size_pct', 'Logo width (% of the screen)', 5, 40, 1, s.logo_size_pct),
-      num('logo_opacity', 'Logo opacity (0.1–1)', 0.1, 1, 0.1, s.logo_opacity),
-      num('logo_margin_px', 'Logo margin (px)', 0, 300, 10, s.logo_margin_px),
-      num('cover_ms', 'Cover title shows for (ms)', 100, 1500, 50, s.cover_ms),
-      opt('cover_background', 'Cover background', [['frame', 'The video, darkened'], ['color', 'A solid colour']], s.cover_background),
-      color('cover_color', 'Cover text colour', s.cover_color), color('cover_accent', 'Cover last-word colour', s.cover_accent),
-      color('cover_bg_color', 'Cover solid colour', s.cover_bg_color),
-      num('outro_max_seconds', 'Use at most (seconds) of the ending video', 1, 30, 0.5, s.outro_max_seconds),
-      num('outro_gap_ms', 'Pause before the ending video (ms, 0 = straight cut)', 0, 1500, 50, s.outro_gap_ms)),
-    el('h3', { text: 'Speaker' }),
+      opt('logo_position', 'Corner', [['tr', 'Top right'], ['tl', 'Top left'], ['br', 'Bottom right'], ['bl', 'Bottom left']], s.logo_position),
+      num('logo_size_pct', 'Width (% of the screen)', 5, 40, 1, s.logo_size_pct),
+      num('logo_opacity', 'Opacity (%)', 10, 100, 5, Math.round(s.logo_opacity * 100)),
+      num('logo_margin_px', 'Margin from the edge (px)', 0, 300, 10, s.logo_margin_px)));
+  const banner = group('Watch-full-video banner', 'A small banner low in the frame: a line of words over a pill with the platform mark and your channel name. Leave the words empty to use the language of the video.',
     el('div', { class: 'grid2', style: { marginTop: 0 } },
-      el('div', {}, el('label', { class: 'field', for: 'speaker_name', text: 'Name shown on every clip' }), (f.speaker_name = el('input', { id: 'speaker_name', maxlength: '60', value: s.speaker_name || '' }))),
-      el('div', {}, el('label', { class: 'field', for: 'speaker_title', text: 'Role' }), (f.speaker_title = el('input', { id: 'speaker_title', maxlength: '60', value: s.speaker_title || '' })))),
-    el('h3', { text: 'Captions' }),
-    el('div', { class: 'small muted' }, 'Used on new jobs unless you pick a reference style.', tip('Leave a field on “App default” to keep the built-in look. A style you choose on a job overrides these.', 'the caption defaults')),
+      text('banner_handle', 'Channel name', s.banner_handle, 40, 'your.channel'),
+      text('banner_text', 'Words above it', s.banner_text, 60, 'Watch full video:'),
+      opt('banner_platform', 'Platform', brand.platforms.map((x) => [x.id, x.name]), s.banner_platform),
+      optional('banner_seconds', 'Only in the last … seconds', 0, 60, 1, s.banner_seconds, 'The whole clip'),
+      num('banner_top_px', 'Height from the top (px on the 1080×1920 video)', 0, 1800, 10, s.banner_top_px)));
+  const coverGroup = group('Cover title', 'The title shown for the first fraction of a second so the poster frame says what the clip is about.',
+    el('div', { class: 'grid2', style: { marginTop: 0 } },
+      num('cover_ms', 'Shows for (ms)', 100, 1500, 50, s.cover_ms),
+      opt('cover_background', 'Background', [['frame', 'The video, darkened'], ['color', 'A solid colour']], s.cover_background),
+      color('cover_color', 'Text colour', s.cover_color), color('cover_accent', 'Last-word colour', s.cover_accent), coverBg));
+  const syncCover = () => { coverBg.hidden = f.cover_background.value !== 'color'; };
+  f.cover_background.addEventListener('change', syncCover); syncCover();
+  const endingGroup = group('Ending video settings', '',
+    el('div', { class: 'grid2', style: { marginTop: 0 } },
+      num('outro_max_seconds', 'Use at most (seconds)', 1, 30, 0.5, s.outro_max_seconds),
+      num('outro_gap_ms', 'Pause before it (ms; 0 is a straight cut)', 0, 1500, 50, s.outro_gap_ms)));
+  const speakerGroup = group('Speaker', 'The name and role shown low on every clip, unless a job names someone else.',
+    el('div', { class: 'grid2', style: { marginTop: 0 } }, text('speaker_name', 'Name', s.speaker_name, 60), text('speaker_title', 'Role', s.speaker_title, 60)));
+  const colourField = (id, label, value, base) => {
+    f[id] = el('input', { id, type: 'color', value: value || base });
+    f[id + '_on'] = el('input', { id: id + '_on', type: 'checkbox' }); f[id + '_on'].checked = !!value;
+    f[id].addEventListener('input', () => { f[id + '_on'].checked = true; });                 // choosing a colour means using it
+    return el('div', {}, el('label', { class: 'field', for: id, text: label }), f[id],
+      el('label', { class: 'check', for: id + '_on' }, f[id + '_on'], el('span', { text: 'Use it (otherwise the app default)' })));
+  };
+  const captionsGroup = group('Captions', 'Used on new jobs unless you pick a reference style. A field left on “App default” keeps the built-in look.',
     el('div', { class: 'grid2', style: { marginTop: 0 } },
       opt('caption_font', 'Font', [['', 'App default'], ...brand.fonts.map((x) => [x, x])], s.caption_font || ''),
       opt('caption_animation', 'Animation', [['', 'App default'], ...brand.animations.map((x) => [x, x])], s.caption_animation || ''),
-      num('caption_words', 'Words per line (0 = default)', 0, 8, 1, s.caption_words || 0),
-      num('caption_top_px', 'Caption height from top (px, 0 = default)', 0, 1800, 10, s.caption_top_px || 0),
-      el('div', {}, el('label', { class: 'field', for: 'caption_color', text: 'Caption colour' }), (f.caption_color = el('input', { id: 'caption_color', type: 'color', value: s.caption_color || brand.caption_base.color })),
-        tick('caption_color_on', 'Use this colour', !!s.caption_color)),
-      el('div', {}, el('label', { class: 'field', for: 'caption_highlight', text: 'Highlight colour' }), (f.caption_highlight = el('input', { id: 'caption_highlight', type: 'color', value: s.caption_highlight || brand.caption_base.highlight })),
-        tick('caption_highlight_on', 'Use this colour', !!s.caption_highlight))),
-    el('div', { class: 'stack' }, el('div', { class: 'small muted', text: 'Tick by default on a new job:' }),
-      tick('default_cover', 'Cover title', s.default_cover), tick('default_logo', 'Logo', s.default_logo), tick('default_outro', 'Ending video', s.default_outro), tick('default_music', 'Background music', s.default_music)),
-    el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: async () => {
-      err.hidden = true;
-      const num_ = (id) => Number(f[id].value);
-      const body = { logo_position: f.logo_position.value, logo_size_pct: num_('logo_size_pct'), logo_opacity: num_('logo_opacity'),
-        logo_margin_px: num_('logo_margin_px'), cover_ms: num_('cover_ms'), cover_background: f.cover_background.value,
-        cover_color: f.cover_color.value.toUpperCase(), cover_accent: f.cover_accent.value.toUpperCase(), cover_bg_color: f.cover_bg_color.value.toUpperCase(),
-        outro_max_seconds: num_('outro_max_seconds'), outro_gap_ms: num_('outro_gap_ms'),
-        speaker_name: f.speaker_name.value, speaker_title: f.speaker_title.value, caption_font: f.caption_font.value, caption_animation: f.caption_animation.value,
-        caption_words: num_('caption_words'), caption_top_px: num_('caption_top_px'),
-        caption_color: f.caption_color_on.checked ? f.caption_color.value.toUpperCase() : '', caption_highlight: f.caption_highlight_on.checked ? f.caption_highlight.value.toUpperCase() : '',
-        default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_outro: f.default_outro.checked, default_music: f.default_music.checked };
-      try { await api('/brand' + q, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); note.textContent = 'Saved. New jobs use this.'; } catch (e) { fail(e); }
-    } })));
+      optional('caption_words', 'Words per line', 1, 8, 1, s.caption_words, 'App default'),
+      optional('caption_top_px', 'Height from the top (px)', 100, 1800, 10, s.caption_top_px, 'App default'),
+      colourField('caption_color', 'Colour', s.caption_color, brand.caption_base.color),
+      colourField('caption_highlight', 'Highlight colour', s.caption_highlight, brand.caption_base.highlight)));
+  const defaultsGroup = group('Ticked by default on a new job', '',
+    tick('default_cover', 'Cover title', s.default_cover), tick('default_logo', 'Logo', s.default_logo), tick('default_banner', 'Watch-full-video banner', s.default_banner),
+    tick('default_outro', 'Ending video', s.default_outro), tick('default_music', 'Background music', s.default_music));
+
+  async function save(quiet) {                                   // returns whether it was saved
+    err.hidden = true;
+    const n = (id) => Number(f[id].value);
+    const orNone = (id) => (f[id].value.trim() === '' ? 0 : Number(f[id].value));
+    const body = { logo_position: f.logo_position.value, logo_size_pct: n('logo_size_pct'), logo_opacity: n('logo_opacity') / 100,
+      logo_margin_px: n('logo_margin_px'), cover_ms: n('cover_ms'), cover_background: f.cover_background.value,
+      cover_color: f.cover_color.value.toUpperCase(), cover_accent: f.cover_accent.value.toUpperCase(), cover_bg_color: f.cover_bg_color.value.toUpperCase(),
+      outro_max_seconds: n('outro_max_seconds'), outro_gap_ms: n('outro_gap_ms'),
+      speaker_name: f.speaker_name.value, speaker_title: f.speaker_title.value, caption_font: f.caption_font.value, caption_animation: f.caption_animation.value,
+      caption_words: orNone('caption_words'), caption_top_px: orNone('caption_top_px'),
+      caption_color: f.caption_color_on.checked ? f.caption_color.value.toUpperCase() : '', caption_highlight: f.caption_highlight_on.checked ? f.caption_highlight.value.toUpperCase() : '',
+      banner_handle: f.banner_handle.value, banner_text: f.banner_text.value, banner_platform: f.banner_platform.value, banner_seconds: orNone('banner_seconds'), banner_top_px: n('banner_top_px'),
+      music_track: trackSel.value,
+      default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_banner: f.default_banner.checked, default_outro: f.default_outro.checked, default_music: f.default_music.checked };
+    try { await api('/brand' + q, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); if (!quiet) note.textContent = 'Saved. New jobs use this.'; return true; }
+    catch (e) { fail(e); return false; }
+  }
+  const saveBtn = el('button', { class: 'btn primary', type: 'button', text: 'Save', onclick: () => save(false) });
 
   // ---- live preview: a vertical frame with a sample picture, your logo and a caption line, redrawn as the fields change. Where the logo goes is asked of the server,
   // which uses the very placement a real clip gets (it keeps the logo off the face). ----
@@ -1398,9 +1437,11 @@ async function brandView(bid) {
   const pvKeepOn = el('input', { type: 'checkbox', id: 'pv_keep' });
   const pvHead = el('div', { class: 'pv-head' }), pvBody = el('div', { class: 'pv-body' }), pvKeep = el('div', { class: 'pv-keep' });
   const pvCap = el('div', { class: 'pv-cap', translate: 'no' });
+  const pvMark = el('span', { class: 'i' }), pvHandle = el('span', { class: 'pv-handle', translate: 'no' }), pvWords = el('div', { class: 'pv-b1', translate: 'no' });
+  const pvBanner = el('div', { class: 'pv-banner' }, pvWords, el('div', { class: 'pv-b2' }, pvMark, pvHandle));
   const pvLogo = brand.logo ? el('img', { class: 'pv-logo', src: `/api/brand/logo/file${q}&v=${Date.now()}`, alt: '' }) : el('div', { class: 'pv-logo pv-logo-empty', text: 'Logo' });
   const pvNote = el('div', { class: 'small muted', 'aria-live': 'polite' });
-  const pvFrame = el('div', { class: 'pv', role: 'img', 'aria-label': 'Preview of a clip with your logo and a caption' }, pvBody, pvHead, pvKeep, pvCap, pvLogo);
+  const pvFrame = el('div', { class: 'pv', role: 'img', 'aria-label': 'Preview of a clip with your logo and a caption' }, pvBody, pvHead, pvKeep, pvCap, pvBanner, pvLogo);
   const pct = (x) => `${(x * 100).toFixed(2)}%`;
   let pvTimer = 0, pvSeq = 0;
   async function drawPreview() {
@@ -1408,6 +1449,7 @@ async function brandView(bid) {
     const zone = SAMPLES[pvSel.value].zone;
     const n = (id) => Number(f[id].value);
     const capTop = n('caption_top_px') || brand.caption_base.top_px;
+    const bannerOn = f.banner_handle.value.trim() !== '';
     pvHead.hidden = pvBody.hidden = pvKeep.hidden = !zone;
     if (zone) {
       const [x0, y0, x1, y1] = zone;
@@ -1421,10 +1463,17 @@ async function brandView(bid) {
     const light = f.caption_highlight_on.checked ? f.caption_highlight.value : brand.caption_base.highlight;
     pvCap.replaceChildren('तुमचे ', el('span', { text: 'कॅप्शन', style: { color: light } }), ' असे दिसतील');
     Object.assign(pvCap.style, { top: pct(capTop / 1920), color: colour });
+    pvBanner.hidden = !bannerOn;
+    if (bannerOn) {
+      pvBanner.style.top = pct(n('banner_top_px') / 1920);
+      pvWords.textContent = f.banner_text.value.trim() || 'Watch full video:';
+      pvHandle.textContent = f.banner_handle.value.trim();
+      pvMark.className = `i i-plat-${f.banner_platform.value}`; pvMark.style.color = `var(--plat-${f.banner_platform.value})`;
+    }
     let place = { position: f.logo_position.value, top_px: null, shrink: 1, side_px: null, aspect: 1 };
     try {
       place = await api('/brand/preview' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ position: f.logo_position.value, size_pct: n('logo_size_pct'), margin_px: n('logo_margin_px'), zone, caption_top: capTop }) });
+        body: JSON.stringify({ position: f.logo_position.value, size_pct: n('logo_size_pct'), margin_px: n('logo_margin_px'), zone, caption_top: capTop, banner_top: bannerOn ? n('banner_top_px') : null }) });
     } catch (e) { if (e instanceof SignInNeeded) return; }
     if (seq !== pvSeq) return;                                                    // a newer drawing is under way
     const wPct = n('logo_size_pct') * place.shrink / 100, hPct = wPct * place.aspect * 1080 / 1920;
@@ -1432,13 +1481,13 @@ async function brandView(bid) {
     const top = place.top_px != null ? place.top_px / 1920 : (place.position[0] === 't' ? (250 + n('logo_margin_px')) / 1920 : 1 - (380 + n('logo_margin_px')) / 1920 - hPct);
     pvLogo.style.left = place.position[1] === 'l' ? pct(gap) : 'auto';
     pvLogo.style.right = place.position[1] === 'r' ? pct(gap) : 'auto';
-    Object.assign(pvLogo.style, { top: pct(top), width: pct(wPct), opacity: String(Math.min(1, Math.max(0.1, n('logo_opacity')))) });
+    Object.assign(pvLogo.style, { top: pct(top), width: pct(wPct), opacity: String(Math.min(1, Math.max(0.1, n('logo_opacity') / 100))) });
     pvNote.textContent = place.top_px != null || place.shrink < 1
       ? `The logo moves${place.shrink < 1 ? ' and gets smaller' : ''} here, so it does not cover the face. Clips do the same.`
       : (zone ? 'The corner you chose is clear of the face here.' : 'No face known: the logo stays in your corner.');
   }
   const redraw = () => { clearTimeout(pvTimer); pvTimer = setTimeout(drawPreview, 150); };
-  for (const id of ['logo_position', 'logo_size_pct', 'logo_opacity', 'logo_margin_px', 'caption_top_px', 'caption_color', 'caption_highlight', 'caption_color_on', 'caption_highlight_on']) {
+  for (const id of ['logo_position', 'logo_size_pct', 'logo_opacity', 'logo_margin_px', 'caption_top_px', 'caption_color', 'caption_highlight', 'caption_color_on', 'caption_highlight_on', 'banner_handle', 'banner_text', 'banner_platform', 'banner_top_px']) {
     f[id].addEventListener('input', redraw); f[id].addEventListener('change', redraw);
   }
   pvSel.addEventListener('change', drawPreview); pvKeepOn.addEventListener('change', drawPreview);
@@ -1451,8 +1500,9 @@ async function brandView(bid) {
 
   app.replaceChildren(el('div', { class: 'stack' },
     el('div', {}, el('h1', { text: 'Brand' }), el('p', { class: 'small muted' }, 'Added to clips when you tick them on a new job.', tip('Clips already made keep the copy they were made with.', 'the brand page'))),
-    switcher, err, note,
-    el('div', { class: 'layout' }, el('div', { class: 'stack' }, el('div', { class: 'pair' }, logoBox, outroBox), musicBox, look), el('div', { class: 'aside first-on-phone' }, preview))));
+    switcher,
+    el('div', { class: 'layout' }, el('div', { class: 'stack' }, el('div', { class: 'pair' }, logoBox, outroBox), logoPlacement, banner, coverGroup, endingGroup, speakerGroup, captionsGroup, musicBox, defaultsGroup,
+      el('div', { class: 'actionbar' }, err, el('div', { class: 'row' }, note, saveBtn))), el('div', { class: 'aside first-on-phone' }, preview))));
 }
 
 // ---- sharing ---------------------------------------------------------------------------------------

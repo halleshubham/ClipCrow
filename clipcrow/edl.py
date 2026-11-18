@@ -331,6 +331,26 @@ class Logo(_Model):
     side_px: Optional[int] = Field(default=None, ge=0, le=300)   # ... and a narrower side margin when that was needed (None: ``margin_px``)
 
 
+BannerPlatform = Literal["youtube", "instagram", "facebook", "tiktok", "x", "linkedin", "telegram", "whatsapp"]
+
+
+class Banner(_Model):
+    """A small "watch the full video" banner low in the frame: a line of words over a pill with the platform's mark and the channel name. Plain data, no file."""
+    text: str = Field(default="", max_length=60)               # "" = the words for the language ("Watch full video:" / "पूर्ण व्हिडीओ पहा:")
+    handle: str = Field(min_length=1, max_length=40)           # the channel name, shown as given
+    platform: BannerPlatform = "youtube"
+    enabled: bool = True
+    top_px: int = Field(default=1440, ge=0, le=1800)           # the top edge, on the 1080x1920 canvas: under the captions, above the platform's own buttons
+    seconds: float = Field(default=0.0, ge=0.0, le=60.0)       # 0 = shown from the start of the clip; else only for the last this many seconds
+
+    @field_validator("text", "handle")
+    @classmethod
+    def _no_control(cls, v: str) -> str:
+        if any(ord(c) < 32 for c in v):
+            raise ValueError("no control characters")
+        return v.strip()
+
+
 class Outro(_Model):
     """A branding video (a video Asset of this EDL) appended after the clip. Done after the render, with FFmpeg."""
     asset: SafeId
@@ -374,6 +394,7 @@ class Clip(_Model):
     overlays: list[Overlay] = Field(default_factory=list)
     cover: Optional[Cover] = None
     logo: Optional[Logo] = None
+    banner: Optional[Banner] = None
     outro: Optional[Outro] = None
     music: Optional[Music] = None
     sfx: Optional[Sfx] = None

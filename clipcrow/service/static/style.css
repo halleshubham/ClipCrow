@@ -309,6 +309,11 @@ tbody tr:last-child td { border-bottom: 0; }
 .pv-body { bottom: 0; border-radius: 40% 40% 0 0; opacity: .45; }
 .pv-keep { position: absolute; border: 1.5px dashed var(--accent-line); border-radius: 6px; pointer-events: none; }
 .pv-cap { position: absolute; left: 4%; right: 4%; text-align: center; font: 700 6cqw/1.25 var(--deva); text-shadow: 0 1px 3px var(--video-bg); }
+.pv-banner { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 1.2cqw; }
+.pv-b1 { background: var(--glass); color: var(--ink); border-radius: 1.6cqw; padding: 1cqw 3.4cqw; font: 700 4.4cqw/1.25 var(--deva); white-space: nowrap; max-width: 96%; overflow: hidden; text-overflow: ellipsis; }
+.pv-b2 { display: flex; align-items: center; gap: 1.8cqw; padding: 1cqw 3.6cqw 1cqw 2.4cqw; border-radius: 999px; background: var(--logo-tile); color: var(--ground); max-width: 96%; }
+.pv-b2 .i { width: 6cqw; height: 6cqw; flex: none; }
+.pv-handle { font: 700 5cqw/1.2 var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pv-logo { position: absolute; display: block; height: auto; }
 .pv-logo-empty { aspect-ratio: 1; display: grid; place-items: center; border: 1.5px dashed var(--accent-line); border-radius: 6px; color: var(--accent-text); font-size: 3cqw; }
 .logo-preview { max-width: 220px; max-height: 120px; padding: 8px; border-radius: 8px; background: var(--backdrop-neutral); }
@@ -338,3 +343,9 @@ summary > .i { width: 18px; height: 18px; margin-right: 8px; vertical-align: -3p
 .jobrow td:first-child .i { margin-right: 8px; vertical-align: -4px; color: var(--muted); }
 h1 > .i, h2 > .i { margin-right: 10px; vertical-align: -4px; color: var(--accent-text); }
 h1 > .i { vertical-align: -3px; }
+
+/* touch targets of at least 44 px on the Brand page and the New job form (the audit measured 18-42 px) */
+.info::after { content: ""; position: absolute; inset: -10px; }
+.info { position: relative; }
+label.check { min-height: 44px; align-items: center; }
+input[type="file"], input[type="color"] { min-height: 44px; }

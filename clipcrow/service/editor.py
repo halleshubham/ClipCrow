@@ -57,6 +57,7 @@ class ClipEdit(_M):
     cover: Optional[bool] = None                # the bold title for the first frames: on or off
     cover_text: Optional[str] = Field(default=None, max_length=80)   # its words ("" = back to the hook / title)
     logo: Optional[bool] = None                 # the brand logo (only when the job has one)
+    banner: Optional[bool] = None               # the "watch the full video" banner (only when the job has one)
     outro: Optional[bool] = None                # the ending video (only when the job has one)
     transition: Optional[Literal["none", "flash", "blur", "dip", "whip"]] = None   # a look for every hard cut, or none
     music: Optional[bool] = None                # the background track (only when the job has one)
@@ -135,6 +136,13 @@ def _brand_edit(edl: EDL, clip: Clip, d: dict, edit: ClipEdit) -> list[str]:
         elif cur and cur.get("enabled", True):
             cur["enabled"] = False
             changed.append(label)
+    if edit.banner is not None:
+        cur = d.get("banner")
+        if edit.banner and cur is None:
+            raise ValueError("This job has no banner: set one up on the Brand page and make the clips again.")
+        if cur and cur.get("enabled", True) != edit.banner:
+            cur["enabled"] = edit.banner
+            changed.append("banner")
     if edit.transition is not None:
         cur = d.get("transition")
         if edit.transition == "none":
@@ -319,6 +327,7 @@ def clip_view(edl: EDL, clip_id: str, *, source_duration: float) -> dict:
         "cover": {"on": bool(clip.cover and clip.cover.enabled), "text": clip.cover.text if clip.cover else branding.cover_text(clip),
                   "ms": clip.cover.duration_ms if clip.cover else 250},
         "logo": {"available": any(a.id == "brand-logo" for a in edl.assets), "on": bool(clip.logo and clip.logo.enabled)},
+        "banner": {"available": clip.banner is not None, "on": bool(clip.banner and clip.banner.enabled)},
         "outro": {"available": any(a.id == "brand-outro" for a in edl.assets), "on": bool(clip.outro and clip.outro.enabled)},
         "music": {"available": any(a.id == "brand-music" for a in edl.assets), "on": bool(clip.music and clip.music.enabled)},
         "sfx": {"on": bool(clip.sfx and clip.sfx.enabled)},

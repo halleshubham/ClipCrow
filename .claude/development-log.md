@@ -174,6 +174,12 @@ The rules that came out of these are in `development-rules.md`; this file is the
   Done when the brand is applied (`apply_brand`) and again when a clip is re-framed. Clips made before this have no zone, so they keep the corner until framed again. Brand page: a live preview (sample picture, logo, caption line; `POST /api/brand/preview` asks
   the server for the placement so the preview and a real clip agree).
 
+- **Watch-full-video banner** (`edl.Banner`, `compile._banner_scene`, brand settings `banner_*`, job option `banner`, editor switch): words ("पूर्ण व्हिडीओ पहा:" / "Watch full video:" by language unless the brand wrote them) over a white pill with the platform mark
+  (`platform_marks.py`, Simple Icons CC0, 8 platforms) and the channel name; height and "only the last N seconds" are brand settings; the logo keeps clear of its band. Needs a channel name on the brand.
+- **Brand page audit** (a subagent read the page at 360 and 1280 px): fields grouped into sections with one sticky Save bar that also holds the messages; uploads start when a file is chosen and save the form first (a re-render used to lose typed values);
+  the music track is saved with the rest; empty = "App default" for words per line and caption height; opacity in %; choosing a caption colour ticks "use it"; the cover solid colour shows only for a solid background; 44 px touch targets for info buttons,
+  ticks, file and colour inputs. Not done: tabs, inline new/rename/delete instead of prompt()/confirm(), an upload progress bar, the cover title and speaker line in the preview. A live hint beside a New job checkbox is kept (`data-keep`) so `decorate()` does not fold it away.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

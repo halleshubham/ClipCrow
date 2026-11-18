@@ -78,6 +78,7 @@ class LogoPreview(BaseModel):
     margin_px: int = Field(default=60, ge=0, le=300)
     zone: Optional[tuple[float, float, float, float]] = None
     caption_top: Optional[int] = Field(default=None, ge=0, le=1900)
+    banner_top: Optional[int] = Field(default=None, ge=0, le=1800)
 
     @field_validator("zone")
     @classmethod
@@ -636,7 +637,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                             ai_images=want_images, multi=o.get("multi") or "switch", graphics=truthy(o.get("graphics")),
                             clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", clean_take=o.get("clean_take") or "last", fresh_transcript=truthy(o.get("fresh_transcript")), whole=truthy(o.get("whole")) or no_length,           # no length asked for: the whole video is one reel
                            
-                            cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), outro=truthy(o.get("outro")), sounds=truthy(o.get("sounds")), music=truthy(o.get("music")), transition=o.get("transition") or "none")
+                            cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), banner=truthy(o.get("banner")), outro=truthy(o.get("outro")), sounds=truthy(o.get("sounds")), music=truthy(o.get("music")), transition=o.get("transition") or "none")
         except (ValidationError, ValueError, TypeError) as e:
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
         if params.min_clip >= params.max_clip:
@@ -660,6 +661,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         params.brand = bid                                      # fixed now: changing the default brand later never moves this job
         if params.logo and brands.logo_path(owner, bid) is None:
             raise HTTPException(422, "Upload a logo for this brand on the Brand page first, or turn the logo off.")
+        if params.banner and not brands.settings(owner, bid).get("banner_handle"):
+            raise HTTPException(422, "Write the channel name for the banner on the Brand page first, or turn the banner off.")
         if params.music and brands.music_path(owner, bid) is None:
             raise HTTPException(422, "Upload a music track for this brand on the Brand page first, or turn the music off.")
         if params.outro and brands.outro_path(owner, bid) is None:
@@ -840,7 +843,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          clean: Optional[str] = Form(None), clean_pace: Optional[str] = Form(None), clean_take: Optional[str] = Form(None), fresh_transcript: Optional[str] = Form(None), whole: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
                          explainer: Optional[str] = Form(None), links: Optional[str] = Form(None), pictures_ids: Optional[str] = Form(None, alias="pictures"),
                          ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
-                         logo: Optional[str] = Form(None), outro: Optional[str] = Form(None), sounds: Optional[str] = Form(None), music: Optional[str] = Form(None), transition: Optional[str] = Form(None),
+                         logo: Optional[str] = Form(None), banner: Optional[str] = Form(None), outro: Optional[str] = Form(None), sounds: Optional[str] = Form(None), music: Optional[str] = Form(None), transition: Optional[str] = Form(None),
                          style: Optional[str] = Form(None), brand: Optional[str] = Form(None)) -> dict:
         if rights.lower() not in ("1", "true", "on", "yes"):
             raise HTTPException(400, "Confirm that you own this video or have the rights to process it.")
@@ -849,7 +852,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
                                    speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, clean_take=clean_take, fresh_transcript=fresh_transcript, whole=whole,
-                                   immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, outro=outro, sounds=sounds, music=music, transition=transition,
+                                   immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, banner=banner, outro=outro, sounds=sounds, music=music, transition=transition,
                                    style=style, brand=brand),
                               brand_owner(request))
         suffix = Path(file.filename or "").suffix.lower()
@@ -1335,7 +1338,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         owner, bid = brand_owner(request), brand_q(request)
         path = brands.logo_path(owner, bid)
         lg = fit_logo(Logo(asset="brand-logo", position=body.position, size_pct=body.size_pct, opacity=0.9, margin_px=body.margin_px), body.zone, body.caption_top,
-                      logo_aspect(path) if path else 1.0)
+                      logo_aspect(path) if path else 1.0, banner_top=body.banner_top)
         return {"position": lg.position, "top_px": lg.top_px, "shrink": lg.shrink, "side_px": lg.side_px, "aspect": logo_aspect(path) if path else 1.0}
 
     @app.put("/api/brand", dependencies=[Depends(authed)])

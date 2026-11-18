@@ -400,6 +400,35 @@ def _logo_scene(lg: Logo, src: str, start: float, dur: float, w: int, h: int) ->
     return _scene("logo", w, h, css, body, script)
 
 
+BANNER_TEXT = {"mr": "पूर्ण व्हिडीओ पहा:", "hi": "पूरा वीडियो देखें:"}
+
+
+def banner_words(bn, language: str) -> str:
+    """The line over the pill: what the brand wrote, else the words for the clip's language."""
+    return bn.text or BANNER_TEXT.get(language, "Watch full video:")
+
+
+def _banner_scene(bn, words: str, stack: str, face: str, start: float, dur: float, w: int, h: int) -> str:
+    from .platform_marks import MARKS
+    _, colour, shapes = MARKS[bn.platform]
+    size1 = round(min(48.0, 960 / (0.62 * max(len(words), 1))))                  # long words shrink to fit the width instead of running off it
+    size2 = round(min(54.0, 700 / (0.62 * max(len(bn.handle), 1))))
+    css = f"""    {face}
+    #banner {{ position: absolute; left: 0; right: 0; top: {bn.top_px}px; display: flex; flex-direction: column; align-items: center; gap: 14px;
+      opacity: 0; transform: translateY(24px); }}
+    #banner .b1 {{ background: rgba(0,0,0,.84); color: #FFFFFF; border-radius: 16px; padding: 12px 34px; white-space: nowrap;
+      font-family: {stack}, sans-serif; font-weight: 700; font-size: {size1}px; line-height: 1.25; }}
+    #banner .b2 {{ background: #FFFFFF; border-radius: 999px; padding: 12px 38px 12px 26px; display: flex; align-items: center; gap: 18px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.35); }}
+    #banner svg {{ width: 64px; height: 64px; fill: {colour}; flex: none; }}
+    #banner .h {{ color: #111111; white-space: nowrap; font-family: {stack}, sans-serif; font-weight: 700; font-size: {size2}px; line-height: 1.2; }}"""
+    body = (f'    <div id="banner" class="clip" data-start="{_num(start)}" data-duration="{_num(dur)}">'
+            f'<div class="b1">{_esc(words)}</div>'
+            f'<div class="b2"><svg viewBox="0 0 24 24" aria-hidden="true">{shapes}</svg><div class="h">{_esc(bn.handle)}</div></div></div>')
+    script = f'    tl.to("#banner", {{ opacity: 1, y: 0, duration: 0.3, ease: "power1.out" }}, {_num(start)});'
+    return _scene("banner", w, h, css, body, script)
+
+
 def _index(duration: float, w: int, h: int, lang: str, scenes: set[str], cutout: bool, punch=()) -> str:
     def host(name, z, track, kind):
         return (f'      <div id="{name}" data-composition-id="{name}" data-composition-src="compositions/{name}.html" '
@@ -422,6 +451,8 @@ def _index(duration: float, w: int, h: int, lang: str, scenes: set[str], cutout:
         parts.append(host("cards", 6, 4, "graphics"))
     if "logo" in scenes:
         parts.append(host("logo", 7, 6, "graphics"))
+    if "banner" in scenes:
+        parts.append(host("banner", 7, 10, "graphics"))
     if "transitions" in scenes:                 # over the picture, the text and the cards, under the cover
         parts.append(host("transitions", 8, 8, "graphics"))
     if "cover" in scenes:                       # on top of everything: the first frames are the poster
@@ -518,6 +549,8 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
         texts.append(cover.text)
     for o, _, _ in overlays:
         texts += [getattr(o, a) for a in ("text", "title", "subtitle", "caption") if hasattr(o, a)]
+    if clip.banner and clip.banner.enabled:
+        texts += [banner_words(clip.banner, edl.language.primary), clip.banner.handle]      # the banner's letters need a font too
     family = fonts.effective_family(clip.captions.font_family, texts)
     font_file = fonts.resolve_font(family, clip.captions.font_weight)
     shutil.copyfile(font_file, project / "assets" / "fonts" / font_file.name)
@@ -577,6 +610,12 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
         t0 = min(cover.duration_ms / 1000, duration) if cover else 0.0
         (project / "compositions" / "logo.html").write_text(_logo_scene(logo, rel, t0, duration - t0, w, h), "utf-8")
         scenes.append("logo")
+    banner = clip.banner if clip.banner and clip.banner.enabled else None
+    if banner:
+        b0 = max(min(cover.duration_ms / 1000, duration) if cover else 0.0, duration - banner.seconds if banner.seconds else 0.0)
+        (project / "compositions" / "banner.html").write_text(
+            _banner_scene(banner, banner_words(banner, edl.language.primary), stack, face, b0, duration - b0, w, h), "utf-8")
+        scenes.append("banner")
     tx = clip.transition if clip.transition and clip.transition.enabled else None
     tx_cuts = hard_cuts(clip) if tx else []
     if tx_cuts:

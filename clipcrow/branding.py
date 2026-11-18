@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .edl import EDL, Asset, Clip, Cover, Logo, Music, Outro
+from .edl import EDL, Asset, Banner, Clip, Cover, Logo, Music, Outro
 
 CANVAS_FPS = 30
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -48,6 +48,11 @@ class BrandKit:
     captions: dict = field(default_factory=dict)       # CaptionStyle fields this brand sets (colour, font, position ...); empty = the app's own look
     speaker_name: str = ""                              # the lower third every clip gets unless the job names someone
     speaker_title: str = ""
+    banner_text: str = ""                              # "" = the words for the clip's language
+    banner_handle: str = ""                            # the channel name; the banner needs it
+    banner_platform: str = "youtube"
+    banner_top_px: int = 1440
+    banner_seconds: float = 0.0
 
 
 @dataclass
@@ -57,9 +62,10 @@ class BrandingChoice:
     outro: bool = False
     music: bool = False
     captions: bool = False                              # the brand's caption look (not when a reference style already set it)
+    banner: bool = False                                # the "watch the full video" banner
 
     def any(self) -> bool:
-        return self.cover or self.logo or self.outro or self.music or self.captions
+        return self.cover or self.logo or self.outro or self.music or self.captions or self.banner
 
 
 def cover_text(clip: Clip) -> str:
@@ -74,6 +80,7 @@ def cover_text(clip: Clip) -> str:
 LOGO_TOP_SAFE, LOGO_BOTTOM_SAFE = 250, 380       # the same two numbers as compile._LOGO_*_SAFE (a test keeps them equal)
 CAPTION_BAND = (-30, 330)                         # the caption band, from the caption top: a few lines of text
 SHRINKS = (1.0, 0.85, 0.7, 0.55, 0.4)
+BANNER_HEIGHT = 230                                # px: the banner's two lines, from its top edge
 SIDE_TIGHT = 24                                   # px: the narrowest side margin the placement will use
 
 
@@ -87,7 +94,7 @@ def logo_aspect(path) -> float:
         return 1.0
 
 
-def fit_logo(logo: Logo, zone, caption_top: Optional[int], aspect: float, width: int = 1080, height: int = 1920) -> Logo:
+def fit_logo(logo: Logo, zone, caption_top: Optional[int], aspect: float, width: int = 1080, height: int = 1920, banner_top: Optional[int] = None) -> Logo:
     """The logo kept off the face. ``zone`` is where the face is in the frame over the clip (fractions), ``caption_top`` where the captions start (None: no captions).
     The brand's corner is used when it is clear. Otherwise the logo slides down the left or right side to the nearest spot that is clear and, if there is none,
     gets smaller (never below 40% of its size) until there is; when nothing is clear it takes the spot that overlaps least at the smallest size."""
@@ -98,6 +105,8 @@ def fit_logo(logo: Logo, zone, caption_top: Optional[int], aspect: float, width:
     keep = [(x0 * width - 0.04 * width, y0 * height - 0.08 * height, x1 * width + 0.04 * width, y1 * height + 0.03 * height)]      # hair above the face box, a margin around it
     if caption_top is not None:
         keep.append((0.0, caption_top + CAPTION_BAND[0], float(width), caption_top + CAPTION_BAND[1]))
+    if banner_top is not None:
+        keep.append((0.0, banner_top - 20.0, float(width), banner_top + BANNER_HEIGHT))
     m = logo.margin_px
 
     def hits(r) -> float:
@@ -176,11 +185,16 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
         upd: dict = {}
         if choice.cover:
             upd["cover"] = make_cover(c, kit)
+        if choice.banner:
+            if not kit.banner_handle:
+                raise BrandError("Write the channel name for the banner on the Brand page first.")
+            upd["banner"] = Banner(text=kit.banner_text, handle=kit.banner_handle, platform=kit.banner_platform, top_px=kit.banner_top_px, seconds=kit.banner_seconds)
         if choice.logo:
             lg = Logo(asset="brand-logo", position=kit.logo_position, size_pct=kit.logo_size_pct,
                       opacity=kit.logo_opacity, margin_px=kit.logo_margin_px)
             cap = c.captions
-            upd["logo"] = fit_logo(lg, c.layout.face_zone, cap.top_px if cap.enabled else None, logo_aspect(kit.logo) if kit.logo else 1.0, edl.render.width, edl.render.height)
+            upd["logo"] = fit_logo(lg, c.layout.face_zone, cap.top_px if cap.enabled else None, logo_aspect(kit.logo) if kit.logo else 1.0, edl.render.width, edl.render.height,
+                           upd["banner"].top_px if upd.get("banner") else None)
         if choice.outro:
             upd["outro"] = Outro(asset="brand-outro", max_seconds=kit.outro_max_seconds, gap_ms=kit.outro_gap_ms)
         if choice.music:
