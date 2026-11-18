@@ -165,6 +165,10 @@ The rules that came out of these are in `development-rules.md`; this file is the
 - **A worker's seats carry `live`** (`SeatIn.live`): the server's answer model forbids unknown fields, so a worker built after the still-face check would have been rejected ("did not deliver") and the server would have redone the work. Deploy the
   server BEFORE pulling a new worker image whenever the answer's shape grows.
 
+- **Per-shot framing for one person** (`reframe.shot_cuts`, `pick_subject_per_shot`, `smooth_shots`): the sampled frames' tiny thumbnails (always taken now) show camera cuts (change > 25 and > 4x the usual between samples; a blip shorter than 0.5 s cuts
+  away and back and is ignored). Each shot picks its own main face and the crop starts on it at the cut, a hard cut with no pan across the room; a shot with no face holds the last position. A clip with no cuts is framed exactly as before.
+  Applies wherever the single-subject path runs ("One person on screen", and the one-person fallback of the other modes). Checked on made-up videos only: watch real cut-angle recordings (cut thresholds 25 / 4x are first guesses).
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

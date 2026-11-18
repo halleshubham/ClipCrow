@@ -33,6 +33,9 @@ KEY_RATE = 10.0            # camera keyframes per second
 MIN_COVERAGE = 0.30        # fraction of samples with a subject needed to follow it
 DEADBAND = 0.15            # the camera ignores the subject within this many crop-widths of centre
 MAX_SPEED = 0.60           # crop-widths per second the camera may travel
+CUT_DIST = 25.0           # two samples whose tiny thumbnails differ by more than this (0-255, mean) are two camera shots ...
+CUT_RATIO = 4.0           # ... and by more than this many times the usual change between samples
+MIN_SHOT = 0.5            # a stretch shorter than this (seconds) is not a shot of its own
 TRACK_RADIUS = 0.12        # a detection joins a track if within this fraction of the frame of its last position
 
 
@@ -326,6 +329,66 @@ def smooth_path(subject: list[tuple[float, Optional[float]]], duration: float, c
     return out
 
 
+def shot_cuts(samples: list[Sample]) -> list[float]:
+    """Clip times of the camera cuts: where the picture changes far more than it does from one sample to the next (a cut from the guest to the host,
+    a different camera angle). A shot shorter than ``MIN_SHOT`` is folded into the one before it. Empty when the samples carry no thumbnails."""
+    th = [sm.thumb for sm in samples]
+    if len(samples) < 3 or any(t is None for t in th):
+        return []
+    import numpy as np
+    d = [float(abs(th[i] - th[i - 1]).mean()) for i in range(1, len(th))]
+    usual = max(float(np.median(d)), 1.0)
+    cuts: list[float] = []
+    for i, v in enumerate(d, 1):
+        if v > CUT_DIST and v > CUT_RATIO * usual:
+            cuts.append(round((samples[i - 1].t + samples[i].t) / 2, 3))
+    changed = True
+    while changed and cuts:                                       # a blip (a flash, one odd frame) cuts away and straight back: both cuts go
+        changed = False
+        for i in range(len(cuts) - 1):
+            if cuts[i + 1] - cuts[i] < MIN_SHOT:
+                del cuts[i:i + 2]
+                changed = True
+                break
+    return [c for c in cuts if c >= MIN_SHOT]                     # a first shot shorter than that is not one either
+
+
+def pick_subject_per_shot(samples: list[Sample], cuts: list[float], src_w: float, src_h: float) -> list[tuple[float, Optional[float]]]:
+    """``pick_subject`` run on each camera shot by itself: after a cut the person on screen is a different one, and the face that was the main one
+    before the cut is not there. With no cuts this is ``pick_subject``."""
+    if not cuts:
+        return pick_subject(samples, src_w, src_h)
+    bounds = [-1.0] + cuts + [float("inf")]
+    out: list[tuple[float, Optional[float]]] = []
+    for a, b in zip(bounds, bounds[1:]):
+        out += pick_subject([sm for sm in samples if a < sm.t <= b], src_w, src_h)
+    return out
+
+
+def smooth_shots(subject: list[tuple[float, Optional[float]]], cuts: list[float], duration: float, crop_frac: float) -> list[tuple[float, float]]:
+    """``smooth_path`` for each shot, joined with a hard cut at every camera cut: the crop is on the new person from the first frame of the shot (no pan
+    across the room). A shot with no face holds where the last one was. With no cuts this is ``smooth_path``."""
+    if not cuts:
+        return smooth_path(subject, duration, crop_frac)
+    bounds = [0.0] + cuts + [duration]
+    keys: list[tuple[float, float]] = []
+    last: Optional[float] = None
+    for a, b in zip(bounds, bounds[1:]):
+        seg = [(t - a, cx) for t, cx in subject if a <= t < b or (b >= duration and t == b)]
+        path = smooth_path(seg, b - a, crop_frac)
+        if b < duration and len(path) > 1:
+            path = [k for k in path if k[0] < (b - a) - 1e-6] or path[:1]      # the closing key would share the cut's time with the new shot's first
+        if not path:
+            if last is None:
+                continue
+            path = [(0.0, last)]
+        keys += [(round(a + t, 3), cx) for t, cx in path]
+        last = path[-1][1]
+    if keys and keys[0][0] > 0:
+        keys.insert(0, (0.0, keys[0][1]))
+    return keys
+
+
 def _default_detector():
     from .seats import default_detector          # YuNet when available (finds small and turned faces), else the Haar cascade
     return default_detector()
@@ -347,7 +410,7 @@ def plan_framing(video: str, start: float, end: float, *, detector: FaceDetector
         f = plan_voices(speakers, start, end, (src_h * out_aspect) / src_w, multi)
         if f:
             return f
-    samples = sample_faces(video, start, end, detector or _default_detector(), patches=multi != "off", thumbs=graphics)
+    samples = sample_faces(video, start, end, detector or _default_detector(), patches=multi != "off", thumbs=True)           # thumbnails: graphics and camera cuts are both found from them
     spans = graphic_spans(samples, end - start, src_w, src_h) if graphics else []
     if spans:
         if sum(b - a for a, b in spans) >= 0.9 * (end - start):
@@ -365,12 +428,13 @@ def plan_framing(video: str, start: float, end: float, *, detector: FaceDetector
             if f.framing == "track":
                 f.fit_spans = spans
             return f
-    subject = pick_subject(samples, src_w, src_h)
+    cuts = shot_cuts(samples)
+    subject = pick_subject_per_shot(samples, cuts, src_w, src_h)
     live = max(1, sum(1 for s in samples if not any(a <= s.t < b for a, b in spans)))    # graphics are not "no face found"
     coverage = sum(1 for _, c in subject if c is not None) / live
     if coverage < min_coverage:
         return Framing("fit_blur", coverage=coverage)    # no face to follow: show the whole frame
-    path = smooth_path(subject, end - start, crop_frac)
+    path = smooth_shots(subject, cuts, end - start, crop_frac)
     return Framing("track", [(round(t, 3), round(cx, 4)) for t, cx in path], coverage, fit_spans=spans)
 
 
