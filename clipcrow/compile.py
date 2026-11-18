@@ -387,16 +387,18 @@ _LOGO_TOP_SAFE, _LOGO_BOTTOM_SAFE = 250, 380    # clear of the platform status b
 
 
 def _logo_scene(lg: Logo, src: str, start: float, dur: float, w: int, h: int) -> str:
-    width = round(w * lg.size_pct * lg.shrink / 100)
+    width = round(w * lg.size_pct / 100)                     # the brand's size, always (clips planned while the logo still shrank carry ``shrink`` < 1: they get the full size, faded)
     v = (f"top:{lg.top_px}px" if lg.top_px is not None else
          f"top:{_LOGO_TOP_SAFE + lg.margin_px}px" if lg.position[0] == "t" else f"bottom:{_LOGO_BOTTOM_SAFE + lg.margin_px}px")
     gap = lg.margin_px if lg.side_px is None else lg.side_px
     side = f"left:{gap}px" if lg.position[1] == "l" else f"right:{gap}px"
+    faded = lg.faded_opacity if lg.faded_opacity is not None else (0.3 if lg.shrink < 1.0 else None)
+    opacity = lg.opacity if faded is None else min(lg.opacity, faded)
     css = f"""    #logo {{ position: absolute; {v}; {side}; width: {width}px; }}
     #logo img {{ display: block; width: 100%; height: auto; opacity: 0; }}"""
     body = (f'    <div id="logo" class="clip" data-start="{_num(start)}" data-duration="{_num(dur)}">'
             f'<img id="logo-img" src="{src}" alt=""></div>')
-    script = f'    tl.to("#logo-img", {{ opacity: {_num(lg.opacity)}, duration: 0.2, ease: "power1.out" }}, {_num(start)});'
+    script = f'    tl.to("#logo-img", {{ opacity: {_num(opacity)}, duration: 0.2, ease: "power1.out" }}, {_num(start)});'
     return _scene("logo", w, h, css, body, script)
 
 

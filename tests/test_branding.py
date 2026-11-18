@@ -239,6 +239,6 @@ def test_apply_brand_keeps_the_logo_off_the_face_the_framing_found(make_edl, tmp
     clip = {**CLIP, "layout": {"framing": "track", "reframe": [{"t": 0, "cx": 0.5}], "face_zone": [0.1, 0.14, 0.82, 0.57]}}
     edl = apply_brand(make_edl(clips=[clip]), kit, BrandingChoice(logo=True), tmp_path / "job")
     lg = edl.clips[0].logo
-    assert lg.top_px is not None or lg.shrink < 1.0                      # the corner was on the head
+    assert lg.top_px is not None or lg.faded_opacity is not None         # the corner was on the head
     free = apply_brand(make_edl(clips=[CLIP]), kit, BrandingChoice(logo=True), tmp_path / "job2")
-    assert free.clips[0].logo.top_px is None and free.clips[0].logo.shrink == 1.0     # no zone known: where the brand put it
+    assert free.clips[0].logo.top_px is None and free.clips[0].logo.faded_opacity is None     # no zone known: where the brand put it

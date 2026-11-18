@@ -76,7 +76,8 @@ def test_the_logo_keeps_clear_of_the_banner(make_edl, tmp_path):
     lg = Logo(asset="brand-logo", position="br", size_pct=18, opacity=0.9, margin_px=60)
     assert fit_logo(lg, (0.3, 0.2, 0.7, 0.4), None, 1.0).top_px is None                      # nothing in the way at the bottom right
     moved = fit_logo(lg, (0.3, 0.2, 0.7, 0.4), None, 1.0, banner_top=1300)
-    wpx = 1080 * 0.18 * moved.shrink
+    wpx = 1080 * 0.18
+    assert moved.shrink == 1.0
     top = moved.top_px if moved.top_px is not None else 1920 - 440 - wpx
     assert top + wpx <= 1300 - 20 or top >= 1300 + 230                                        # clear of the banner's band
 

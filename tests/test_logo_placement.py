@@ -22,33 +22,35 @@ def test_no_zone_or_a_clear_corner_leaves_the_logo_where_the_brand_put_it():
     assert got.top_px is None and got.shrink == 1.0 and got.position == "tr"
 
 
-def test_a_head_filling_the_top_pushes_the_logo_down_the_side_or_makes_it_smaller():
+def test_a_head_filling_the_top_keeps_the_logos_size_and_fades_it_when_no_spot_is_clear():
     close_up = (0.1, 0.14, 0.82, 0.57)                                 # the face in the guest's close-up
     got = fit_logo(logo(), close_up, 1240, 1.0)
-    assert got.top_px is not None or got.shrink < 1.0
-    wpx = W * got.size_pct * got.shrink / 100
+    assert got.shrink == 1.0                                           # never smaller than the brand made it
+    assert got.top_px is not None or got.faded_opacity is not None
+    wpx = W * got.size_pct / 100
     gap = 60 if got.side_px is None else got.side_px
     side_l = gap if got.position[1] == "l" else W - gap - wpx
     top = got.top_px if got.top_px is not None else 310
     box = (side_l, top, side_l + wpx, top + wpx)
-    assert got.shrink >= 0.4
     face = (0.1 * W - 0.04 * W, 0.14 * H - 0.08 * H, 0.82 * W + 0.04 * W, 0.57 * H + 0.03 * H)
-    overlap_w, overlap_h = min(box[2], face[2]) - max(box[0], face[0]), min(box[3], face[3]) - max(box[1], face[1])
-    assert not (overlap_w > 0 and overlap_h > 0)                        # clear of the face
-    assert not (box[3] > 1240 - 30 and box[1] < 1240 + 330)             # and of the captions
+    overlaps = min(box[2], face[2]) - max(box[0], face[0]) > 0 and min(box[3], face[3]) - max(box[1], face[1]) > 0
+    assert (not overlaps) or got.faded_opacity is not None             # either clear of the face, or faded where it cannot be
 
 
-def test_when_nothing_is_clear_the_smallest_logo_with_the_least_overlap_is_used():
+def test_a_logo_that_must_stay_over_a_face_fades_and_keeps_its_size():
     everything = (0.02, 0.1, 0.98, 0.9)
     got = fit_logo(logo(), everything, 1240, 1.0)
-    assert got.shrink == 0.4 and got.top_px is not None
+    assert got.shrink == 1.0 and got.faded_opacity == branding.FADED and got.top_px is not None
+    css = comp._logo_scene(got, "assets/brand/logo.png", 0.0, 5.0, 1080, 1920)
+    assert "opacity: 0.3" in css and "width: 194px" in css.replace("  ", " ") or "width:194px" in css.replace(" ", "")
+    assert fit_logo(got, None, 1240, 1.0).faded_opacity is None        # framed again onto a clear shot: back to the brand's own
 
 
 def test_captions_off_do_not_keep_anything_clear():
     zone = (0.1, 0.14, 0.82, 0.57)
     with_caps = fit_logo(logo(position="br"), zone, 1240, 1.0)
     no_caps = fit_logo(logo(position="br"), zone, None, 1.0)
-    assert no_caps.top_px is None or no_caps.top_px >= with_caps.top_px or no_caps.shrink >= with_caps.shrink
+    assert no_caps.top_px is None or no_caps.top_px >= with_caps.top_px or with_caps.faded_opacity is not None
 
 
 def test_the_face_zone_is_the_face_as_it_sits_in_the_crop_window():
@@ -68,7 +70,14 @@ def test_a_layout_rejects_a_zone_outside_the_frame():
 
 
 def test_the_compiler_places_the_fitted_logo():
-    css = comp._logo_scene(fit_logo(logo(), (0.1, 0.14, 0.82, 0.57), 1240, 1.0), "assets/brand/logo.png", 0.0, 5.0, 1080, 1920)
-    assert "top:310px" in css and "right:24px" in css and "width:107px" in css.replace(" ", "")
+    got = fit_logo(logo(), (0.1, 0.14, 0.82, 0.57), 1240, 1.0)
+    css = comp._logo_scene(got, "assets/brand/logo.png", 0.0, 5.0, 1080, 1920)
+    assert "width:194px" in css.replace(" ", "") and "opacity" in css                  # the brand's size, whatever the spot
     plain = comp._logo_scene(logo(), "assets/brand/logo.png", 0.0, 5.0, 1080, 1920)
     assert "top:310px" in plain and "right:60px" in plain and "width:194px" in plain.replace(" ", "")
+
+
+def test_a_clip_planned_when_the_logo_still_shrank_is_drawn_full_size_and_faded():
+    old = logo(top_px=310, shrink=0.4, side_px=24)
+    css = comp._logo_scene(old, "assets/brand/logo.png", 0.0, 5.0, 1080, 1920).replace(" ", "")
+    assert "width:194px" in css and "opacity:0.3" in css

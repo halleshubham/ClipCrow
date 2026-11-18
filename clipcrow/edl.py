@@ -327,7 +327,8 @@ class Logo(_Model):
     opacity: float = Field(default=0.9, ge=0.1, le=1.0)
     margin_px: int = Field(default=60, ge=0, le=300)
     top_px: Optional[int] = Field(default=None, ge=0, le=1900)   # set by the placement that keeps the logo off the face: the logo's top edge, down the left or right side (None: the corner's own height)
-    shrink: float = Field(default=1.0, ge=0.3, le=1.0)           # ... and how much smaller than ``size_pct`` it had to be to fit
+    shrink: float = Field(default=1.0, ge=0.3, le=1.0)           # (clips made before the logo stopped shrinking carry a value below 1; new ones never do)
+    faded_opacity: Optional[float] = Field(default=None, ge=0.05, le=1.0)   # ... and the lower opacity used when no spot is clear of the face: the logo keeps its size and fades
     side_px: Optional[int] = Field(default=None, ge=0, le=300)   # ... and a narrower side margin when that was needed (None: ``margin_px``)
 
 

@@ -1339,7 +1339,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         path = brands.logo_path(owner, bid)
         lg = fit_logo(Logo(asset="brand-logo", position=body.position, size_pct=body.size_pct, opacity=0.9, margin_px=body.margin_px), body.zone, body.caption_top,
                       logo_aspect(path) if path else 1.0, banner_top=body.banner_top)
-        return {"position": lg.position, "top_px": lg.top_px, "shrink": lg.shrink, "side_px": lg.side_px, "aspect": logo_aspect(path) if path else 1.0}
+        return {"position": lg.position, "top_px": lg.top_px, "shrink": lg.shrink, "side_px": lg.side_px, "faded_opacity": lg.faded_opacity, "aspect": logo_aspect(path) if path else 1.0}
 
     @app.put("/api/brand", dependencies=[Depends(authed)])
     def brand_put(request: Request, body: dict = Body(...)) -> dict:

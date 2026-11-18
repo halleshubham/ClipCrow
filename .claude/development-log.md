@@ -170,7 +170,7 @@ The rules that came out of these are in `development-rules.md`; this file is the
   Applies wherever the single-subject path runs ("One person on screen", and the one-person fallback of the other modes). Checked on made-up videos only: watch real cut-angle recordings (cut thresholds 25 / 4x are first guesses).
 
 - **The logo keeps off the face** (job ba56794375f8: in a close-up the corner sat on the head): framing records `Layout.face_zone` (where the followed face, or the shown seats, sit in the vertical frame over the clip) and
-  `branding.fit_logo` keeps the logo clear of it and of the caption band: the brand's corner when it is clear, else down the left/right side (`Logo.top_px`), else with a narrower side margin (`side_px`), else smaller (`shrink`, never below 40%).
+  `branding.fit_logo` keeps the logo clear of it and of the caption band: the brand's corner when it is clear, else down the left/right side (`Logo.top_px`), else with a narrower side margin (`side_px`), else it keeps its size and fades to 30% opacity (`faded_opacity`; it used to shrink to 40%, which made it invisible).
   Done when the brand is applied (`apply_brand`) and again when a clip is re-framed. Clips made before this have no zone, so they keep the corner until framed again. Brand page: a live preview (sample picture, logo, caption line; `POST /api/brand/preview` asks
   the server for the placement so the preview and a real clip agree).
 

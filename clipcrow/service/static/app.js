@@ -1366,7 +1366,7 @@ async function brandView(bid) {
     return el('div', {}, el('label', { class: 'field', for: id, text: label }), f[id]);
   };
   const coverBg = color('cover_bg_color', 'Cover solid colour', s.cover_bg_color);
-  const logoPlacement = group('Logo placement', 'Where the logo sits on every clip. When a face or the captions would be covered, a clip moves it down the side or makes it smaller; the preview shows the same.',
+  const logoPlacement = group('Logo placement', 'Where the logo sits on every clip. When a face or the captions would be covered, a clip moves it down the side, or keeps its size and makes it more transparent; the preview shows the same.',
     el('div', { class: 'grid2', style: { marginTop: 0 } },
       opt('logo_position', 'Corner', [['tr', 'Top right'], ['tl', 'Top left'], ['br', 'Bottom right'], ['bl', 'Bottom left']], s.logo_position),
       num('logo_size_pct', 'Width (% of the screen)', 5, 40, 1, s.logo_size_pct),
@@ -1499,9 +1499,10 @@ async function brandView(bid) {
     const top = place.top_px != null ? place.top_px / 1920 : (place.position[0] === 't' ? (250 + n('logo_margin_px')) / 1920 : 1 - (380 + n('logo_margin_px')) / 1920 - hPct);
     pvLogo.style.left = place.position[1] === 'l' ? pct(gap) : 'auto';
     pvLogo.style.right = place.position[1] === 'r' ? pct(gap) : 'auto';
-    Object.assign(pvLogo.style, { top: pct(top), width: pct(wPct), opacity: String(Math.min(1, Math.max(0.1, n('logo_opacity') / 100))) });
-    pvNote.textContent = place.top_px != null || place.shrink < 1
-      ? `The logo moves${place.shrink < 1 ? ' and gets smaller' : ''} here, so it does not cover the face. Clips do the same.`
+    const brandOpacity = Math.min(1, Math.max(0.1, n('logo_opacity') / 100));
+    Object.assign(pvLogo.style, { top: pct(top), width: pct(wPct), opacity: String(place.faded_opacity == null ? brandOpacity : Math.min(brandOpacity, place.faded_opacity)) });
+    pvNote.textContent = place.top_px != null || place.faded_opacity != null
+      ? (place.faded_opacity != null ? 'No spot is clear of the face here, so the logo keeps its size and fades. Clips do the same.' : 'The logo moves here, so it does not cover the face. Clips do the same.')
       : (zone ? 'The corner you chose is clear of the face here.' : 'No face known: the logo stays in your corner.');
   }
   const redraw = () => { clearTimeout(pvTimer); pvTimer = setTimeout(drawPreview, 150); };

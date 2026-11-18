@@ -80,7 +80,7 @@ def cover_text(clip: Clip) -> str:
 
 LOGO_TOP_SAFE, LOGO_BOTTOM_SAFE = 250, 380       # the same two numbers as compile._LOGO_*_SAFE (a test keeps them equal)
 CAPTION_BAND = (-30, 330)                         # the caption band, from the caption top: a few lines of text
-SHRINKS = (1.0, 0.85, 0.7, 0.55, 0.4)
+FADED = 0.3                                       # the opacity of a logo that has to stay over a face
 BANNER_HEIGHT = 230                                # px: the banner's two lines, from its top edge
 SIDE_TIGHT = 24                                   # px: the narrowest side margin the placement will use
 
@@ -105,10 +105,11 @@ def logo_aspect(path) -> float:
 
 
 def fit_logo(logo: Logo, zone, caption_top: Optional[int], aspect: float, width: int = 1080, height: int = 1920, banner_top: Optional[int] = None) -> Logo:
-    """The logo kept off the face. ``zone`` is where the face is in the frame over the clip (fractions), ``caption_top`` where the captions start (None: no captions).
-    The brand's corner is used when it is clear. Otherwise the logo slides down the left or right side to the nearest spot that is clear and, if there is none,
-    gets smaller (never below 40% of its size) until there is; when nothing is clear it takes the spot that overlaps least at the smallest size."""
-    base = logo.model_copy(update={"top_px": None, "shrink": 1.0, "side_px": None})
+    """The logo kept off the face, at its own size. ``zone`` is where the face is in the frame over the clip (fractions), ``caption_top`` where the captions start
+    (None: no captions). The brand's corner is used when it is clear. Otherwise the logo slides down the left or right side (or sits nearer the edge) to the nearest
+    spot that is clear. When there is none, it stays as large as the brand made it, goes to the spot that covers least, and is made more transparent
+    (``FADED``) so the face still shows through."""
+    base = logo.model_copy(update={"top_px": None, "shrink": 1.0, "side_px": None, "faded_opacity": None})
     if zone is None:
         return base
     x0, y0, x1, y1 = zone
@@ -127,30 +128,27 @@ def fit_logo(logo: Logo, zone, caption_top: Optional[int], aspect: float, width:
                 total += w_ * h_
         return total
 
-    def rect(side: str, top: float, wpx: float, gap: Optional[int] = None):
+    def rect(side: str, top: float, gap: Optional[int] = None):
         g = m if gap is None else gap
         x = g if side == "l" else width - g - wpx
-        return (x, top, x + wpx, top + wpx * aspect)
+        return (x, top, x + wpx, top + hpx)
     wpx = width * logo.size_pct / 100
     hpx = wpx * aspect
     own_top = LOGO_TOP_SAFE + m if logo.position[0] == "t" else height - LOGO_BOTTOM_SAFE - m - hpx
-    if hits(rect(logo.position[1], own_top, wpx)) == 0:
+    if hits(rect(logo.position[1], own_top)) == 0:
         return base
     other = "l" if logo.position[1] == "r" else "r"
-    worst = None
-    for shrink in SHRINKS:
-        wpx = width * logo.size_pct * shrink / 100
-        hpx = wpx * aspect
-        lo, hi = LOGO_TOP_SAFE, int(height - LOGO_BOTTOM_SAFE - hpx)
-        gaps = (m, min(m, SIDE_TIGHT))                               # the brand's side margin first, a narrower one when that is what keeps it off the face
-        spots = [(side, float(top), gap) for gap in gaps for side in (logo.position[1], other) for top in range(lo, max(lo, hi) + 1, 20)]
-        clear = [(side, top, gap) for side, top, gap in spots if hits(rect(side, top, wpx, gap)) == 0]
-        if clear:
-            side, top, gap = min(clear, key=lambda c: (c[2] != m, c[0] != logo.position[1], abs(c[1] - own_top)))
-            return logo.model_copy(update={"position": ("t" if top < height / 2 else "b") + side, "top_px": int(top), "shrink": shrink, "side_px": None if gap == m else gap})
-        worst = min(spots, key=lambda c: (hits(rect(c[0], c[1], wpx, c[2])), c[2] != m, c[0] != logo.position[1], abs(c[1] - own_top))) + (shrink,)
-    side, top, gap, shrink = worst
-    return logo.model_copy(update={"position": ("t" if top < height / 2 else "b") + side, "top_px": int(top), "shrink": shrink, "side_px": None if gap == m else gap})
+    lo, hi = LOGO_TOP_SAFE, int(height - LOGO_BOTTOM_SAFE - hpx)
+    gaps = (m, min(m, SIDE_TIGHT))                                   # the brand's side margin first, a narrower one when that is what keeps it off the face
+    spots = [(side, float(top), gap) for gap in gaps for side in (logo.position[1], other) for top in range(lo, max(lo, hi) + 1, 20)]
+    clear = [(side, top, gap) for side, top, gap in spots if hits(rect(side, top, gap)) == 0]
+    if clear:
+        side, top, gap = min(clear, key=lambda c: (c[2] != m, c[0] != logo.position[1], abs(c[1] - own_top)))
+        return logo.model_copy(update={"position": ("t" if top < height / 2 else "b") + side, "top_px": int(top), "side_px": None if gap == m else gap,
+                                       "shrink": 1.0, "faded_opacity": None})
+    side, top, gap = min(spots, key=lambda c: (hits(rect(c[0], c[1], c[2])), c[2] != m, c[0] != logo.position[1], abs(c[1] - own_top)))
+    return logo.model_copy(update={"position": ("t" if top < height / 2 else "b") + side, "top_px": int(top), "side_px": None if gap == m else gap,
+                                   "shrink": 1.0, "faded_opacity": FADED})
 
 
 def make_cover(clip: Clip, kit: BrandKit, text: str | None = None) -> Optional[Cover]:
