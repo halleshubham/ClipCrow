@@ -1399,9 +1399,16 @@ async function brandView(bid) {
     return el('div', {}, el('label', { class: 'field', for: id, text: label }), f[id],
       el('label', { class: 'check', for: id + '_on' }, f[id + '_on'], el('span', { text: 'Use it (otherwise the app default)' })));
   };
+  const fontSelect = (id, label, groups, value) => {                          // grouped by script: the long catalogue stays findable
+    const sel = (f[id] = el('select', { id }, el('option', { value: '', text: 'App default' }),
+      groups.filter(([, list]) => list.length).map(([title, list]) => el('optgroup', { label: title }, list.map((x) => el('option', { value: x.name, text: x.name }))))));
+    sel.value = value;
+    return el('div', {}, el('label', { class: 'field', for: id, text: label }), sel);
+  };
   const captionsGroup = group('Captions', 'Used on new jobs unless you pick a reference style. A field left on “App default” keeps the built-in look.',
     el('div', { class: 'grid2', style: { marginTop: 0 } },
-      opt('caption_font', 'Font', [['', 'App default'], ...brand.fonts.map((x) => [x, x])], s.caption_font || ''),
+      fontSelect('caption_font', 'Font for Marathi / Hindi', [['Devanagari fonts', brand.font_list.filter((x) => x.deva)]], s.caption_font || ''),
+      fontSelect('caption_font_latin', 'Font for English', [['English fonts', brand.font_list.filter((x) => !x.deva)], ['Also cover Devanagari', brand.font_list.filter((x) => x.deva)]], s.caption_font_latin || ''),
       opt('caption_animation', 'Animation', [['', 'App default'], ...brand.animations.map((x) => [x, x])], s.caption_animation || ''),
       optional('caption_words', 'Words per line', 1, 8, 1, s.caption_words, 'App default'),
       optional('caption_top_px', 'Height from the top (px)', 100, 1800, 10, s.caption_top_px, 'App default'),
@@ -1419,7 +1426,7 @@ async function brandView(bid) {
       logo_margin_px: n('logo_margin_px'), cover_ms: n('cover_ms'), cover_background: f.cover_background.value,
       cover_color: f.cover_color.value.toUpperCase(), cover_accent: f.cover_accent.value.toUpperCase(), cover_bg_color: f.cover_bg_color.value.toUpperCase(),
       outro_max_seconds: n('outro_max_seconds'), outro_gap_ms: n('outro_gap_ms'),
-      speaker_name: f.speaker_name.value, speaker_title: f.speaker_title.value, caption_font: f.caption_font.value, caption_animation: f.caption_animation.value,
+      speaker_name: f.speaker_name.value, speaker_title: f.speaker_title.value, caption_font: f.caption_font.value, caption_font_latin: f.caption_font_latin.value, caption_animation: f.caption_animation.value,
       caption_words: orNone('caption_words'), caption_top_px: orNone('caption_top_px'),
       caption_color: f.caption_color_on.checked ? f.caption_color.value.toUpperCase() : '', caption_highlight: f.caption_highlight_on.checked ? f.caption_highlight.value.toUpperCase() : '',
       banner_handle: f.banner_handle.value, banner_text: f.banner_text.value, banner_platform: f.banner_platform.value, banner_seconds: orNone('banner_seconds'), banner_top_px: n('banner_top_px'),
@@ -1443,6 +1450,16 @@ async function brandView(bid) {
   const pvNote = el('div', { class: 'small muted', 'aria-live': 'polite' });
   const pvFrame = el('div', { class: 'pv', role: 'img', 'aria-label': 'Preview of a clip with your logo and a caption' }, pvBody, pvHead, pvKeep, pvCap, pvBanner, pvLogo);
   const pct = (x) => `${(x * 100).toFixed(2)}%`;
+  const loadedFonts = new Map();
+  async function fontFor(name) {                                                // the chosen font from the server, so the preview is drawn in it ('' = the page's own)
+    if (!name) return '';
+    if (!loadedFonts.has(name)) {
+      const family = `pv-${loadedFonts.size}`;
+      loadedFonts.set(name, family);
+      try { const face = new FontFace(family, `url(/api/fonts/file?name=${encodeURIComponent(name)})`); await face.load(); document.fonts.add(face); } catch (_) { loadedFonts.set(name, ''); }
+    }
+    return loadedFonts.get(name);
+  }
   let pvTimer = 0, pvSeq = 0;
   async function drawPreview() {
     const seq = ++pvSeq;
@@ -1461,7 +1478,8 @@ async function brandView(bid) {
     }
     const colour = f.caption_color_on.checked ? f.caption_color.value : brand.caption_base.color;
     const light = f.caption_highlight_on.checked ? f.caption_highlight.value : brand.caption_base.highlight;
-    pvCap.replaceChildren('तुमचे ', el('span', { text: 'कॅप्शन', style: { color: light } }), ' असे दिसतील');
+    pvCap.replaceChildren(el('div', { style: { fontFamily: await fontFor(f.caption_font.value) } }, 'तुमचे ', el('span', { text: 'कॅप्शन', style: { color: light } }), ' असे दिसतील'),
+      el('div', { style: { fontFamily: await fontFor(f.caption_font_latin.value) } }, 'Your ', el('span', { text: 'captions', style: { color: light } }), ' look like this'));
     Object.assign(pvCap.style, { top: pct(capTop / 1920), color: colour });
     pvBanner.hidden = !bannerOn;
     if (bannerOn) {
@@ -1490,6 +1508,7 @@ async function brandView(bid) {
   for (const id of ['logo_position', 'logo_size_pct', 'logo_opacity', 'logo_margin_px', 'caption_top_px', 'caption_color', 'caption_highlight', 'caption_color_on', 'caption_highlight_on', 'banner_handle', 'banner_text', 'banner_platform', 'banner_top_px']) {
     f[id].addEventListener('input', redraw); f[id].addEventListener('change', redraw);
   }
+  for (const id of ['caption_font', 'caption_font_latin']) f[id].addEventListener('change', redraw);
   pvSel.addEventListener('change', drawPreview); pvKeepOn.addEventListener('change', drawPreview);
   drawPreview();
   const preview = el('section', { class: 'card stack' }, el('h2', { text: 'Preview' }),

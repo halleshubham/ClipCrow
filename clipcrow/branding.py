@@ -46,6 +46,7 @@ class BrandKit:
     outro_max_seconds: float = 6.0
     outro_gap_ms: int = 400
     captions: dict = field(default_factory=dict)       # CaptionStyle fields this brand sets (colour, font, position ...); empty = the app's own look
+    caption_font_latin: str = ""                        # the font for English (Latin) clips; ``captions["font_family"]`` is the one for Marathi/Hindi clips
     speaker_name: str = ""                              # the lower third every clip gets unless the job names someone
     speaker_title: str = ""
     banner_text: str = ""                              # "" = the words for the clip's language
@@ -82,6 +83,15 @@ CAPTION_BAND = (-30, 330)                         # the caption band, from the c
 SHRINKS = (1.0, 0.85, 0.7, 0.55, 0.4)
 BANNER_HEIGHT = 230                                # px: the banner's two lines, from its top edge
 SIDE_TIGHT = 24                                   # px: the narrowest side margin the placement will use
+
+
+DEVANAGARI_LANGUAGES = ("mr", "hi", "ne", "sa")
+
+
+def brand_font(kit: BrandKit, language: str) -> str:
+    """The caption font a brand gives a clip: its Devanagari one for Marathi/Hindi, its Latin one (else the same one) for the rest. "" = the app's own."""
+    own = kit.captions.get("font_family", "")
+    return own if language in DEVANAGARI_LANGUAGES else (kit.caption_font_latin or own)
 
 
 def logo_aspect(path) -> float:
@@ -199,8 +209,14 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
             upd["outro"] = Outro(asset="brand-outro", max_seconds=kit.outro_max_seconds, gap_ms=kit.outro_gap_ms)
         if choice.music:
             upd["music"] = Music(asset="brand-music")
-        if choice.captions and kit.captions:
-            upd["captions"] = c.captions.model_copy(update=kit.captions)
+        if choice.captions and (kit.captions or kit.caption_font_latin):
+            look = dict(kit.captions)
+            font = brand_font(kit, edl.language.primary)
+            if font:
+                look["font_family"] = font
+            else:
+                look.pop("font_family", None)
+            upd["captions"] = c.captions.model_copy(update=look)
         clips.append(c.model_copy(update=upd) if upd else c)
     return EDL.model_validate({**edl.model_dump(exclude_none=True),
                                "assets": [a.model_dump(exclude_defaults=True) for a in [*assets, *new_assets]],

@@ -552,7 +552,15 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
     if clip.banner and clip.banner.enabled:
         texts += [banner_words(clip.banner, edl.language.primary), clip.banner.handle]      # the banner's letters need a font too
     family = fonts.effective_family(clip.captions.font_family, texts)
-    font_file = fonts.resolve_font(family, clip.captions.font_weight)
+    font_warnings: list[str] = []
+    try:
+        font_file = fonts.resolve_font(family, clip.captions.font_weight)
+    except fonts.FontNotFound:
+        if family == fonts.DEFAULT_DEVANAGARI:
+            raise
+        font_warnings.append(f"The font {family} is not installed on this machine; the default font was used.")    # e.g. a worker image older than the font list
+        family = fonts.DEFAULT_DEVANAGARI if fonts.needs_devanagari(*texts) else "Noto Serif"
+        font_file = fonts.resolve_font(family, clip.captions.font_weight)
     shutil.copyfile(font_file, project / "assets" / "fonts" / font_file.name)
     face = _font_face(family, font_file.name, clip.captions.font_weight)
     stack = f'"{family}"'
@@ -650,4 +658,4 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
                 _cached_matte(footage, dest, matte_fn, matte_cache)
             else:
                 raise EDLError("layout.mode 'cutout_behind' needs layout.cutout_uri or a matte_fn")
-    return CompiledClip(project, duration, groups, family, scenes)
+    return CompiledClip(project, duration, groups, family, scenes, warnings=font_warnings)

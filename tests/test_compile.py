@@ -31,7 +31,7 @@ def test_no_scene_is_written_when_it_has_nothing_to_show(make_edl, tmp_path, gsa
 
 
 def test_latin_font_is_swapped_for_devanagari_text(make_edl, tmp_path, gsap, fonts_available):
-    clip = {**CLIP, "captions": {"font_family": "Noto Sans"}}
+    clip = {**CLIP, "captions": {"font_family": "Montserrat"}}
     assert build(make_edl, tmp_path, gsap, clip).font_family == "Noto Serif Devanagari"
 
 

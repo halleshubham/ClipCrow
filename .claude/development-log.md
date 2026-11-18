@@ -180,6 +180,10 @@ The rules that came out of these are in `development-rules.md`; this file is the
   the music track is saved with the rest; empty = "App default" for words per line and caption height; opacity in %; choosing a caption colour ticks "use it"; the cover solid colour shows only for a solid background; 44 px touch targets for info buttons,
   ticks, file and colour inputs. Not done: tabs, inline new/rename/delete instead of prompt()/confirm(), an upload progress bar, the cover title and speaker line in the preview. A live hint beside a New job checkbox is kept (`data-keep`) so `decorate()` does not fold it away.
 
+- **Google Fonts in the Brand page** (`fonts_catalog.json`, `fonts.py`, `scripts/install_fonts.py`): 104 families (53 cover Devanagari: every Devanagari family on Google Fonts that npm carries, plus Poppins/Hind/Mukta; the rest are the best-known Latin ones), installed in the image
+  (+about 50 MB) from the @expo-google-fonts packages at pinned versions. A brand has two caption fonts: `caption_font` (Marathi/Hindi/Nepali/Sanskrit clips) and `caption_font_latin` (the rest; else the first one); the preview draws them from `/api/fonts/file`.
+  A font missing on the machine that renders (a worker image older than the list) falls back to the default with a note instead of failing the render. To add a family: add it to the catalogue (name, pkg, ver, deva/latin coverage, files) and rebuild the image.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

@@ -47,3 +47,7 @@ Portions of Lucide derived from Feather are under the MIT License, Copyright (c)
 Platform logos in the same file (.i-plat-*) are from Simple Icons 13.0.0
 (https://github.com/simple-icons/simple-icons), CC0-1.0. The logos are trademarks of their owners, used
 only to identify the platform; no endorsement is implied.
+
+Fonts. The image ships the Google Fonts families listed in clipcrow/fonts_catalog.json (every Devanagari family on Google Fonts that
+the @expo-google-fonts npm packages carry, and the best-known Latin ones), installed by scripts/install_fonts.py at the versions pinned there.
+They are licensed under the SIL Open Font License 1.1 (each family's own copyright holders are named in its package and on fonts.google.com).

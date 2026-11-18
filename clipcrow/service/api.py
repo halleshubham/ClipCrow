@@ -1407,6 +1407,18 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(404, "No such track.")
         return FileResponse(path, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=3600"})
 
+    @app.get("/api/fonts/file", dependencies=[Depends(authed)])
+    def font_file(name: str):
+        """One catalogue font's Regular file, for the Brand page preview. Only names in the catalogue are served (never a path)."""
+        from .. import fonts
+        if name not in fonts.KNOWN:
+            raise HTTPException(404, "No such font.")
+        try:
+            path = fonts.resolve_font(name, 400)
+        except fonts.FontNotFound:
+            raise HTTPException(404, "That font is not installed here.")
+        return FileResponse(path, media_type="font/ttf", headers={"Cache-Control": "private, max-age=86400"})
+
     @app.delete("/api/brand/{what}", dependencies=[Depends(authed)])
     def brand_delete(what: str, request: Request) -> dict:
         try:

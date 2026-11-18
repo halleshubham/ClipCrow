@@ -44,11 +44,12 @@ RUN mkdir -p /opt/hf-home \
  && chmod -R a+rX /opt/hf-home
 
 # The same installers CI uses, so the image runs what the tests run: FFmpeg, the Noto faces, GSAP.
-COPY scripts/install_ffmpeg.sh scripts/install_fonts.sh scripts/fetch_gsap.sh /tmp/scripts/
+COPY scripts/install_ffmpeg.sh scripts/install_fonts.sh scripts/install_fonts.py scripts/fetch_gsap.sh /tmp/scripts/
+COPY clipcrow/fonts_catalog.json /tmp/clipcrow/fonts_catalog.json
 RUN /tmp/scripts/install_ffmpeg.sh /usr/local/bin \
  && /tmp/scripts/install_fonts.sh /opt/fonts \
  && /tmp/scripts/fetch_gsap.sh /opt/clipcrow/vendor \
- && chmod -R a+rX /opt/fonts /opt/clipcrow && rm -rf /tmp/scripts
+ && chmod -R a+rX /opt/fonts /opt/clipcrow && rm -rf /tmp/scripts /tmp/clipcrow
 
 # Python dependencies first (their own cached layer: they change rarely), then the code on top.
 WORKDIR /app

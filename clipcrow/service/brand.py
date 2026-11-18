@@ -47,7 +47,7 @@ DEFAULTS = {
     "default_cover": False, "default_logo": False, "default_outro": False, "default_music": False, "music_track": "",
     # who speaks (the lower third of every clip) and how this brand's captions look; "" / 0 = the app's own default
     "speaker_name": "", "speaker_title": "",
-    "caption_color": "", "caption_highlight": "", "caption_font": "", "caption_words": 0, "caption_top_px": 0, "caption_animation": "",
+    "caption_color": "", "caption_highlight": "", "caption_font": "", "caption_font_latin": "", "caption_words": 0, "caption_top_px": 0, "caption_animation": "",
     # the "watch the full video" banner
     "banner_text": "", "banner_handle": "", "banner_platform": "youtube", "banner_top_px": 1440, "banner_seconds": 0.0, "default_banner": False,
 }
@@ -255,7 +255,7 @@ class BrandStore:
             elif k in ("caption_color", "caption_highlight"):
                 if not (isinstance(v, str) and (v == "" or _HEX.match(v))):
                     raise BrandError("Colours look like #RRGGBB (or empty for the default).")
-            elif k == "caption_font":
+            elif k in ("caption_font", "caption_font_latin"):
                 from .. import fonts
                 if not (isinstance(v, str) and (v == "" or v in fonts.KNOWN)):
                     raise BrandError("Choose one of the listed fonts, or the default.")
@@ -400,7 +400,7 @@ class BrandStore:
                 "uploaded_music": self.uploaded_music(owner, brand) is not None,
                 "tracks": [{"id": k, "title": v.get("title", k), "mood": v.get("mood", ""), "seconds": v.get("seconds", 0)} for k, v in sorted(lib.items())],
                 "outro_seconds": round(probe_media(outro)["duration"], 1) if outro else 0, "settings": s,
-                "fonts": sorted(__import__("clipcrow.fonts", fromlist=["KNOWN"]).KNOWN), "animations": list(CAPTION_ANIMATIONS),
+                "fonts": sorted(__import__("clipcrow.fonts", fromlist=["KNOWN"]).KNOWN), "font_list": __import__("clipcrow.fonts", fromlist=["installed"]).installed(), "animations": list(CAPTION_ANIMATIONS),
                 "platforms": [{"id": k, "name": v[0]} for k, v in __import__("clipcrow.platform_marks", fromlist=["MARKS"]).MARKS.items()],
                 "caption_base": {"color": CaptionStyle().color, "highlight": CaptionStyle().highlight_color, "top_px": CaptionStyle().top_px}}
 
@@ -411,6 +411,6 @@ class BrandStore:
                         cover_ms=s["cover_ms"], cover_background=s["cover_background"], cover_color=s["cover_color"],
                         cover_accent=s["cover_accent"], cover_bg_color=s["cover_bg_color"],
                         outro_max_seconds=float(s["outro_max_seconds"]), outro_gap_ms=int(s["outro_gap_ms"]),
-                        captions=caption_defaults(s), speaker_name=s["speaker_name"], speaker_title=s["speaker_title"],
+                        captions=caption_defaults(s), caption_font_latin=s["caption_font_latin"], speaker_name=s["speaker_name"], speaker_title=s["speaker_title"],
                         banner_text=s["banner_text"], banner_handle=s["banner_handle"], banner_platform=s["banner_platform"],
                         banner_top_px=int(s["banner_top_px"]), banner_seconds=float(s["banner_seconds"]))

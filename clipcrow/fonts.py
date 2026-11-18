@@ -6,30 +6,48 @@ Search order: $CLIPCROW_FONT_DIR, ./fonts, the system Noto directories.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
 
 DEVANAGARI = re.compile("[ऀ-ॿ꣠-ꣿ]")
 
+# The families ClipCrow can draw: every Devanagari family on Google Fonts and the best-known Latin ones (``fonts_catalog.json``, made from the
+# @expo-google-fonts packages; scripts/install_fonts.py installs them as ``<Name without spaces>-Regular.ttf`` / ``-Bold.ttf``, the Regular file
+# standing in for Bold when the family has no bold). All licensed under the SIL Open Font License (see NOTICE).
+CATALOG = json.loads((Path(__file__).parent / "fonts_catalog.json").read_text(encoding="utf-8"))
+
+
+def stem(name: str) -> str:
+    return re.sub(r"\s+", "", name)
+
+
 # family -> {weight: file name}
-KNOWN = {
-    "Noto Serif Devanagari": {400: "NotoSerifDevanagari-Regular.ttf", 700: "NotoSerifDevanagari-Bold.ttf"},
-    "Noto Serif": {400: "NotoSerif-Regular.ttf", 700: "NotoSerif-Bold.ttf"},
-    "Noto Sans Devanagari": {400: "NotoSansDevanagari-Regular.ttf", 700: "NotoSansDevanagari-Bold.ttf"},
-    "Noto Sans": {400: "NotoSans-Regular.ttf", 700: "NotoSans-Bold.ttf"},
-}
+KNOWN = {c["name"]: {400: f"{stem(c['name'])}-Regular.ttf", 700: f"{stem(c['name'])}-Bold.ttf"} for c in CATALOG}
 DEFAULT_DEVANAGARI = "Noto Serif Devanagari"
 # The Devanagari faces cover Devanagari, digits and punctuation but NOT Latin letters, so words like
 # "WhatsApp" or the x in "10x" need a companion face, shipped with the project and named in the font stack.
 LATIN_COMPANION = {"Noto Serif Devanagari": "Noto Serif", "Noto Sans Devanagari": "Noto Sans"}
 LATIN = re.compile("[A-Za-z]")
 SYSTEM_DIRS = ["/usr/share/fonts/truetype/noto", "/usr/share/fonts/noto", "/usr/local/share/fonts"]
-DEVANAGARI_FAMILIES = {"Noto Serif Devanagari", "Noto Sans Devanagari"}
+DEVANAGARI_FAMILIES = {c["name"] for c in CATALOG if c["deva"]}      # families whose own letters cover Devanagari (some cover Latin too: Poppins, Hind, Mukta ...)
 
 
 class FontNotFound(RuntimeError):
     pass
+
+
+def installed() -> list[dict]:
+    """The catalogue entries whose files are on this machine, as ``{"name", "deva", "latin"}`` (what a person may choose here)."""
+    out = []
+    for c in CATALOG:
+        try:
+            resolve_font(c["name"], 400)
+        except FontNotFound:
+            continue
+        out.append({"name": c["name"], "deva": c["deva"], "latin": c["latin"]})
+    return out
 
 
 def _dirs() -> list[Path]:

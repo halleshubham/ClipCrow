@@ -1,0 +1,938 @@
+[
+{
+"name": "Abril Fatface",
+"pkg": "abril-fatface",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/AbrilFatface_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Alfa Slab One",
+"pkg": "alfa-slab-one",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/AlfaSlabOne_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Amiko",
+"pkg": "amiko",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Amiko_400Regular.ttf",
+"bold": "700Bold/Amiko_700Bold.ttf"
+},
+{
+"name": "Amita",
+"pkg": "amita",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Amita_400Regular.ttf",
+"bold": "700Bold/Amita_700Bold.ttf"
+},
+{
+"name": "Anek Devanagari",
+"pkg": "anek-devanagari",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/AnekDevanagari_400Regular.ttf",
+"bold": "700Bold/AnekDevanagari_700Bold.ttf"
+},
+{
+"name": "Anton",
+"pkg": "anton",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Anton_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Archivo Black",
+"pkg": "archivo-black",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/ArchivoBlack_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Arvo",
+"pkg": "arvo",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Arvo_400Regular.ttf",
+"bold": "700Bold/Arvo_700Bold.ttf"
+},
+{
+"name": "Arya",
+"pkg": "arya",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Arya_400Regular.ttf",
+"bold": "700Bold/Arya_700Bold.ttf"
+},
+{
+"name": "Asar",
+"pkg": "asar",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Asar_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Baloo 2",
+"pkg": "baloo-2",
+"ver": "0.4.2",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Baloo2_400Regular.ttf",
+"bold": "700Bold/Baloo2_700Bold.ttf"
+},
+{
+"name": "Bangers",
+"pkg": "bangers",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Bangers_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Barlow",
+"pkg": "barlow",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Barlow_400Regular.ttf",
+"bold": "700Bold/Barlow_700Bold.ttf"
+},
+{
+"name": "Barlow Condensed",
+"pkg": "barlow-condensed",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/BarlowCondensed_400Regular.ttf",
+"bold": "700Bold/BarlowCondensed_700Bold.ttf"
+},
+{
+"name": "Bebas Neue",
+"pkg": "bebas-neue",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/BebasNeue_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Biryani",
+"pkg": "biryani",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Biryani_400Regular.ttf",
+"bold": "700Bold/Biryani_700Bold.ttf"
+},
+{
+"name": "Bitter",
+"pkg": "bitter",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Bitter_400Regular.ttf",
+"bold": "700Bold/Bitter_700Bold.ttf"
+},
+{
+"name": "Cabin",
+"pkg": "cabin",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Cabin_400Regular.ttf",
+"bold": "700Bold/Cabin_700Bold.ttf"
+},
+{
+"name": "Cambay",
+"pkg": "cambay",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Cambay_400Regular.ttf",
+"bold": "700Bold/Cambay_700Bold.ttf"
+},
+{
+"name": "Caveat",
+"pkg": "caveat",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Caveat_400Regular.ttf",
+"bold": "700Bold/Caveat_700Bold.ttf"
+},
+{
+"name": "DM Sans",
+"pkg": "dm-sans",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/DMSans_400Regular.ttf",
+"bold": "700Bold/DMSans_700Bold.ttf"
+},
+{
+"name": "Dancing Script",
+"pkg": "dancing-script",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/DancingScript_400Regular.ttf",
+"bold": "700Bold/DancingScript_700Bold.ttf"
+},
+{
+"name": "Dekko",
+"pkg": "dekko",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Dekko_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Eczar",
+"pkg": "eczar",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Eczar_400Regular.ttf",
+"bold": "700Bold/Eczar_700Bold.ttf"
+},
+{
+"name": "Fira Sans",
+"pkg": "fira-sans",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/FiraSans_400Regular.ttf",
+"bold": "700Bold/FiraSans_700Bold.ttf"
+},
+{
+"name": "Fjalla One",
+"pkg": "fjalla-one",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/FjallaOne_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Glegoo",
+"pkg": "glegoo",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Glegoo_400Regular.ttf",
+"bold": "700Bold/Glegoo_700Bold.ttf"
+},
+{
+"name": "Gotu",
+"pkg": "gotu",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Gotu_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Halant",
+"pkg": "halant",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Halant_400Regular.ttf",
+"bold": "700Bold/Halant_700Bold.ttf"
+},
+{
+"name": "Hind",
+"pkg": "hind",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Hind_400Regular.ttf",
+"bold": "700Bold/Hind_700Bold.ttf"
+},
+{
+"name": "Inknut Antiqua",
+"pkg": "inknut-antiqua",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/InknutAntiqua_400Regular.ttf",
+"bold": "700Bold/InknutAntiqua_700Bold.ttf"
+},
+{
+"name": "Inter",
+"pkg": "inter",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Inter_400Regular.ttf",
+"bold": "700Bold/Inter_700Bold.ttf"
+},
+{
+"name": "Jaini",
+"pkg": "jaini",
+"ver": "0.4.0",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Jaini_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Jaini Purva",
+"pkg": "jaini-purva",
+"ver": "0.4.0",
+"deva": true,
+"latin": true,
+"reg": "400Regular/JainiPurva_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Jaldi",
+"pkg": "jaldi",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Jaldi_400Regular.ttf",
+"bold": "700Bold/Jaldi_700Bold.ttf"
+},
+{
+"name": "Josefin Sans",
+"pkg": "josefin-sans",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/JosefinSans_400Regular.ttf",
+"bold": "700Bold/JosefinSans_700Bold.ttf"
+},
+{
+"name": "Kadwa",
+"pkg": "kadwa",
+"ver": "0.4.2",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Kadwa_400Regular.ttf",
+"bold": "700Bold/Kadwa_700Bold.ttf"
+},
+{
+"name": "Kalam",
+"pkg": "kalam",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Kalam_400Regular.ttf",
+"bold": "700Bold/Kalam_700Bold.ttf"
+},
+{
+"name": "Karla",
+"pkg": "karla",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Karla_400Regular.ttf",
+"bold": "700Bold/Karla_700Bold.ttf"
+},
+{
+"name": "Karma",
+"pkg": "karma",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Karma_400Regular.ttf",
+"bold": "700Bold/Karma_700Bold.ttf"
+},
+{
+"name": "Khand",
+"pkg": "khand",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Khand_400Regular.ttf",
+"bold": "700Bold/Khand_700Bold.ttf"
+},
+{
+"name": "Khula",
+"pkg": "khula",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Khula_400Regular.ttf",
+"bold": "700Bold/Khula_700Bold.ttf"
+},
+{
+"name": "Kurale",
+"pkg": "kurale",
+"ver": "0.4.2",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Kurale_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Laila",
+"pkg": "laila",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Laila_400Regular.ttf",
+"bold": "700Bold/Laila_700Bold.ttf"
+},
+{
+"name": "Lato",
+"pkg": "lato",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Lato_400Regular.ttf",
+"bold": "700Bold/Lato_700Bold.ttf"
+},
+{
+"name": "League Spartan",
+"pkg": "league-spartan",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/LeagueSpartan_400Regular.ttf",
+"bold": "700Bold/LeagueSpartan_700Bold.ttf"
+},
+{
+"name": "Libre Baskerville",
+"pkg": "libre-baskerville",
+"ver": "0.4.3",
+"deva": false,
+"latin": true,
+"reg": "400Regular/LibreBaskerville_400Regular.ttf",
+"bold": "700Bold/LibreBaskerville_700Bold.ttf"
+},
+{
+"name": "Lobster",
+"pkg": "lobster",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Lobster_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Lora",
+"pkg": "lora",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Lora_400Regular.ttf",
+"bold": "700Bold/Lora_700Bold.ttf"
+},
+{
+"name": "Luckiest Guy",
+"pkg": "luckiest-guy",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/LuckiestGuy_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Manrope",
+"pkg": "manrope",
+"ver": "0.4.3",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Manrope_400Regular.ttf",
+"bold": "700Bold/Manrope_700Bold.ttf"
+},
+{
+"name": "Martel",
+"pkg": "martel",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Martel_400Regular.ttf",
+"bold": "700Bold/Martel_700Bold.ttf"
+},
+{
+"name": "Martel Sans",
+"pkg": "martel-sans",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/MartelSans_400Regular.ttf",
+"bold": "700Bold/MartelSans_700Bold.ttf"
+},
+{
+"name": "Merriweather",
+"pkg": "merriweather",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Merriweather_400Regular.ttf",
+"bold": "700Bold/Merriweather_700Bold.ttf"
+},
+{
+"name": "Modak",
+"pkg": "modak",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Modak_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Montserrat",
+"pkg": "montserrat",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Montserrat_400Regular.ttf",
+"bold": "700Bold/Montserrat_700Bold.ttf"
+},
+{
+"name": "Mukta",
+"pkg": "mukta",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Mukta_400Regular.ttf",
+"bold": "700Bold/Mukta_700Bold.ttf"
+},
+{
+"name": "Mulish",
+"pkg": "mulish",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Mulish_400Regular.ttf",
+"bold": "700Bold/Mulish_700Bold.ttf"
+},
+{
+"name": "Noto Sans",
+"pkg": "noto-sans",
+"ver": "0.4.2",
+"deva": true,
+"latin": true,
+"reg": "400Regular/NotoSans_400Regular.ttf",
+"bold": "700Bold/NotoSans_700Bold.ttf"
+},
+{
+"name": "Noto Sans Devanagari",
+"pkg": "noto-sans-devanagari",
+"ver": "0.4.2",
+"deva": true,
+"latin": true,
+"reg": "400Regular/NotoSansDevanagari_400Regular.ttf",
+"bold": "700Bold/NotoSansDevanagari_700Bold.ttf"
+},
+{
+"name": "Noto Serif",
+"pkg": "noto-serif",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/NotoSerif_400Regular.ttf",
+"bold": "700Bold/NotoSerif_700Bold.ttf"
+},
+{
+"name": "Noto Serif Devanagari",
+"pkg": "noto-serif-devanagari",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/NotoSerifDevanagari_400Regular.ttf",
+"bold": "700Bold/NotoSerifDevanagari_700Bold.ttf"
+},
+{
+"name": "Nunito",
+"pkg": "nunito",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Nunito_400Regular.ttf",
+"bold": "700Bold/Nunito_700Bold.ttf"
+},
+{
+"name": "Open Sans",
+"pkg": "open-sans",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/OpenSans_400Regular.ttf",
+"bold": "700Bold/OpenSans_700Bold.ttf"
+},
+{
+"name": "Oswald",
+"pkg": "oswald",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Oswald_400Regular.ttf",
+"bold": "700Bold/Oswald_700Bold.ttf"
+},
+{
+"name": "Outfit",
+"pkg": "outfit",
+"ver": "0.4.3",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Outfit_400Regular.ttf",
+"bold": "700Bold/Outfit_700Bold.ttf"
+},
+{
+"name": "PT Serif",
+"pkg": "pt-serif",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/PTSerif_400Regular.ttf",
+"bold": "700Bold/PTSerif_700Bold.ttf"
+},
+{
+"name": "Pacifico",
+"pkg": "pacifico",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Pacifico_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Palanquin",
+"pkg": "palanquin",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Palanquin_400Regular.ttf",
+"bold": "700Bold/Palanquin_700Bold.ttf"
+},
+{
+"name": "Palanquin Dark",
+"pkg": "palanquin-dark",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/PalanquinDark_400Regular.ttf",
+"bold": "700Bold/PalanquinDark_700Bold.ttf"
+},
+{
+"name": "Permanent Marker",
+"pkg": "permanent-marker",
+"ver": "0.4.0",
+"deva": false,
+"latin": true,
+"reg": "400Regular/PermanentMarker_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Playfair Display",
+"pkg": "playfair-display",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/PlayfairDisplay_400Regular.ttf",
+"bold": "700Bold/PlayfairDisplay_700Bold.ttf"
+},
+{
+"name": "Plus Jakarta Sans",
+"pkg": "plus-jakarta-sans",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/PlusJakartaSans_400Regular.ttf",
+"bold": "700Bold/PlusJakartaSans_700Bold.ttf"
+},
+{
+"name": "Poppins",
+"pkg": "poppins",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Poppins_400Regular.ttf",
+"bold": "700Bold/Poppins_700Bold.ttf"
+},
+{
+"name": "Pragati Narrow",
+"pkg": "pragati-narrow",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/PragatiNarrow_400Regular.ttf",
+"bold": "700Bold/PragatiNarrow_700Bold.ttf"
+},
+{
+"name": "Quicksand",
+"pkg": "quicksand",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Quicksand_400Regular.ttf",
+"bold": "700Bold/Quicksand_700Bold.ttf"
+},
+{
+"name": "Rajdhani",
+"pkg": "rajdhani",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Rajdhani_400Regular.ttf",
+"bold": "700Bold/Rajdhani_700Bold.ttf"
+},
+{
+"name": "Raleway",
+"pkg": "raleway",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Raleway_400Regular.ttf",
+"bold": "700Bold/Raleway_700Bold.ttf"
+},
+{
+"name": "Ranga",
+"pkg": "ranga",
+"ver": "0.4.0",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Ranga_400Regular.ttf",
+"bold": "700Bold/Ranga_700Bold.ttf"
+},
+{
+"name": "Rhodium Libre",
+"pkg": "rhodium-libre",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/RhodiumLibre_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Righteous",
+"pkg": "righteous",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Righteous_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Roboto",
+"pkg": "roboto",
+"ver": "0.4.3",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Roboto_400Regular.ttf",
+"bold": "700Bold/Roboto_700Bold.ttf"
+},
+{
+"name": "Rozha One",
+"pkg": "rozha-one",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/RozhaOne_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Rubik",
+"pkg": "rubik",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Rubik_400Regular.ttf",
+"bold": "700Bold/Rubik_700Bold.ttf"
+},
+{
+"name": "Sahitya",
+"pkg": "sahitya",
+"ver": "0.4.2",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Sahitya_400Regular.ttf",
+"bold": "700Bold/Sahitya_700Bold.ttf"
+},
+{
+"name": "Sarala",
+"pkg": "sarala",
+"ver": "0.4.2",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Sarala_400Regular.ttf",
+"bold": "700Bold/Sarala_700Bold.ttf"
+},
+{
+"name": "Sarpanch",
+"pkg": "sarpanch",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Sarpanch_400Regular.ttf",
+"bold": "700Bold/Sarpanch_700Bold.ttf"
+},
+{
+"name": "Source Sans 3",
+"pkg": "source-sans-3",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/SourceSans3_400Regular.ttf",
+"bold": "700Bold/SourceSans3_700Bold.ttf"
+},
+{
+"name": "Source Serif 4",
+"pkg": "source-serif-4",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/SourceSerif4_400Regular.ttf",
+"bold": "700Bold/SourceSerif4_700Bold.ttf"
+},
+{
+"name": "Space Grotesk",
+"pkg": "space-grotesk",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/SpaceGrotesk_400Regular.ttf",
+"bold": "700Bold/SpaceGrotesk_700Bold.ttf"
+},
+{
+"name": "Staatliches",
+"pkg": "staatliches",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Staatliches_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Sumana",
+"pkg": "sumana",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Sumana_400Regular.ttf",
+"bold": "700Bold/Sumana_700Bold.ttf"
+},
+{
+"name": "Sura",
+"pkg": "sura",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Sura_400Regular.ttf",
+"bold": "700Bold/Sura_700Bold.ttf"
+},
+{
+"name": "Teko",
+"pkg": "teko",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Teko_400Regular.ttf",
+"bold": "700Bold/Teko_700Bold.ttf"
+},
+{
+"name": "Tillana",
+"pkg": "tillana",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Tillana_400Regular.ttf",
+"bold": "700Bold/Tillana_700Bold.ttf"
+},
+{
+"name": "Tiro Devanagari Hindi",
+"pkg": "tiro-devanagari-hindi",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/TiroDevanagariHindi_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Tiro Devanagari Marathi",
+"pkg": "tiro-devanagari-marathi",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/TiroDevanagariMarathi_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Tiro Devanagari Sanskrit",
+"pkg": "tiro-devanagari-sanskrit",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/TiroDevanagariSanskrit_400Regular.ttf",
+"bold": null
+},
+{
+"name": "Titillium Web",
+"pkg": "titillium-web",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/TitilliumWeb_400Regular.ttf",
+"bold": "700Bold/TitilliumWeb_700Bold.ttf"
+},
+{
+"name": "Ubuntu",
+"pkg": "ubuntu",
+"ver": "0.4.1",
+"deva": false,
+"latin": true,
+"reg": "400Regular/Ubuntu_400Regular.ttf",
+"bold": "700Bold/Ubuntu_700Bold.ttf"
+},
+{
+"name": "Vesper Libre",
+"pkg": "vesper-libre",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/VesperLibre_400Regular.ttf",
+"bold": "700Bold/VesperLibre_700Bold.ttf"
+},
+{
+"name": "Work Sans",
+"pkg": "work-sans",
+"ver": "0.4.2",
+"deva": false,
+"latin": true,
+"reg": "400Regular/WorkSans_400Regular.ttf",
+"bold": "700Bold/WorkSans_700Bold.ttf"
+},
+{
+"name": "Yantramanav",
+"pkg": "yantramanav",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/Yantramanav_400Regular.ttf",
+"bold": "700Bold/Yantramanav_700Bold.ttf"
+},
+{
+"name": "Yatra One",
+"pkg": "yatra-one",
+"ver": "0.4.1",
+"deva": true,
+"latin": true,
+"reg": "400Regular/YatraOne_400Regular.ttf",
+"bold": null
+}
+]
