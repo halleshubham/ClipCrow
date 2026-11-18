@@ -37,8 +37,8 @@ class Params(_M):
     brand: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{12}$")     # which of the owner's brands this job uses (fixed when it is made, so a later change of default never moves it)
     language: Optional[str] = Field(default=None, pattern=r"^[a-z]{2,3}$")
     clips: Optional[int] = Field(default=None, ge=1, le=20)
-    min_clip: int = Field(default=15, ge=5, le=900)
-    max_clip: int = Field(default=60, ge=10, le=900)
+    min_clip: int = Field(default=30, ge=5, le=900)
+    max_clip: int = Field(default=120, ge=10, le=900)
     whole: bool = False                     # the whole (cleaned) recording is ONE clip: no moment picking, one title and hook for all of it
     spread: float = Field(default=0.5, ge=0, le=1)
     speaker_name: Optional[str] = Field(default=None, max_length=60)

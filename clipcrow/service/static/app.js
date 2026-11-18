@@ -575,10 +575,10 @@ async function newJobView() {
         el('input', { id: 'clips', type: 'number', min: '1', max: '20', placeholder: 'auto' }),
         el('div', { class: 'hint', text: 'Leave empty for about one per two minutes of video.' })),
       el('div', {}, el('label', { class: 'field', for: 'min_clip', text: 'Shortest reel (seconds)' }),
-        el('input', { id: 'min_clip', type: 'number', min: '5', max: '900', value: '15', inputmode: 'numeric' }),
+        el('input', { id: 'min_clip', type: 'number', min: '5', max: '900', value: '30', inputmode: 'numeric' }),
         el('div', { class: 'hint', text: 'Leave both lengths empty and the whole video becomes one reel (up to 15 minutes), with one title and hook.' })),
       el('div', {}, el('label', { class: 'field', for: 'max_clip', text: 'Longest reel (seconds)' }),
-        el('input', { id: 'max_clip', type: 'number', min: '10', max: '900', value: '60', inputmode: 'numeric' }),
+        el('input', { id: 'max_clip', type: 'number', min: '10', max: '900', value: '120', inputmode: 'numeric' }),
         el('div', { class: 'hint', text: 'Give only one and the other follows from it. Longer reels suit a cleaned raw recording.' })),
       select('style', 'Style from a reference', [['', 'None'], ...styles.map((x) => [x.id, x.name])],
         styles.length ? 'Uses what was measured in that reference: clip length, caption size, colour and position, and how often the picture pushes in.'
@@ -656,7 +656,7 @@ async function newJobView() {
     $('clean-opts').hidden = !$('clean').checked;
     const hi = Number($('max_clip').value);
     if ($('clean').checked && !$('style').value && hi > 0 && hi <= 90) { $('min_clip').value = ''; $('max_clip').value = ''; lengthChanged(); }       // a cleaned recording is one reel
-    else if (!$('clean').checked && !$('min_clip').value.trim() && !$('max_clip').value.trim()) { $('min_clip').value = '15'; $('max_clip').value = '60'; lengthChanged(); }
+    else if (!$('clean').checked && !$('min_clip').value.trim() && !$('max_clip').value.trim()) { $('min_clip').value = '30'; $('max_clip').value = '120'; lengthChanged(); }
   });
   $('explainer').addEventListener('change', () => { $('explainer-opts').hidden = !$('explainer').checked; });
   const applyBrand = (b) => {                                                                      // the rows that depend on the chosen brand
