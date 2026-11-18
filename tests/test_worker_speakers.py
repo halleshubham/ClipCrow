@@ -24,7 +24,7 @@ def hub(**kw):
     return WorkerHub(TOKEN, **{"pickup_seconds": 0.6, "lease_seconds": 0.6, "online_seconds": 5.0, **kw})
 
 
-GOOD = {"duration": 36.0, "seats": [{"cx": 0.25, "cy": 0.4, "w": 0.09, "h": 0.17, "seen": 0.9}, {"cx": 0.75, "cy": 0.4, "w": 0.09, "h": 0.17, "seen": 0.8}],
+GOOD = {"duration": 36.0, "seats": [{"cx": 0.25, "cy": 0.4, "w": 0.09, "h": 0.17, "seen": 0.9, "live": 4.2}, {"cx": 0.75, "cy": 0.4, "w": 0.09, "h": 0.17, "seen": 0.8}],
         "turns": [[0.0, 10.0, 0], [12.0, 22.0, 1], [24.0, 34.0, 0]], "voice_seat": {"0": 0, "1": 1}, "lift": {"0": 2.1, "1": 1.9}, "picture_t": 5.0}
 
 

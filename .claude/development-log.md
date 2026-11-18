@@ -162,6 +162,9 @@ The rules that came out of these are in `development-rules.md`; this file is the
 - **The who-is-who picture is a typical moment** (`_typical_frame`): the middle, in time, of the sampled moments where the most of the final seats have a face, cut from the video at `picture_t` (before: the single frame with the most
   faces, which on a podcast is the intro card). `/api/jobs/{id}/speakers` also returns each seat's `w`, `h`, `seen` and `live` so a map that looks wrong can be explained from the job itself.
 
+- **A worker's seats carry `live`** (`SeatIn.live`): the server's answer model forbids unknown fields, so a worker built after the still-face check would have been rejected ("did not deliver") and the server would have redone the work. Deploy the
+  server BEFORE pulling a new worker image whenever the answer's shape grows.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

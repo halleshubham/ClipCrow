@@ -103,6 +103,7 @@ class SeatIn(_M):
     w: float = Field(gt=0.0, le=1.0)
     h: float = Field(gt=0.0, le=1.0)
     seen: float = Field(default=0.0, ge=0.0, le=1.0)
+    live: float = Field(default=-1.0, ge=-1.0, le=1000.0)
 
 
 class SpeakersIn(_M):
@@ -531,7 +532,7 @@ def speaker_map_from_result(got: "SpeakersIn", video: Path) -> "object":
     if real and abs(real - got.duration) > 2.0:
         raise WorkerError(f"the worker looked at a video of {got.duration:.0f} s, this one is {real:.0f} s")
     from .. import voices
-    return seats.SpeakerMap([seats.Seat(s.cx, s.cy, s.w, s.h, s.seen) for s in got.seats], [voices.Turn(a, b, v) for a, b, v in sorted(got.turns)],
+    return seats.SpeakerMap([seats.Seat(s.cx, s.cy, s.w, s.h, s.seen, s.live) for s in got.seats], [voices.Turn(a, b, v) for a, b, v in sorted(got.turns)],
                             dict(got.voice_seat), dict(got.lift), got.duration, {}, seats.video_signature(video), got.picture_t)
 
 
