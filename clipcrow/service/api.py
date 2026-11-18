@@ -72,6 +72,10 @@ class SpeakerChoice(BaseModel):
     voices: dict[str, Optional[int]] = Field(max_length=30)     # voice number -> person (1 = first from the left), null = off screen
 
 
+class RetryBody(BaseModel):
+    multi: Optional[Literal["switch", "split", "off"]] = None
+
+
 class BrandName(BaseModel):
     name: str = Field(min_length=1, max_length=40)
 
@@ -950,11 +954,14 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return view(store.get(job_id))
 
     @app.post("/api/jobs/{job_id}/retry", dependencies=[Depends(authed)])
-    def retry_job(job_id: str, request: Request) -> dict:
-        """Run a failed or cancelled job again from its saved video, with the options it had. Minutes are taken again (the failed run gave them back)."""
+    def retry_job(job_id: str, request: Request, body: Optional[RetryBody] = None) -> dict:
+        """Run a job again from its saved video, with the options it had (``multi`` may be changed). Minutes are taken again. A failed or cancelled job gave
+        its minutes back; a finished one is run again only when the request says what to change, and its clips are replaced."""
         job = job_or_404(job_id, request)
-        if job.status not in ("failed", "cancelled"):
-            raise HTTPException(409, "Only a job that failed or was cancelled can be run again.")
+        if job.status in ("queued", "running"):
+            raise HTTPException(409, "This job is running.")
+        if job.status == "done" and not (body and body.multi):
+            raise HTTPException(409, "A finished job is run again only with a changed option.")
         if store.source_path(job_id) is None:
             raise HTTPException(409, "The video of this job is no longer on the server, so it cannot be run again. Upload it again.")
         problem = pipeline.check_ready()
@@ -970,6 +977,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         def reset(j: Job) -> None:
             j.status, j.error, j.cancel_requested, j.attempts = "queued", None, False, 0
             j.reserved_minutes = minutes
+            if body and body.multi:
+                j.params = j.params.model_copy(update={"multi": body.multi})
             for st in j.stages:
                 st.state, st.detail = "pending", ""
             j.add_log("run again by request")

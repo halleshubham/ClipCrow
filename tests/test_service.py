@@ -461,3 +461,12 @@ def test_a_cancelled_job_can_be_run_again_but_a_finished_one_cannot(tmp_path, vi
     assert wait(c, jid)["status"] == "done"
     assert c.post(f"/api/jobs/{jid}/retry").status_code == 409                    # done: nothing to run again
     assert c.post("/api/jobs/" + "0" * 12 + "/retry").status_code == 404
+
+
+def test_a_finished_job_is_run_again_only_with_a_changed_people_option(tmp_path, video_bytes):
+    c, app = client(tmp_path)
+    jid = wait(c, upload(c, video_bytes).json()["id"])["id"]
+    assert c.post(f"/api/jobs/{jid}/retry").status_code == 409
+    assert c.post(f"/api/jobs/{jid}/retry", json={"multi": "bogus"}).status_code == 422
+    assert c.post(f"/api/jobs/{jid}/retry", json={"multi": "off"}).status_code == 200
+    assert wait(c, jid)["status"] == "done" and app.state.store.get(jid).params.multi == "off"

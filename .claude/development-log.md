@@ -152,6 +152,8 @@ The rules that came out of these are in `development-rules.md`; this file is the
 - **Run again** (`POST /api/jobs/{id}/retry`, button on the job page): a failed or cancelled job runs again from its saved video with its options; minutes are reserved again (the failed run refunded them).
   A job a restart interrupted twice is marked failed on purpose (so one that takes the server down cannot loop); this is how a person starts it again.
 
+- The New job form now starts on **One person on screen** (`multi=off`, the quickest); "Several people" is a choice. `POST /api/jobs/{id}/retry` also takes `{"multi": ...}` and then runs a FINISHED job again with that option (its clips are replaced, minutes taken again).
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.
