@@ -387,9 +387,11 @@ _LOGO_TOP_SAFE, _LOGO_BOTTOM_SAFE = 250, 380    # clear of the platform status b
 
 
 def _logo_scene(lg: Logo, src: str, start: float, dur: float, w: int, h: int) -> str:
-    width = round(w * lg.size_pct / 100)
-    v = f"top:{_LOGO_TOP_SAFE + lg.margin_px}px" if lg.position[0] == "t" else f"bottom:{_LOGO_BOTTOM_SAFE + lg.margin_px}px"
-    side = f"left:{lg.margin_px}px" if lg.position[1] == "l" else f"right:{lg.margin_px}px"
+    width = round(w * lg.size_pct * lg.shrink / 100)
+    v = (f"top:{lg.top_px}px" if lg.top_px is not None else
+         f"top:{_LOGO_TOP_SAFE + lg.margin_px}px" if lg.position[0] == "t" else f"bottom:{_LOGO_BOTTOM_SAFE + lg.margin_px}px")
+    gap = lg.margin_px if lg.side_px is None else lg.side_px
+    side = f"left:{gap}px" if lg.position[1] == "l" else f"right:{gap}px"
     css = f"""    #logo {{ position: absolute; {v}; {side}; width: {width}px; }}
     #logo img {{ display: block; width: 100%; height: auto; opacity: 0; }}"""
     body = (f'    <div id="logo" class="clip" data-start="{_num(start)}" data-duration="{_num(dur)}">'

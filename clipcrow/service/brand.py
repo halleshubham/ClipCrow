@@ -391,7 +391,7 @@ class BrandStore:
                 "tracks": [{"id": k, "title": v.get("title", k), "mood": v.get("mood", ""), "seconds": v.get("seconds", 0)} for k, v in sorted(lib.items())],
                 "outro_seconds": round(probe_media(outro)["duration"], 1) if outro else 0, "settings": s,
                 "fonts": sorted(__import__("clipcrow.fonts", fromlist=["KNOWN"]).KNOWN), "animations": list(CAPTION_ANIMATIONS),
-                "caption_base": {"color": CaptionStyle().color, "highlight": CaptionStyle().highlight_color}}
+                "caption_base": {"color": CaptionStyle().color, "highlight": CaptionStyle().highlight_color, "top_px": CaptionStyle().top_px}}
 
     def kit(self, owner: str, brand: str | None = None) -> BrandKit:
         s = self.settings(owner, brand)

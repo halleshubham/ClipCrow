@@ -71,6 +71,69 @@ def cover_text(clip: Clip) -> str:
     return text
 
 
+LOGO_TOP_SAFE, LOGO_BOTTOM_SAFE = 250, 380       # the same two numbers as compile._LOGO_*_SAFE (a test keeps them equal)
+CAPTION_BAND = (-30, 330)                         # the caption band, from the caption top: a few lines of text
+SHRINKS = (1.0, 0.85, 0.7, 0.55, 0.4)
+SIDE_TIGHT = 24                                   # px: the narrowest side margin the placement will use
+
+
+def logo_aspect(path) -> float:
+    """Height over width of the logo picture (1.0 when it cannot be read)."""
+    try:
+        import cv2
+        img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        return float(img.shape[0]) / float(img.shape[1]) if img is not None and img.shape[1] else 1.0
+    except Exception:
+        return 1.0
+
+
+def fit_logo(logo: Logo, zone, caption_top: Optional[int], aspect: float, width: int = 1080, height: int = 1920) -> Logo:
+    """The logo kept off the face. ``zone`` is where the face is in the frame over the clip (fractions), ``caption_top`` where the captions start (None: no captions).
+    The brand's corner is used when it is clear. Otherwise the logo slides down the left or right side to the nearest spot that is clear and, if there is none,
+    gets smaller (never below 40% of its size) until there is; when nothing is clear it takes the spot that overlaps least at the smallest size."""
+    base = logo.model_copy(update={"top_px": None, "shrink": 1.0, "side_px": None})
+    if zone is None:
+        return base
+    x0, y0, x1, y1 = zone
+    keep = [(x0 * width - 0.04 * width, y0 * height - 0.08 * height, x1 * width + 0.04 * width, y1 * height + 0.03 * height)]      # hair above the face box, a margin around it
+    if caption_top is not None:
+        keep.append((0.0, caption_top + CAPTION_BAND[0], float(width), caption_top + CAPTION_BAND[1]))
+    m = logo.margin_px
+
+    def hits(r) -> float:
+        total = 0.0
+        for a, b, c, d in keep:
+            w_, h_ = min(r[2], c) - max(r[0], a), min(r[3], d) - max(r[1], b)
+            if w_ > 0 and h_ > 0:
+                total += w_ * h_
+        return total
+
+    def rect(side: str, top: float, wpx: float, gap: Optional[int] = None):
+        g = m if gap is None else gap
+        x = g if side == "l" else width - g - wpx
+        return (x, top, x + wpx, top + wpx * aspect)
+    wpx = width * logo.size_pct / 100
+    hpx = wpx * aspect
+    own_top = LOGO_TOP_SAFE + m if logo.position[0] == "t" else height - LOGO_BOTTOM_SAFE - m - hpx
+    if hits(rect(logo.position[1], own_top, wpx)) == 0:
+        return base
+    other = "l" if logo.position[1] == "r" else "r"
+    worst = None
+    for shrink in SHRINKS:
+        wpx = width * logo.size_pct * shrink / 100
+        hpx = wpx * aspect
+        lo, hi = LOGO_TOP_SAFE, int(height - LOGO_BOTTOM_SAFE - hpx)
+        gaps = (m, min(m, SIDE_TIGHT))                               # the brand's side margin first, a narrower one when that is what keeps it off the face
+        spots = [(side, float(top), gap) for gap in gaps for side in (logo.position[1], other) for top in range(lo, max(lo, hi) + 1, 20)]
+        clear = [(side, top, gap) for side, top, gap in spots if hits(rect(side, top, wpx, gap)) == 0]
+        if clear:
+            side, top, gap = min(clear, key=lambda c: (c[2] != m, c[0] != logo.position[1], abs(c[1] - own_top)))
+            return logo.model_copy(update={"position": ("t" if top < height / 2 else "b") + side, "top_px": int(top), "shrink": shrink, "side_px": None if gap == m else gap})
+        worst = min(spots, key=lambda c: (hits(rect(c[0], c[1], wpx, c[2])), c[2] != m, c[0] != logo.position[1], abs(c[1] - own_top))) + (shrink,)
+    side, top, gap, shrink = worst
+    return logo.model_copy(update={"position": ("t" if top < height / 2 else "b") + side, "top_px": int(top), "shrink": shrink, "side_px": None if gap == m else gap})
+
+
 def make_cover(clip: Clip, kit: BrandKit, text: str | None = None) -> Optional[Cover]:
     text = (text if text is not None else cover_text(clip)).strip()
     if not text:
@@ -114,8 +177,10 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
         if choice.cover:
             upd["cover"] = make_cover(c, kit)
         if choice.logo:
-            upd["logo"] = Logo(asset="brand-logo", position=kit.logo_position, size_pct=kit.logo_size_pct,
-                               opacity=kit.logo_opacity, margin_px=kit.logo_margin_px)
+            lg = Logo(asset="brand-logo", position=kit.logo_position, size_pct=kit.logo_size_pct,
+                      opacity=kit.logo_opacity, margin_px=kit.logo_margin_px)
+            cap = c.captions
+            upd["logo"] = fit_logo(lg, c.layout.face_zone, cap.top_px if cap.enabled else None, logo_aspect(kit.logo) if kit.logo else 1.0, edl.render.width, edl.render.height)
         if choice.outro:
             upd["outro"] = Outro(asset="brand-outro", max_seconds=kit.outro_max_seconds, gap_ms=kit.outro_gap_ms)
         if choice.music:

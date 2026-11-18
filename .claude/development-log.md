@@ -169,6 +169,11 @@ The rules that came out of these are in `development-rules.md`; this file is the
   away and back and is ignored). Each shot picks its own main face and the crop starts on it at the cut, a hard cut with no pan across the room; a shot with no face holds the last position. A clip with no cuts is framed exactly as before.
   Applies wherever the single-subject path runs ("One person on screen", and the one-person fallback of the other modes). Checked on made-up videos only: watch real cut-angle recordings (cut thresholds 25 / 4x are first guesses).
 
+- **The logo keeps off the face** (job ba56794375f8: in a close-up the corner sat on the head): framing records `Layout.face_zone` (where the followed face, or the shown seats, sit in the vertical frame over the clip) and
+  `branding.fit_logo` keeps the logo clear of it and of the caption band: the brand's corner when it is clear, else down the left/right side (`Logo.top_px`), else with a narrower side margin (`side_px`), else smaller (`shrink`, never below 40%).
+  Done when the brand is applied (`apply_brand`) and again when a clip is re-framed. Clips made before this have no zone, so they keep the corner until framed again. Brand page: a live preview (sample picture, logo, caption line; `POST /api/brand/preview` asks
+  the server for the placement so the preview and a real clip agree).
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

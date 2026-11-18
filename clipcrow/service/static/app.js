@@ -1391,9 +1391,68 @@ async function brandView(bid) {
       try { await api('/brand' + q, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); note.textContent = 'Saved. New jobs use this.'; } catch (e) { fail(e); }
     } })));
 
+  // ---- live preview: a vertical frame with a sample picture, your logo and a caption line, redrawn as the fields change. Where the logo goes is asked of the server,
+  // which uses the very placement a real clip gets (it keeps the logo off the face). ----
+  const SAMPLES = { close: { label: 'Close-up (the head fills the width)', zone: [0.1, 0.14, 0.82, 0.57] }, mid: { label: 'Head and shoulders', zone: [0.3, 0.2, 0.7, 0.4] }, none: { label: 'No face found', zone: null } };
+  const pvSel = el('select', { id: 'pv_sample', 'aria-label': 'Sample picture' }, Object.entries(SAMPLES).map(([k, v]) => el('option', { value: k, text: v.label })));
+  const pvKeepOn = el('input', { type: 'checkbox', id: 'pv_keep' });
+  const pvHead = el('div', { class: 'pv-head' }), pvBody = el('div', { class: 'pv-body' }), pvKeep = el('div', { class: 'pv-keep' });
+  const pvCap = el('div', { class: 'pv-cap', translate: 'no' });
+  const pvLogo = brand.logo ? el('img', { class: 'pv-logo', src: `/api/brand/logo/file${q}&v=${Date.now()}`, alt: '' }) : el('div', { class: 'pv-logo pv-logo-empty', text: 'Logo' });
+  const pvNote = el('div', { class: 'small muted', 'aria-live': 'polite' });
+  const pvFrame = el('div', { class: 'pv', role: 'img', 'aria-label': 'Preview of a clip with your logo and a caption' }, pvBody, pvHead, pvKeep, pvCap, pvLogo);
+  const pct = (x) => `${(x * 100).toFixed(2)}%`;
+  let pvTimer = 0, pvSeq = 0;
+  async function drawPreview() {
+    const seq = ++pvSeq;
+    const zone = SAMPLES[pvSel.value].zone;
+    const n = (id) => Number(f[id].value);
+    const capTop = n('caption_top_px') || brand.caption_base.top_px;
+    pvHead.hidden = pvBody.hidden = pvKeep.hidden = !zone;
+    if (zone) {
+      const [x0, y0, x1, y1] = zone;
+      Object.assign(pvHead.style, { left: pct(x0), top: pct(y0), width: pct(x1 - x0), height: pct(y1 - y0) });
+      const bx0 = Math.max(0, x0 - 0.12), bx1 = Math.min(1, x1 + 0.12);
+      Object.assign(pvBody.style, { left: pct(bx0), width: pct(bx1 - bx0), top: pct(y1 - 0.02) });
+      const kx0 = Math.max(0, x0 - 0.04), kx1 = Math.min(1, x1 + 0.04), ky0 = Math.max(0, y0 - 0.08), ky1 = Math.min(1, y1 + 0.03);
+      Object.assign(pvKeep.style, { left: pct(kx0), top: pct(ky0), width: pct(kx1 - kx0), height: pct(ky1 - ky0), display: pvKeepOn.checked ? 'block' : 'none' });
+    }
+    const colour = f.caption_color_on.checked ? f.caption_color.value : brand.caption_base.color;
+    const light = f.caption_highlight_on.checked ? f.caption_highlight.value : brand.caption_base.highlight;
+    pvCap.replaceChildren('तुमचे ', el('span', { text: 'कॅप्शन', style: { color: light } }), ' असे दिसतील');
+    Object.assign(pvCap.style, { top: pct(capTop / 1920), color: colour });
+    let place = { position: f.logo_position.value, top_px: null, shrink: 1, side_px: null, aspect: 1 };
+    try {
+      place = await api('/brand/preview' + q, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ position: f.logo_position.value, size_pct: n('logo_size_pct'), margin_px: n('logo_margin_px'), zone, caption_top: capTop }) });
+    } catch (e) { if (e instanceof SignInNeeded) return; }
+    if (seq !== pvSeq) return;                                                    // a newer drawing is under way
+    const wPct = n('logo_size_pct') * place.shrink / 100, hPct = wPct * place.aspect * 1080 / 1920;
+    const gap = (place.side_px == null ? n('logo_margin_px') : place.side_px) / 1080;
+    const top = place.top_px != null ? place.top_px / 1920 : (place.position[0] === 't' ? (250 + n('logo_margin_px')) / 1920 : 1 - (380 + n('logo_margin_px')) / 1920 - hPct);
+    pvLogo.style.left = place.position[1] === 'l' ? pct(gap) : 'auto';
+    pvLogo.style.right = place.position[1] === 'r' ? pct(gap) : 'auto';
+    Object.assign(pvLogo.style, { top: pct(top), width: pct(wPct), opacity: String(Math.min(1, Math.max(0.1, n('logo_opacity')))) });
+    pvNote.textContent = place.top_px != null || place.shrink < 1
+      ? `The logo moves${place.shrink < 1 ? ' and gets smaller' : ''} here, so it does not cover the face. Clips do the same.`
+      : (zone ? 'The corner you chose is clear of the face here.' : 'No face known: the logo stays in your corner.');
+  }
+  const redraw = () => { clearTimeout(pvTimer); pvTimer = setTimeout(drawPreview, 150); };
+  for (const id of ['logo_position', 'logo_size_pct', 'logo_opacity', 'logo_margin_px', 'caption_top_px', 'caption_color', 'caption_highlight', 'caption_color_on', 'caption_highlight_on']) {
+    f[id].addEventListener('input', redraw); f[id].addEventListener('change', redraw);
+  }
+  pvSel.addEventListener('change', drawPreview); pvKeepOn.addEventListener('change', drawPreview);
+  drawPreview();
+  const preview = el('section', { class: 'card stack' }, el('h2', { text: 'Preview' }),
+    el('div', {}, el('label', { class: 'field', for: 'pv_sample', text: 'Sample picture' }), pvSel),
+    pvFrame,
+    el('label', { class: 'check', for: 'pv_keep' }, pvKeepOn, el('span', { text: 'Show the face area the logo keeps clear of' })),
+    pvNote);
+
   app.replaceChildren(el('div', { class: 'stack' },
     el('div', {}, el('h1', { text: 'Brand' }), el('p', { class: 'small muted' }, 'Added to clips when you tick them on a new job.', tip('Clips already made keep the copy they were made with.', 'the brand page'))),
-    switcher, err, note, el('div', { class: 'pair' }, logoBox, outroBox), musicBox, look));
+    switcher, err, note,
+    el('div', { class: 'layout' }, el('div', { class: 'stack' }, el('div', { class: 'pair' }, logoBox, outroBox), musicBox, look), el('div', { class: 'aside first-on-phone' }, preview))));
 }
 
 // ---- sharing ---------------------------------------------------------------------------------------

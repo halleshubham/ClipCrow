@@ -72,6 +72,7 @@ class Framing:
     split: list[tuple[float, float]] = field(default_factory=list)       # two (cx, cy) fractions for "split"
     people: int = 1
     fit_spans: list[tuple[float, float]] = field(default_factory=list)   # "track" only: stretches shown whole (a slide the crop would cut)
+    face_zone: Optional[tuple[float, float, float, float]] = None        # "track" only: where the face is in the vertical frame over the clip (x0, y0, x1, y1 as fractions)
 
 
 class FaceDetector(Protocol):
@@ -329,6 +330,45 @@ def smooth_path(subject: list[tuple[float, Optional[float]]], duration: float, c
     return out
 
 
+def _camera_at(keys: list[tuple[float, float]], t: float) -> float:
+    """Where the crop is at clip time ``t``: keyframes are commands, so the crop holds the last one until the next."""
+    cam = keys[0][1]
+    for kt, kc in keys:
+        if kt <= t + 1e-6:
+            cam = kc
+        else:
+            break
+    return cam
+
+
+def _union_zone(rects: list[tuple[float, float, float, float]]) -> Optional[tuple[float, float, float, float]]:
+    rects = [(max(0.0, a), max(0.0, b), min(1.0, c), min(1.0, d)) for a, b, c, d in rects if c > 0.0 and a < 1.0 and d > 0.0 and b < 1.0]
+    rects = [r for r in rects if r[2] - r[0] > 0.01 and r[3] - r[1] > 0.01]
+    if not rects:
+        return None
+    return (round(min(r[0] for r in rects), 4), round(min(r[1] for r in rects), 4), round(max(r[2] for r in rects), 4), round(max(r[3] for r in rects), 4))
+
+
+def face_zone_of_path(samples: list[Sample], subject: list[tuple[float, Optional[float]]], keys: list[tuple[float, float]],
+                      src_w: float, src_h: float, crop_frac: float) -> Optional[tuple[float, float, float, float]]:
+    """Where the followed face is in the OUTPUT frame over the whole clip: each sampled face nearest the subject, placed in the crop window as it was
+    then. What a logo must keep clear of."""
+    if not keys:
+        return None
+    rects = []
+    cx_by_t = {t: cx for t, cx in subject if cx is not None}
+    for sm in samples:
+        cx = cx_by_t.get(sm.t)
+        if cx is None or not sm.boxes:
+            continue
+        b = min(sm.boxes, key=lambda bb: abs(bb.cx / src_w - cx))
+        if abs(b.cx / src_w - cx) > TRACK_RADIUS:
+            continue
+        left = min(max(_camera_at(keys, sm.t) - crop_frac / 2, 0.0), 1.0 - crop_frac)
+        rects.append(((b.x / src_w - left) / crop_frac, b.y / src_h, ((b.x + b.w) / src_w - left) / crop_frac, (b.y + b.h) / src_h))
+    return _union_zone(rects)
+
+
 def shot_cuts(samples: list[Sample]) -> list[float]:
     """Clip times of the camera cuts: where the picture changes far more than it does from one sample to the next (a cut from the guest to the host,
     a different camera angle). A shot shorter than ``MIN_SHOT`` is folded into the one before it. Empty when the samples carry no thumbnails."""
@@ -435,7 +475,8 @@ def plan_framing(video: str, start: float, end: float, *, detector: FaceDetector
     if coverage < min_coverage:
         return Framing("fit_blur", coverage=coverage)    # no face to follow: show the whole frame
     path = smooth_shots(subject, cuts, end - start, crop_frac)
-    return Framing("track", [(round(t, 3), round(cx, 4)) for t, cx in path], coverage, fit_spans=spans)
+    return Framing("track", [(round(t, 3), round(cx, 4)) for t, cx in path], coverage, fit_spans=spans,
+                   face_zone=face_zone_of_path(samples, subject, path, src_w, src_h, crop_frac))
 
 
 def _plan_people(people: list[dict], samples: list[Sample], duration: float, crop_frac: float,
@@ -571,4 +612,12 @@ def plan_voices(sm, start: float, end: float, crop_frac: float, multi: str) -> O
         keys.insert(0, (0.0, keys[0][1]))
     heard = sum(b - a for a, b, g, whole in shown if not whole and g is not None)
     people = len({g for _, _, g, whole in shown if g is not None and not whole})
-    return Framing("track", keys, heard / max(dur, 0.001), people=max(1, people), fit_spans=wholes)
+    rects = []
+    for a, b, g, whole in shown:                                            # the seats that were shown, as they sit in the crop window of that moment
+        if whole or g is None:
+            continue
+        left = min(max(centre(g) - crop_frac / 2, 0.0), 1.0 - crop_frac)
+        for i in groups[g]:
+            st = sm.seats[i]
+            rects.append(((st.cx - st.w / 2 - left) / crop_frac, st.cy - st.h / 2, (st.cx + st.w / 2 - left) / crop_frac, st.cy + st.h / 2))
+    return Framing("track", keys, heard / max(dur, 0.001), people=max(1, people), fit_spans=wholes, face_zone=_union_zone(rects))

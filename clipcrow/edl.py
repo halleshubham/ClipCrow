@@ -15,7 +15,7 @@ import unicodedata
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class EDLError(ValueError):
@@ -204,6 +204,15 @@ class Layout(_Model):
     punch_ins: list[PunchIn] = Field(default_factory=list, max_length=12)
     # ``track`` only: stretches shown whole (see FitSpan), in time order, not overlapping.
     fit_spans: list[FitSpan] = Field(default_factory=list, max_length=40)
+    # Where the face is in the vertical frame over the whole clip, as (x0, y0, x1, y1) fractions of the canvas: what the logo keeps clear of. None: not known.
+    face_zone: Optional[tuple[float, float, float, float]] = None
+
+    @field_validator("face_zone")
+    @classmethod
+    def _zone_in_the_frame(cls, v):
+        if v is not None and not (all(0.0 <= x <= 1.0 for x in v) and v[0] < v[2] and v[1] < v[3]):
+            raise ValueError("face_zone must be (x0, y0, x1, y1) inside the frame, x0 < x1 and y0 < y1")
+        return v
 
     @model_validator(mode="after")
     def _framing(self):
@@ -317,6 +326,9 @@ class Logo(_Model):
     size_pct: int = Field(default=18, ge=5, le=40)      # width as a percentage of the frame width
     opacity: float = Field(default=0.9, ge=0.1, le=1.0)
     margin_px: int = Field(default=60, ge=0, le=300)
+    top_px: Optional[int] = Field(default=None, ge=0, le=1900)   # set by the placement that keeps the logo off the face: the logo's top edge, down the left or right side (None: the corner's own height)
+    shrink: float = Field(default=1.0, ge=0.3, le=1.0)           # ... and how much smaller than ``size_pct`` it had to be to fit
+    side_px: Optional[int] = Field(default=None, ge=0, le=300)   # ... and a narrower side margin when that was needed (None: ``margin_px``)
 
 
 class Outro(_Model):

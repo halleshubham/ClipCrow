@@ -530,6 +530,12 @@ class JobRunner:
                     for c in edl.clips:
                         if c.id == clip_id:
                             upd = {"layout": planned.layout}
+                            if c.logo is not None:                                      # the face moved, so the logo's place is worked out again
+                                from ..branding import fit_logo, logo_aspect
+                                brand_logo = self.store.dir(job_id) / "out" / "brand"
+                                found = next(iter(sorted(brand_logo.glob("logo.*"))), None) if brand_logo.is_dir() else None
+                                upd["logo"] = fit_logo(c.logo, planned.layout.face_zone, c.captions.top_px if c.captions.enabled else None,
+                                                       logo_aspect(found) if found else 1.0, edl.render.width, edl.render.height)
                             if planned.layout.framing == "split":
                                 upd["captions"] = c.captions.model_copy(update={"top_px": planned.captions.top_px})
                             c = c.model_copy(update=upd)

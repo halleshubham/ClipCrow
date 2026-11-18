@@ -30,7 +30,7 @@ from typing import Literal, Optional, Union
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ..assets.urlguard import UnsafeURL, assert_public_url
 from ..branding import BrandError
@@ -70,6 +70,21 @@ UPSTREAM = 424
 
 class SpeakerChoice(BaseModel):
     voices: dict[str, Optional[int]] = Field(max_length=30)     # voice number -> person (1 = first from the left), null = off screen
+
+
+class LogoPreview(BaseModel):
+    position: Literal["tl", "tr", "bl", "br"] = "tr"
+    size_pct: int = Field(default=18, ge=5, le=40)
+    margin_px: int = Field(default=60, ge=0, le=300)
+    zone: Optional[tuple[float, float, float, float]] = None
+    caption_top: Optional[int] = Field(default=None, ge=0, le=1900)
+
+    @field_validator("zone")
+    @classmethod
+    def _inside(cls, v):
+        if v is not None and not (all(0.0 <= x <= 1.0 for x in v) and v[0] < v[2] and v[1] < v[3]):
+            raise ValueError("zone must be (x0, y0, x1, y1) inside the frame")
+        return v
 
 
 class RetryBody(BaseModel):
@@ -1311,6 +1326,17 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     @app.get("/api/brand", dependencies=[Depends(authed)])
     def brand_get(request: Request) -> dict:
         return brands.describe(brand_owner(request), brand_q(request))
+
+    @app.post("/api/brand/preview", dependencies=[Depends(authed)])
+    def brand_preview(request: Request, body: LogoPreview) -> dict:
+        """Where the logo would sit for a face at ``zone`` with these settings: the same placement a real clip gets (``branding.fit_logo``), for the preview."""
+        from ..branding import fit_logo, logo_aspect
+        from ..edl import Logo
+        owner, bid = brand_owner(request), brand_q(request)
+        path = brands.logo_path(owner, bid)
+        lg = fit_logo(Logo(asset="brand-logo", position=body.position, size_pct=body.size_pct, opacity=0.9, margin_px=body.margin_px), body.zone, body.caption_top,
+                      logo_aspect(path) if path else 1.0)
+        return {"position": lg.position, "top_px": lg.top_px, "shrink": lg.shrink, "side_px": lg.side_px, "aspect": logo_aspect(path) if path else 1.0}
 
     @app.put("/api/brand", dependencies=[Depends(authed)])
     def brand_put(request: Request, body: dict = Body(...)) -> dict:

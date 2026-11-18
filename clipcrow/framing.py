@@ -21,7 +21,8 @@ def apply_framing(edl: EDL, video: str, *, detector: FaceDetector | None = None,
         layout = c.layout.model_copy(update={
             "framing": f.framing, "reframe": [Keyframe(t=t, cx=cx) for t, cx in f.keyframes],
             "split": [SplitPoint(cx=cx, cy=cy) for cx, cy in f.split],
-            "fit_spans": [FitSpan(t0=a, t1=b) for a, b in f.fit_spans]})
+            "fit_spans": [FitSpan(t0=a, t1=b) for a, b in f.fit_spans],
+            "face_zone": f.face_zone if f.framing == "track" else None})
         if f.fit_spans and layout.punch_ins:       # a push-in must not run over a slide that is shown whole
             layout = layout.model_copy(update={"punch_ins": [
                 p for p in layout.punch_ins if not any(p.t < b and a < p.t + p.duration for a, b in f.fit_spans)]})
