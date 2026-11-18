@@ -310,8 +310,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .pv-keep { position: absolute; border: 1.5px dashed var(--accent-line); border-radius: 6px; pointer-events: none; }
 .pv-cap { position: absolute; left: 4%; right: 4%; text-align: center; font: 700 6cqw/1.25 var(--deva); text-shadow: 0 1px 3px var(--video-bg); }
 .pv-banner { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 1.2cqw; }
-.pv-b1 { background: var(--glass); color: var(--ink); border-radius: 1.6cqw; padding: 1cqw 3.4cqw; font: 700 4.4cqw/1.25 var(--deva); white-space: nowrap; max-width: 96%; overflow: hidden; text-overflow: ellipsis; }
-.pv-b2 { display: flex; align-items: center; gap: 1.8cqw; padding: 1cqw 3.6cqw 1cqw 2.4cqw; border-radius: 999px; background: var(--logo-tile); color: var(--ground); max-width: 96%; }
+.pv-b1 { background: var(--video-bg); color: var(--logo-tile); border-radius: 1.6cqw; padding: 1cqw 3.4cqw; font: 700 4.4cqw/1.25 var(--deva); white-space: nowrap; max-width: 96%; overflow: hidden; text-overflow: ellipsis; }
+.pv-b2 { display: flex; align-items: center; gap: 1.8cqw; padding: 1cqw 3.6cqw 1cqw 2.4cqw; border-radius: 999px; background: var(--logo-tile); color: var(--video-bg); max-width: 96%; }
 .pv-b2 .i { width: 6cqw; height: 6cqw; flex: none; }
 .pv-handle { font: 700 5cqw/1.2 var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pv-logo { position: absolute; display: block; height: auto; }
