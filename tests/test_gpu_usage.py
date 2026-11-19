@@ -166,3 +166,10 @@ def test_the_browser_gets_the_estimate_numbers_with_the_markup_in_the_config(tmp
     app = create_app(tmp_path / "data", FakePipeline(), worker_token=TOKEN)
     n = TestClient(app).get("/api/config").json()["gpu_worker"]["estimate"]
     assert n["markup"] == 1.5 and n["home_rate"] == 20.0 and n["pod_rate"] == 45.0 and n["listen"] > 0 and n["render"] > 0 and n["wake"] > 0
+
+
+def test_the_config_carries_the_language_model_numbers_for_the_estimate(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLIPCROW_USD_INR", "90")
+    app = create_app(tmp_path / "data", FakePipeline(), worker_token=TOKEN)
+    l = TestClient(app).get("/api/config").json()["gpu_worker"]["estimate"]["llm"]
+    assert l["usd_inr"] == 90.0 and l["usd_in"] > 0 and l["usd_out"] > l["usd_in"] and l["in_per_minute"] > 0 and l["out_per_reel"] > 0

@@ -76,5 +76,15 @@ def estimate_numbers(rates: dict, pod_hourly=None) -> dict:
         markup = MARKUP
     home = rates.get("home", rates.get("*", 0.0))
     pod = pod_hourly if pod_hourly is not None else rates.get("rented", rates.get("*", 0.0))
+    from ..costs import PRICES
+    from ..planner.llm import DEFAULT_MODEL
+    model = os.environ.get("CLIPCROW_MODEL") or DEFAULT_MODEL
+    pin, pout = PRICES.get(model, PRICES[DEFAULT_MODEL])
+    try:
+        usd_inr = max(1.0, float(os.environ.get("CLIPCROW_USD_INR") or 88.0))
+    except ValueError:
+        usd_inr = 88.0
+    # planning numbers for the language-model part (from real jobs: one plan call that reads the transcript, then about 2.3k tokens in and 0.4k out per reel)
+    llm = {"usd_in": pin, "usd_out": pout, "usd_inr": usd_inr, "in_fixed": 2500, "in_per_minute": 400, "in_per_reel": 2300, "out_per_reel": 450}
     return {"currency": "INR", "markup": markup, "home_rate": home, "pod_rate": pod, "listen": LISTEN_PER_SECOND, "who": WHO_PER_SECOND,
-            "render": RENDER_PER_REEL, "wake": WAKE_SECONDS}
+            "render": RENDER_PER_REEL, "wake": WAKE_SECONDS, "llm": llm}

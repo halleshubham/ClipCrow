@@ -486,32 +486,41 @@ async function newJobView() {
     fileName.textContent = f ? `${(f.size / 1048576).toFixed(0)} MB` : `MP4, MOV, MKV or WebM, up to ${c.max_upload_mb} MB`;
   };
   // a planning estimate of the GPU cost for this video, from its length (read in the browser) and how many reels were asked for
-  const estimateGpu = async () => {
+  let videoSeconds = 0;
+  const estimateCost = () => {
     const out = $('gpu-est'), n = c.gpu_worker && c.gpu_worker.estimate;
-    if (!out || !file || !n) return;
-    const seconds = await new Promise((resolve) => {
-      const v = document.createElement('video'), url = URL.createObjectURL(file);
-      v.preload = 'metadata';
-      v.onloadedmetadata = () => { URL.revokeObjectURL(url); resolve(v.duration || 0); };
-      v.onerror = () => { URL.revokeObjectURL(url); resolve(0); };
-      v.src = url;
-    });
-    if (!seconds) { out.textContent = 'The video length could not be read, so no estimate.'; return; }
-    const reels = Math.max(1, Number($('clips').value) || 3);
-    const base = seconds * n.listen + ($('multi').value !== 'off' ? seconds * n.who : 0) + reels * n.render;
-    const line = (name, rate, extra, note) => {
-      const secs = base + extra, cost = (secs / 3600) * rate * n.markup;
-      return `${name}: ${rate > 0 ? `about ₹${Math.max(1, Math.round(cost))}` : 'no cost counted'}, about ${Math.max(1, Math.round(secs / 60))} min of GPU time${note}`;
-    };
-    out.textContent = `${line('Home GPU', n.home_rate, 0, '')}. ${line('On-demand GPU', n.pod_rate, n.wake, ' (including waking it)')}. A rough guide worked out here, with a 50% margin, not a quote.`;
+    if (!out || !n) return;
+    if (!file || !videoSeconds) { out.textContent = file ? 'The video length could not be read, so no estimate.' : 'Choose a video to see a rough cost.'; return; }
+    const reels = Math.max(1, Number($('clips').value) || 3), minutes = videoSeconds / 60;
+    const l = n.llm;
+    const ai = ((l.in_fixed + l.in_per_minute * minutes + l.in_per_reel * reels) * l.usd_in + l.out_per_reel * reels * l.usd_out) / 1e6 * l.usd_inr * n.markup;
+    const gpuBase = videoSeconds * n.listen + ($('multi').value !== 'off' ? videoSeconds * n.who : 0) + reels * n.render;
+    const gpu = (rate, extra) => ((gpuBase + extra) / 3600) * rate * n.markup;
+    const rupees = (x) => `₹${Math.max(1, Math.round(x))}`;
+    const choice = $('gpu') ? $('gpu').value : 'auto';
+    const home = gpu(n.home_rate, 0), pod = gpu(n.pod_rate, n.wake);
+    const use = choice === 'home' ? home : choice === 'pod' ? pod : (c.gpu_worker.online ? home : pod);
+    const both = $('gpu') ? ` Home GPU: ${rupees(ai + home)} · On-demand GPU: ${rupees(ai + pod)}.` : '';
+    out.textContent = `Rough cost: about ${rupees(ai + use)} (AI planning ${rupees(ai)} + GPU ${use > 0 ? rupees(use) : 'none'}), for ${Math.round(minutes)} min of video and ${reels} reel${reels > 1 ? 's' : ''}, with a 50% margin.${both} A guide, not a quote.`;
+  };
+  const readLength = () => {
+    videoSeconds = 0;
+    if (!file) return estimateCost();
+    const v = document.createElement('video'), url = URL.createObjectURL(file);
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => { URL.revokeObjectURL(url); videoSeconds = v.duration || 0; estimateCost(); };
+    v.onerror = () => { URL.revokeObjectURL(url); estimateCost(); };
+    v.src = url;
   };
   fileInput.addEventListener('change', () => setFile(fileInput.files[0] || null));
-  fileInput.addEventListener('change', () => estimateGpu());
+  fileInput.addEventListener('change', readLength);
+  for (const id of ['clips', 'multi', 'gpu']) if ($(id)) $(id).addEventListener('change', estimateCost);
+  if ($('clips')) $('clips').addEventListener('input', estimateCost);
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
   drop.addEventListener('drop', (e) => {
     e.preventDefault(); drop.classList.remove('over');
-    if (e.dataTransfer.files[0]) { setFile(e.dataTransfer.files[0]); estimateGpu(); }
+    if (e.dataTransfer.files[0]) { setFile(e.dataTransfer.files[0]); readLength(); }
   });
 
   const pics = pictureField();
@@ -652,9 +661,7 @@ async function newJobView() {
       el('label', { class: brand.music ? 'check' : 'check muted', for: 'music' }, el('input', { type: 'checkbox', id: 'music', disabled: !brand.music, checked: brand.music && !!brand.settings.default_music }),
         el('span', {}, el('strong', { text: 'Background music (ducks under the speech)' }), el('br'),
           el('span', { class: 'muted', id: 'music-hint', 'data-keep': '1' }, brand.music ? `${brand.music_name} (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music chosen. ', el('a', { href: '#/brand', text: 'Pick a track or add your own on the Brand page' }), '.']))),
-      c.gpu_worker && c.gpu_worker.enabled && el('div', {},
-        select('gpu', 'Which GPU does the heavy work', [['auto', 'Automatic: whichever is available (the home GPU first)'], ['home', 'Home GPU only'], ['pod', 'On-demand GPU only (wakes when needed, billed by time)']]),
-        el('p', { class: 'small muted', id: 'gpu-est', 'aria-live': 'polite', text: 'Choose a video to see a cost estimate.' })),
+      c.gpu_worker && c.gpu_worker.enabled && select('gpu', 'Which GPU does the heavy work', [['auto', 'Automatic: whichever is available (the home GPU first)'], ['home', 'Home GPU only'], ['pod', 'On-demand GPU only (wakes when needed, billed by time)']]),
       el('label', { class: 'check', for: 'clean' }, el('input', { type: 'checkbox', id: 'clean' }),
         el('span', {}, el('strong', { text: 'Raw recording: cut fumbles and dead air' }), el('br'),
           el('span', { class: 'muted', text: 'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.' }))),
@@ -668,6 +675,7 @@ async function newJobView() {
           el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back. Suits a person talking to camera.' })))))),
     err, progress,
     el('div', { class: 'actionbar' }, el('div', { class: 'row' },
+      c.gpu_worker && c.gpu_worker.estimate && el('p', { class: 'small muted', id: 'gpu-est', 'aria-live': 'polite', style: { flexBasis: '100%', margin: 0 }, text: 'Choose a video to see a rough cost.' }),
       el('label', { class: 'row small muted', for: 'rights', style: { alignItems: 'flex-start', flexWrap: 'nowrap', gap: '10px' } }, rights,
         el('span', { text: 'I own this video or have the rights to process it.' })),
       el('div', { class: 'row' }, status, cancelBtn, submit))));

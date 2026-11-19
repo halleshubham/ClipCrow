@@ -199,7 +199,8 @@ The rules that came out of these are in `development-rules.md`; this file is the
 - **GPU cost, capacity and the on-demand pod**: every worker task is timed on the server (`gpu_usage.json`), costed in INR from `CLIPCROW_GPU_RATES` (a `"*"` price also covers the home GPU) and listed in the job's AI usage and disclosure;
   overlapping tasks on one machine share its hourly price. The stronger idle worker (`power`) is offered a task first (a weaker one yields for 4 s); `clipcrow worker --parallel N` adds render-only slots; `--pool home|rented` marks the machine.
   A job picks `gpu`: auto, home or pod (New job page, with a per-GPU cost estimate); `gpu_pod.PodController` wakes a paused pod for a waiting job, boots the worker through Jupyter, pauses after idle, keeps a daily INR cap, never terminates.
-  The estimate numbers are assumptions, to be replaced with measured per-task times from `gpu_usage.json`.
+  The New job page shows one rough cost (AI planning + the chosen GPU, +50% margin, `CLIPCROW_GPU_MARKUP`, USD→INR `CLIPCROW_USD_INR`) worked out in the browser from the video length and reel count.
+  The numbers are assumptions, to be replaced with measured per-task times from `gpu_usage.json` and real token counts.
 
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
