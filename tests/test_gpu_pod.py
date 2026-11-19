@@ -298,3 +298,11 @@ def test_a_job_keeps_waiting_for_the_pods_worker_for_a_while_after_the_boot_comm
     with hub._cond:
         hub._reroute(task, now[0], seen.append)
     assert task.pool == "" and seen
+
+
+def test_a_pod_found_running_after_a_server_restart_gets_time_for_its_worker_to_reconnect(tmp_path):
+    now, hub, ctl, booted, a = setup(tmp_path, status="running")
+    ctl.tick()
+    assert ctl.state == "awake" and ctl.can_wake("transcribe")           # its worker long-polls again within seconds of the server coming back
+    now[0] += ctl.WORKER_GRACE + 1
+    assert not ctl.can_wake("transcribe")

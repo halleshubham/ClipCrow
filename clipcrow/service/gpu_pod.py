@@ -202,6 +202,7 @@ class PodController:
                 running = next(((pid, hr) for pid, hr in self.pods if states.get(pid) == "running"), None)
                 if running is not None:                                # a pod that is already up (adopted, whichever it is)
                     (self.pod_id, self.hourly), self.state, self._awake_since = running, "awake", self._clock()
+                    self._booted_at = self._clock()                    # its worker is (re)connecting to this server: give it the same time a fresh boot gets
                 elif all(s == "missing" for s in states.values()):
                     self.error = "the pod is not on this account"
                     return
