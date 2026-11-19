@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "EDL-driven short-video renderer: EDL JSON in, HyperFrames project and MP4 out."
 license = {file = "LICENSE"}
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.6"]
+dependencies = ["pydantic>=2.6", "tzdata>=2024.1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "moto[server]>=5"]      # moto: an S3-compatible server for the storage tests

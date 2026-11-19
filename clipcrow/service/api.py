@@ -23,7 +23,7 @@ import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Optional, Union
 
@@ -44,6 +44,7 @@ from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Catalog, load_catalog
 from .publish import LIMITS, PublishError, SocioBird, caption_html, settings_for, validate_when
+from .schedule import Chan, MAX_CHANNELS as BULK_CHANNELS, MAX_CLIPS as BULK_CLIPS, MAX_PER_DAY, SchedulePrefs, ScheduleError, clean_times, plan as plan_schedule, zone as schedule_zone
 from .retention import Sweeper, env_days, expires_at
 from .storage import Mirror, S3Storage, StorageError, signature
 from .pictures import MAX_BYTES as MAX_PICTURE_BYTES, PICTURE_ID, PictureError, PictureStore, parse_ids
@@ -172,6 +173,25 @@ class CompleteUpload(BaseModel):
 class StylePatch(BaseModel):
     name: Optional[str] = Field(default=None, max_length=60)
     settings: Optional[StyleSettings] = None
+
+
+class PublishBulk(BaseModel):
+    clips: list[str] = Field(min_length=1, max_length=BULK_CLIPS)
+    channels: list[str] = Field(min_length=1, max_length=BULK_CHANNELS)
+    per_day: int = Field(default=2, ge=1, le=MAX_PER_DAY)
+    start: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")          # the first day, in the person's time zone (default: today)
+    timezone: Optional[str] = Field(default=None, max_length=64)
+    times: Optional[dict[str, list[str]]] = None                                       # best times to use now (platform -> HH:MM list), not saved
+    suffix: str = Field(default="", max_length=300)                                    # added under every caption: hashtags, a link
+    privacy: Literal["public", "unlisted", "private"] = "public"
+    made_for_kids: bool = False
+    ai_confirmed: bool = False
+    dry_run: bool = False
+
+
+class SchedulePrefsBody(BaseModel):
+    timezone: str = Field(max_length=64)
+    times: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class PublishBody(BaseModel):
@@ -438,6 +458,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         brands.delete_all(user.id)
         pictures.delete_all(user.id)
         styles.delete_all(user.id)
+        schedule_prefs.delete_all(user.id)
         accounts.delete(user.id)
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(SESSION_COOKIE)
@@ -465,10 +486,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         job_or_404(job_id, request)
         return store.posts(job_id, clip_id)
 
-    @app.post("/api/jobs/{job_id}/clips/{clip_id}/publish", dependencies=[Depends(authed)], status_code=202)
-    def clip_publish(job_id: str, clip_id: str, body: PublishBody, request: Request) -> list[dict]:
-        sb = need_publishing()
-        job = job_or_404(job_id, request)
+    def postable_clip(job_id: str, job: Job, clip_id: str):
+        """``(info, path, ai_media)`` of a finished clip, fetching its file back from storage when it was evicted from the disk."""
         info = next((c for c in job.clips if c.id == clip_id), None)
         if info is None or job.status != "done":
             raise HTTPException(404, "No such clip.")
@@ -488,6 +507,130 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             ai_media = provenance(edl, next(c for c in edl.clips if c.id == clip_id))["disclosure_recommended"]
         except (OSError, StopIteration, ValueError):
             raise HTTPException(404, "The plan for this clip is not on disk.")
+        return info, path, ai_media
+
+    schedule_prefs = SchedulePrefs(data_dir)
+
+    @app.get("/api/publish/schedule/prefs", dependencies=[Depends(authed)])
+    def schedule_prefs_get(request: Request) -> dict:
+        need_publishing()
+        return schedule_prefs.get(brand_owner(request))
+
+    @app.put("/api/publish/schedule/prefs", dependencies=[Depends(authed)])
+    def schedule_prefs_put(body: SchedulePrefsBody, request: Request) -> dict:
+        need_publishing()
+        try:
+            return schedule_prefs.put(brand_owner(request), body.timezone, body.times)
+        except ScheduleError as e:
+            raise HTTPException(422, str(e))
+
+    @app.get("/api/jobs/{job_id}/posts", dependencies=[Depends(authed)])
+    def job_posts(job_id: str, request: Request) -> list[dict]:
+        job_or_404(job_id, request)
+        return store.posts(job_id)
+
+    @app.post("/api/jobs/{job_id}/publish/bulk", dependencies=[Depends(authed)], status_code=202)
+    def publish_bulk(job_id: str, body: PublishBulk, request: Request) -> dict:
+        """Schedule the chosen reels on the chosen channels, ``per_day`` reels a day on each channel, at its platform's best times. With ``dry_run`` only the
+        plan is returned. Everything is checked before anything is queued."""
+        sb = need_publishing()
+        job = job_or_404(job_id, request)
+        if len(set(body.clips)) != len(body.clips) or len(set(body.channels)) != len(body.channels):
+            raise HTTPException(422, "Each reel and each channel can be chosen once.")
+        if not all(re.fullmatch(r"c\d{1,3}", c) for c in body.clips):
+            raise HTTPException(422, "That is not a reel of this job.")
+        prefs = schedule_prefs.get(brand_owner(request))
+        try:
+            tz = schedule_zone(body.timezone or prefs["timezone"])
+            times = dict(prefs["times"])
+            for k, v in (body.times or {}).items():
+                if k not in times:
+                    raise ScheduleError("That platform is not supported.")
+                times[k] = clean_times(v)
+            now = datetime.now(timezone.utc)
+            start = date.fromisoformat(body.start) if body.start else now.astimezone(tz).date()
+            known = {c.id: c for c in sb.channels()}
+        except PublishError as e:
+            raise HTTPException(UPSTREAM, str(e))
+        except (ScheduleError, ValueError) as e:
+            raise HTTPException(422, str(e) if isinstance(e, ScheduleError) else "That date is not valid.")
+        if start < now.astimezone(tz).date() - timedelta(days=1) or start > now.astimezone(tz).date() + timedelta(days=365):
+            raise HTTPException(422, "Pick a first day from today to a year ahead.")
+        chans = []
+        for cid in body.channels:
+            if cid not in known:
+                raise HTTPException(422, "One of those channels is not available.")
+            chans.append(Chan(cid, known[cid].name, known[cid].platform))
+        infos, ai_clips = {}, []
+        for cid in body.clips:
+            info, path, ai_media = postable_clip(job_id, job, cid)
+            infos[cid] = (info, path)
+            if ai_media:
+                ai_clips.append(cid)
+        if ai_clips and not (body.ai_confirmed or body.dry_run):
+            raise HTTPException(422, f"These reels include AI-generated pictures ({', '.join(ai_clips)}). Confirm that you will label them as AI content where the platform asks.")
+        try:
+            rows_plan = plan_schedule(body.clips, chans, body.per_day, start, tz, times, now)
+        except ScheduleError as e:
+            raise HTTPException(422, str(e))
+        shown = [{**r, "title": infos[r["clip"]][0].title} for r in rows_plan]
+        if body.dry_run:
+            return {"dry_run": True, "timezone": str(tz), "posts": shown, "count": len(shown),
+                    "days": len({r["local"][:10] for r in rows_plan}), "ai_confirm_needed": ai_clips}
+        suffix = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", " ", body.suffix or "").strip()
+        work_items = []
+        for r in rows_plan:
+            info = infos[r["clip"]][0]
+            ch = known[r["channel"]]
+            caption = "\n".join(x for x in (info.title, getattr(info, "hook", "")) if x)
+            if suffix:
+                caption += "\n\n" + suffix
+            try:
+                st = settings_for(ch.platform, title=info.title, privacy=body.privacy, made_for_kids=body.made_for_kids, ai_generated=r["clip"] in ai_clips)
+            except PublishError as e:
+                raise HTTPException(422, str(e))
+            work_items.append((ch, r, st, caption_html(caption, ch.platform)))
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        rows = [{"id": uuid.uuid4().hex[:12], "clip": r["clip"], "channel": ch.id, "name": ch.name, "platform": ch.platform,
+                 "status": "queued", "detail": "", "when": r["when"], "at": stamp} for ch, r, _, _ in work_items]
+        store.add_posts(job_id, rows)
+
+        def bulk_work() -> None:
+            log = logging.getLogger("clipcrow.service")
+            media: dict[str, dict] = {}
+            failed: dict[str, str] = {}
+            for (ch, r, st, content), row in zip(work_items, rows):
+                cid = r["clip"]
+                if cid in failed:
+                    store.update_post(job_id, row["id"], "failed", failed[cid])
+                    continue
+                if cid not in media:                                           # one upload per reel, however many channels
+                    try:
+                        media[cid] = sb.upload(infos[cid][1])
+                    except PublishError as e:
+                        failed[cid] = str(e)
+                    except Exception:
+                        log.exception("upload to SocioBird failed")
+                        failed[cid] = "The video could not be uploaded."
+                    if cid in failed:
+                        store.update_post(job_id, row["id"], "failed", failed[cid])
+                        continue
+                try:
+                    sb.post(ch, content, media[cid], st, when=datetime.fromisoformat(r["when"]))
+                    store.update_post(job_id, row["id"], "scheduled")
+                except PublishError as e:
+                    store.update_post(job_id, row["id"], "failed", str(e))
+                except Exception:
+                    log.exception("post to SocioBird failed")
+                    store.update_post(job_id, row["id"], "failed", "The post could not be created.")
+        publish_pool.submit(bulk_work)
+        return {"dry_run": False, "timezone": str(tz), "posts": [{**r, "title": infos[r["clip"]][0].title} for r in rows_plan], "count": len(rows), "rows": rows}
+
+    @app.post("/api/jobs/{job_id}/clips/{clip_id}/publish", dependencies=[Depends(authed)], status_code=202)
+    def clip_publish(job_id: str, clip_id: str, body: PublishBody, request: Request) -> list[dict]:
+        sb = need_publishing()
+        job = job_or_404(job_id, request)
+        info, path, ai_media = postable_clip(job_id, job, clip_id)
         if ai_media and not body.ai_confirmed:
             raise HTTPException(422, "This clip includes AI-generated pictures. Confirm that you will label it as AI content where the platform asks.")
         if not body.channels or len(body.channels) > 6 or len(set(body.channels)) != len(body.channels):

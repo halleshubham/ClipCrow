@@ -186,6 +186,12 @@ The rules that came out of these are in `development-rules.md`; this file is the
 
 - **Banner scene and HyperFrames' lint** (job cd1ab619104a failed its check): a CSS `transform` on an element GSAP also moves (`y`) is flagged. The banner now starts with `opacity: 0` in CSS only and `tl.fromTo(... y: 24 -> 0)`; a test pins it. Checked with the real `npx hyperframes@0.9.29 check` on a compiled banner scene: no banner finding left.
 
+- **Bulk scheduling** (`service/schedule.py`, `POST /api/jobs/{id}/publish/bulk`, page `#/jobs/<id>/schedule`): pick reels on the job page, channels on the schedule page, "posts per day on each channel" (1-10) and a first day; each reel goes to each channel,
+  `per_day` a day, at that platform's best local times (defaults from general advice for short video in India, editable per platform, saved per account with the time zone; working-days-only for LinkedIn; a slot within 10 minutes of now is skipped; two
+  channels of one platform are 15 minutes apart). More posts a day than best times split the biggest gaps of the day. A dry run returns the plan; the real call checks everything first, uploads each reel once and posts each pair with its own time; per-post
+  status (`scheduled`/`failed`) is kept in the job's `posts.json`. At most 30 reels x 6 channels, 60 days. The best times are NOT measured from anyone's audience. `tzdata` is a dependency (the slim image has no zone files).
+- `docs/roadmap.md`: the planning pass for the next months (first ten items, quick wins, what not to build, questions for the product owner).
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

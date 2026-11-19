@@ -733,7 +733,27 @@ async function jobView(jobId) {
   const timeline = el('div', {});
   const clipsGrid = el('div', { class: 'clips' });
   const zipLink = el('a', { class: 'btn dark', href: `/api/jobs/${jobId}/clips.zip`, hidden: true });
-  const clipsSection = el('section', { hidden: true }, el('div', { class: 'row', style: { justifyContent: 'space-between' } }, el('h2', { text: 'Clips' }), zipLink), timeline, el('div', { style: { height: '20px' } }), clipsGrid);
+  const picked = new Set();                                                       // reels ticked for scheduling
+  const pickAll = el('button', { class: 'btn', type: 'button', hidden: true, onclick: () => {
+    const ready = job.clips.filter((c) => c.ready);
+    const every = ready.every((c) => picked.has(c.id));
+    for (const c of ready) { if (every) picked.delete(c.id); else picked.add(c.id); }
+    for (const [id, e] of cards) { const b = e.card.querySelector('input.pick'); if (b) b.checked = picked.has(id); }
+    paintPick();
+  } });
+  const pickBar = el('div', { class: 'actionbar', hidden: true }, el('div', { class: 'row' }, el('span', { role: 'status', 'aria-live': 'polite' }),
+    el('a', { class: 'btn primary', href: '#' })));
+  function paintPick() {
+    const n = picked.size;
+    pickBar.hidden = n === 0;
+    pickBar.querySelector('span').textContent = `${n} reel${n === 1 ? '' : 's'} chosen`;
+    const a = pickBar.querySelector('a');
+    a.textContent = 'Schedule on channels';
+    a.href = `#/jobs/${jobId}/schedule?clips=${[...picked].join(',')}`;
+    const ready = job.clips.filter((c) => c.ready);
+    pickAll.textContent = ready.length && ready.every((c) => picked.has(c.id)) ? 'Clear choice' : 'Choose all reels';
+  }
+  const clipsSection = el('section', { hidden: true }, el('div', { class: 'row', style: { justifyContent: 'space-between' } }, el('h2', { text: 'Clips' }), el('div', { class: 'row' }, pickAll, zipLink)), timeline, el('div', { style: { height: '20px' } }), clipsGrid, pickBar);
   const usageBody = el('div', { class: 'small muted', text: 'The usage record appears once the plan is ready.' });
   const usage = el('details', { class: 'card usage', hidden: true }, el('summary', { text: 'AI usage and disclosure' }), el('div', { style: { marginTop: '12px' } }, usageBody));
   const cutBody = el('div', { class: 'small muted', text: 'Loading…' });
@@ -938,7 +958,12 @@ async function jobView(jobId) {
     const actions = el('div', { class: 'row' });
     if (c.ready) actions.append(el('a', { class: 'btn dark', href: `${url}/download`, text: 'Download MP4' }));
     if (c.ready && c.has_cover) actions.append(el('a', { class: 'btn', href: `${url}/cover?download=1`, text: 'Cover image' }));
-    if (c.ready && job.status === 'done' && state.config.publishing) actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}/share`, text: 'Share' }));
+    if (c.ready && job.status === 'done' && state.config.publishing) {
+      actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}/share`, text: 'Share' }));
+      const box = el('input', { class: 'pick', type: 'checkbox', id: `pick-${c.id}`, checked: picked.has(c.id) });
+      box.addEventListener('change', () => { if (box.checked) picked.add(c.id); else picked.delete(c.id); paintPick(); });
+      actions.append(el('label', { class: 'check', for: `pick-${c.id}` }, box, el('span', { text: 'Choose for scheduling' })));
+    }
     if (c.ready && job.status === 'done' && job.source_removed) actions.append(el('span', { class: 'small muted', text: 'Original video removed: no more edits' }));
     else if (c.ready && job.status === 'done') actions.append(el('a', { class: 'btn', href: `#/jobs/${jobId}/clips/${c.id}`, text: 'Edit' }));
     return el('article', { class: 'card clipcard', 'data-clip': c.id }, player,
@@ -967,6 +992,9 @@ async function jobView(jobId) {
     clipsSection.hidden = job.clips.length === 0;
     const ready = job.clips.filter((c) => c.ready).length;                       // once the job has finished: every reel in one file
     zipLink.hidden = job.status !== 'done' || ready < 1;
+    pickAll.hidden = !(job.status === 'done' && state.config.publishing && ready > 1);
+    for (const id of [...picked]) { const c = job.clips.find((x) => x.id === id); if (!c || !c.ready) picked.delete(id); }
+    paintPick();
     zipLink.textContent = ready === 1 ? 'Download the reel' : `Download all ${ready} reels (.zip)`;
     if (ready === 1) zipLink.href = `/api/jobs/${jobId}/clips/${job.clips.find((c) => c.ready).id}/download`;
     else zipLink.href = `/api/jobs/${jobId}/clips.zip`;
@@ -1633,6 +1661,150 @@ async function shareView(jobId, clipId) {
   return { cleanup() { dead = true; clearTimeout(timer); } };
 }
 
+// ---- bulk scheduling: chosen reels, chosen channels, N posts a day at each platform's best times --------------------------------------
+
+async function scheduleView(jobId, clipsParam) {
+  const [job, channels, prefs, usage] = await Promise.all([api(`/jobs/${jobId}`), api('/publish/channels'), api('/publish/schedule/prefs'),
+    api(`/jobs/${jobId}/usage`).catch(() => ({ disclosure_recommended: false }))]);
+  const ready = job.clips.filter((c) => c.ready);
+  let dead = false, timer = null;
+  if (job.status !== 'done' || !ready.length) { app.replaceChildren(el('div', { class: 'card empty', text: 'This job has no finished reels to schedule.' })); return { cleanup() {} }; }
+  const want = new Set((clipsParam || '').split(',').filter(Boolean));
+  const reelBoxes = ready.map((c) => ({ c, box: el('input', { type: 'checkbox', id: `sr-${c.id}`, checked: want.size ? want.has(c.id) : true }) }));
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const fail = (e) => { if (e instanceof SignInNeeded) { route(); return; } err.textContent = e.message; err.hidden = false; };
+  const boxes = channels.map((ch) => ({ ch, box: el('input', { type: 'checkbox', id: `sch-${ch.id}` }) }));
+  const chosen = () => boxes.filter((b) => b.box.checked);
+  const picked = () => reelBoxes.filter((r) => r.box.checked).map((r) => r.c);
+  const counter = el('span', { class: 'chip plain' });
+  const perDay = el('input', { id: 'sc-perday', type: 'number', min: '1', max: '10', step: '1', value: '2', inputmode: 'numeric' });
+  const browserTz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (_) { return ''; } })();
+  const tz = el('input', { id: 'sc-tz', list: 'sc-tzs', value: prefs.saved ? prefs.timezone : (browserTz || prefs.timezone), autocomplete: 'off', spellcheck: 'false' });
+  const tzList = el('datalist', { id: 'sc-tzs' }, ['Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Europe/London', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney', browserTz].filter(Boolean).map((z) => el('option', { value: z })));
+  const today = () => { try { return new Date().toLocaleDateString('en-CA', { timeZone: tz.value || 'UTC' }); } catch (_) { return new Date().toISOString().slice(0, 10); } };
+  const start = el('input', { id: 'sc-start', type: 'date', value: today() });
+  const suffix = el('textarea', { id: 'sc-suffix', rows: '2', maxlength: '300', class: 'deva', placeholder: '#हॅशटॅग  लिंक' });
+  const privacy = el('select', { id: 'sc-privacy' }, [['public', 'Public'], ['unlisted', 'Unlisted (YouTube; followers only on TikTok)'], ['private', 'Private']].map(([v, t]) => el('option', { value: v, text: t })));
+  const kids = el('input', { id: 'sc-kids', type: 'checkbox' });
+  const ai = el('input', { id: 'sc-ai', type: 'checkbox' });
+  const saveTimes = el('input', { id: 'sc-save', type: 'checkbox' });
+  const timesBox = el('div', { class: 'stack' });
+  const timeIn = new Map();                                                          // platform -> input with "18:30, 13:00"
+  const preview = el('section', { class: 'card stack', hidden: true });
+  const results = el('section', { class: 'card stack', hidden: true });
+  const previewBtn = el('button', { class: 'btn primary', type: 'button', text: 'Preview the schedule' });
+  const note = el('div', { class: 'small', role: 'status', 'aria-live': 'polite' });
+
+  function onPick() {
+    const n = chosen().length;
+    counter.textContent = `${n} of ${MAX_CHANNELS} chosen`;
+    for (const b of boxes) b.box.disabled = !b.box.checked && n >= MAX_CHANNELS;
+    const platforms = [...new Set(chosen().map((b) => b.ch.platform))];
+    for (const p of platforms) if (!timeIn.has(p)) timeIn.set(p, el('input', { id: `sc-t-${p}`, value: (prefs.times[p] || []).join(', '), spellcheck: 'false', autocomplete: 'off' }));
+    timesBox.replaceChildren(...(platforms.length ? platforms.map((p) => el('div', {}, el('label', { class: 'field', for: `sc-t-${p}` }, platformMark(p), ` ${PLATFORM_WORD[p] || p}: best times, best first`), timeIn.get(p))) :
+      [el('p', { class: 'small muted', text: 'Choose channels to see the best times of their platforms.' })]));
+    preview.hidden = true; results.hidden = true;
+  }
+  for (const b of boxes) b.box.addEventListener('change', onPick);
+  const byBrand = new Map();
+  for (const b of boxes) { const k = b.ch.brand || ''; if (!byBrand.has(k)) byBrand.set(k, []); byBrand.get(k).push(b); }
+  const brandNames = [...byBrand.keys()].sort((a, c) => (a === '') - (c === '') || a.localeCompare(c));
+  const brandBlock = (name) => el('div', { class: 'brand-group' },
+    el('div', { class: 'brand-head' }, el('h3', { translate: 'no', text: name || 'Other channels' }), el('span', { class: 'chip plain', text: String(byBrand.get(name).length) })),
+    el('div', { class: 'brand-channels' }, ...byBrand.get(name).sort((a, c) => (PLATFORM_WORD[a.ch.platform] || '').localeCompare(PLATFORM_WORD[c.ch.platform] || '') || a.ch.name.localeCompare(c.ch.name))
+      .map(({ ch, box }) => el('label', { class: 'check', for: box.id }, box, platformMark(ch.platform), el('span', {}, el('strong', { translate: 'no', text: ch.name }), el('br'), el('span', { class: 'muted', text: PLATFORM_WORD[ch.platform] || ch.platform }))))));
+
+  const parseTimes = (text) => text.split(/[,\s]+/).filter(Boolean);
+  function request(dry) {
+    const times = {};
+    for (const [p, input] of timeIn) if (chosen().some((b) => b.ch.platform === p)) times[p] = parseTimes(input.value);
+    return { clips: picked().map((c) => c.id), channels: chosen().map((b) => b.ch.id), per_day: Number(perDay.value), start: start.value, timezone: tz.value.trim(), times, suffix: suffix.value,
+      privacy: privacy.value, made_for_kids: kids.checked, ai_confirmed: ai.checked, dry_run: dry };
+  }
+  const post = (body) => api(`/jobs/${jobId}/publish/bulk`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const dayLabel = (local) => { const d = new Date(`${local.slice(0, 10)}T12:00:00`); return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); };
+
+  async function savePrefs() {
+    if (!saveTimes.checked) return;
+    const times = { ...prefs.times };
+    for (const [p, input] of timeIn) times[p] = parseTimes(input.value);
+    const saved = await api('/publish/schedule/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ timezone: tz.value.trim(), times }) });
+    Object.assign(prefs, saved, { saved: true });
+  }
+
+  previewBtn.addEventListener('click', async () => {
+    err.hidden = true; results.hidden = true; note.textContent = '';
+    if (!picked().length) return fail(new Error('Choose at least one reel.'));
+    if (!chosen().length) return fail(new Error('Choose at least one channel.'));
+    previewBtn.disabled = true;
+    try {
+      const plan = await post(request(true));
+      const days = new Map();
+      for (const r of plan.posts) { const k = r.local.slice(0, 10); if (!days.has(k)) days.set(k, []); days.get(k).push(r); }
+      const go = el('button', { class: 'btn primary', type: 'button', text: `Schedule these ${plan.count} posts` });
+      go.addEventListener('click', async () => {
+        err.hidden = true; go.disabled = true;
+        try {
+          await savePrefs();
+          const done = await post(request(false));
+          preview.hidden = true;
+          note.textContent = '';
+          showResults(done.rows);
+        } catch (e) { fail(e); go.disabled = false; }
+      });
+      preview.replaceChildren(el('h2', { text: `The plan: ${plan.count} posts over ${plan.days} day${plan.days === 1 ? '' : 's'}` }),
+        el('p', { class: 'small muted', text: `Times are in ${plan.timezone}.` }),
+        ...[...days.entries()].map(([k, rows]) => el('div', { class: 'stack', style: { gap: '6px' } }, el('h3', { text: dayLabel(rows[0].local) }),
+          ...rows.sort((a, c) => a.when.localeCompare(c.when)).map((r) => el('div', { class: 'row small' }, el('strong', { text: r.local.slice(11) }), el('span', { translate: 'no' }, platformMark(r.platform), ` ${r.name}`),
+            el('span', { class: 'muted deva', translate: 'no', text: r.title }))))),
+        el('div', { class: 'row' }, go, el('span', { class: 'small muted', text: 'Nothing is posted until you press this.' })));
+      preview.hidden = false;
+      preview.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) { fail(e); } finally { previewBtn.disabled = false; }
+  });
+
+  function showResults(rows) {
+    const ids = new Set(rows.map((r) => r.id));
+    results.hidden = false;
+    async function refresh() {
+      if (dead) return;
+      try {
+        const all = (await api(`/jobs/${jobId}/posts`)).filter((r) => ids.has(r.id));
+        const n = (st) => all.filter((r) => r.status === st).length;
+        results.replaceChildren(el('h2', { text: 'Scheduling' }),
+          el('p', { role: 'status', 'aria-live': 'polite', text: `${n('scheduled')} scheduled, ${n('queued')} waiting, ${n('failed')} failed of ${all.length}.` }),
+          ...all.filter((r) => r.status === 'failed').map((r) => el('div', { class: 'alert', role: 'alert' }, `${PLATFORM_WORD[r.platform] || r.platform} · ${r.name}: ${r.detail || 'failed'}`)),
+          el('div', { class: 'row' }, el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })));
+        if (n('queued')) timer = setTimeout(refresh, 1500);
+      } catch (e) { if (e instanceof SignInNeeded) route(); }
+    }
+    refresh();
+  }
+
+  const field = (label, control, hint) => el('div', {}, el('label', { class: 'field', for: control.id, text: label }), control, hint && el('div', { class: 'hint', text: hint }));
+  onPick();
+  app.replaceChildren(el('div', { class: 'stack' },
+    el('div', { class: 'row' }, el('div', { class: 'grow' }, el('h1', { text: 'Schedule reels' }), el('div', { class: 'small muted', translate: 'no', text: job.name })),
+      el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
+    channels.length === 0 ? el('div', { class: 'card empty', text: 'No channels we can post to are connected in SocioBird yet.' }) : el('div', { class: 'stack' },
+      el('section', { class: 'card stack' }, el('h2', { text: 'Reels' }),
+        ...reelBoxes.map(({ c, box }) => el('label', { class: 'check', for: box.id }, box, el('span', {}, el('strong', { class: 'deva', translate: 'no', text: c.title }), el('br'), el('span', { class: 'muted', text: `${Math.round(c.end - c.start)} s` }))))),
+      el('section', { class: 'card stack' }, el('h2', { text: 'Channels' }), el('div', { class: 'row' }, counter, el('span', { class: 'small muted', text: 'Every chosen reel goes to every chosen channel.' })), ...brandNames.map(brandBlock)),
+      el('section', { class: 'card stack' }, el('h2', { text: 'When' }),
+        el('div', { class: 'grid2', style: { marginTop: 0 } }, field('Posts per day, on each channel', perDay, 'Reels go out in the order shown above, this many each day.'), field('First day', start),
+          field('Time zone', tz, 'Times below are in this zone.')), tzList,
+        timesBox,
+        el('label', { class: 'check', for: 'sc-save' }, saveTimes, el('span', { text: 'Remember this time zone and these times for next time' })),
+        el('p', { class: 'small muted', text: 'The suggested times are defaults from general advice for short video in India, not measurements of your audience. Change them to what works for you.' })),
+      el('section', { class: 'card stack' }, el('h2', { text: 'Posts' }),
+        field('Under every caption', suffix, 'Each post starts with the reel’s title and hook. Hashtags and links go here.'),
+        el('div', { class: 'grid2', style: { marginTop: 0 } }, field('Who can see it', privacy)),
+        el('label', { class: 'check', for: 'sc-kids' }, kids, el('span', {}, el('strong', { text: 'These videos are made for kids' }), el('br'), el('span', { class: 'muted', text: 'YouTube asks every creator to declare this.' }))),
+        usage.disclosure_recommended && el('label', { class: 'check', for: 'sc-ai' }, ai, el('span', {}, el('strong', { text: 'I will label these videos as AI content' }), el('br'), el('span', { class: 'muted', text: 'Some reels include AI-generated pictures.' })))),
+      err, el('div', { class: 'row' }, previewBtn, note), preview, results)));
+  return { cleanup() { dead = true; clearTimeout(timer); } };
+}
+
 // ---- styles: measure a reference video once, apply its pacing to your own clips ------------------------------------
 
 async function stylesView() {
@@ -1772,6 +1944,7 @@ async function route() {
     else if (hash === '#/jobs') await jobsView();
     else if (hash === '#/account') await accountView();
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})\/share$/))) { const v = await shareView(m[1], m[2]); cleanup = v.cleanup; }
+    else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/schedule(?:\?clips=((?:c\d{1,3},?){1,30}))?$/))) { const v = await scheduleView(m[1], m[2] || ''); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})$/))) { const v = await clipEditorView(m[1], m[2]); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})$/))) { const v = await jobView(m[1]); cleanup = v.cleanup; }
     else app.replaceChildren(el('div', { class: 'card empty', text: 'Page not found.' }));

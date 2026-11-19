@@ -4,7 +4,7 @@ import re
 from clipcrow.service.api import STATIC
 
 # Input types the stylesheet has been checked against (see docs/ui.md). Add one only after looking at it in dark AND light next to a text field.
-STYLED_INPUT_TYPES = {"text", "password", "number", "checkbox", "file", "range", "color", "datetime-local"}
+STYLED_INPUT_TYPES = {"text", "password", "number", "checkbox", "file", "range", "color", "datetime-local", "date"}
 
 
 def read(name):
