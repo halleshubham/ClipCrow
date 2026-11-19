@@ -45,7 +45,7 @@ is a new container), and the worker there starts polling. With nothing pending o
 The controller never terminates a pod. The pod's worker is started with `--pool rented`; the home worker uses the default `--pool home`.
 
 On the New job page a person chooses **Automatic**, **Home GPU only** or **On-demand GPU only**, and sees a rough cost estimate for each from the video's length
-(worked out in the browser from `gpu_cost` planning numbers sent with the config, plus a 50% margin (`CLIPCROW_GPU_MARKUP`); not a quote). Each job's "AI usage and disclosure" lists the GPU time of every task and its cost in INR; tasks that overlap on one
+(worked out in the browser from `gpu_cost` planning numbers sent with the config, plus a margin (`CLIPCROW_MARGIN_PERCENT`, default 50); not a quote). Each job's "AI usage and disclosure" lists the GPU time of every task and its cost in INR; tasks that overlap on one
 machine (the worker's `--parallel 2` render slots) share its hourly price. When several workers are idle the stronger one (`power`: a CUDA GPU over a CPU) is offered a task first.
 
 **The worker token on the pod** is a real secret of the production server: rotate `CLIPCROW_WORKER_TOKEN` after the trial or when the pod is given up.

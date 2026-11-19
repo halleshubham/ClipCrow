@@ -501,7 +501,7 @@ async function newJobView() {
     const home = gpu(n.home_rate, 0), pod = gpu(n.pod_rate, n.wake);
     const use = choice === 'home' ? home : choice === 'pod' ? pod : (c.gpu_worker.online ? home : pod);
     const both = $('gpu') ? ` Home GPU: ${rupees(ai + home)} · On-demand GPU: ${rupees(ai + pod)}.` : '';
-    out.textContent = `Rough cost: about ${rupees(ai + use)} (AI planning ${rupees(ai)} + GPU ${use > 0 ? rupees(use) : 'none'}), for ${Math.round(minutes)} min of video and ${reels} reel${reels > 1 ? 's' : ''}, with a 50% margin.${both} A guide, not a quote.`;
+    out.textContent = `Rough cost: about ${rupees(ai + use)} (AI planning ${rupees(ai)} + GPU ${use > 0 ? rupees(use) : 'none'}), for ${Math.round(minutes)} min of video and ${reels} reel${reels > 1 ? 's' : ''}, with a ${Math.round(n.margin_percent)}% margin.${both} A guide, not a quote.`;
   };
   const readLength = () => {
     videoSeconds = 0;

@@ -173,3 +173,15 @@ def test_the_config_carries_the_language_model_numbers_for_the_estimate(tmp_path
     app = create_app(tmp_path / "data", FakePipeline(), worker_token=TOKEN)
     l = TestClient(app).get("/api/config").json()["gpu_worker"]["estimate"]["llm"]
     assert l["usd_inr"] == 90.0 and l["usd_in"] > 0 and l["usd_out"] > l["usd_in"] and l["in_per_minute"] > 0 and l["out_per_reel"] > 0
+
+
+def test_the_margin_is_set_in_the_environment_and_falls_back_to_fifty_percent(monkeypatch):
+    from clipcrow.service.gpu_cost import estimate_numbers
+    monkeypatch.delenv("CLIPCROW_MARGIN_PERCENT", raising=False)
+    assert estimate_numbers({})["markup"] == 1.5 and estimate_numbers({})["margin_percent"] == 50.0
+    monkeypatch.setenv("CLIPCROW_MARGIN_PERCENT", "30")
+    assert estimate_numbers({})["markup"] == 1.3
+    monkeypatch.setenv("CLIPCROW_MARGIN_PERCENT", "oops")
+    assert estimate_numbers({})["markup"] == 1.5
+    monkeypatch.setenv("CLIPCROW_MARGIN_PERCENT", "-20")
+    assert estimate_numbers({})["markup"] == 1.0

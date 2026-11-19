@@ -65,15 +65,17 @@ def estimate(duration: float, clips: int, rate: float, *, multi: bool = False, w
     return {"seconds": round(seconds), "rate_per_hour": rate, "est_cost": row_cost(seconds, rate)}
 
 
-MARKUP = 1.5                                      # the estimate shown to a person is the GPU cost plus 50 %
+MARGIN_PERCENT = 50.0                             # added on top of the cost in the estimate shown to a person; override with CLIPCROW_MARGIN_PERCENT
 
 
 def estimate_numbers(rates: dict, pod_hourly=None) -> dict:
     """What the browser needs to estimate a job's GPU cost itself (no request): the planning numbers, the hourly price of each kind of GPU and the markup."""
     try:
-        markup = max(1.0, float(os.environ.get("CLIPCROW_GPU_MARKUP") or MARKUP))
+        pct = float(os.environ.get("CLIPCROW_MARGIN_PERCENT") or MARGIN_PERCENT)
     except ValueError:
-        markup = MARKUP
+        pct = MARGIN_PERCENT
+    pct = min(1000.0, max(0.0, pct))
+    markup = 1.0 + pct / 100.0
     home = rates.get("home", rates.get("*", 0.0))
     pod = pod_hourly if pod_hourly is not None else rates.get("rented", rates.get("*", 0.0))
     from ..costs import PRICES
@@ -86,5 +88,5 @@ def estimate_numbers(rates: dict, pod_hourly=None) -> dict:
         usd_inr = 88.0
     # planning numbers for the language-model part (fitted to a real 61-minute Marathi job with 10 reels: scoring reads the transcript, then each reel needs a detail call and a text-refine call or two)
     llm = {"usd_in": pin, "usd_out": pout, "usd_inr": usd_inr, "in_fixed": 1000, "in_per_minute": 1200, "in_per_reel": 9500, "out_per_reel": 6400}
-    return {"currency": "INR", "markup": markup, "home_rate": home, "pod_rate": pod, "listen": LISTEN_PER_SECOND, "who": WHO_PER_SECOND,
+    return {"currency": "INR", "markup": markup, "margin_percent": pct, "home_rate": home, "pod_rate": pod, "listen": LISTEN_PER_SECOND, "who": WHO_PER_SECOND,
             "render": RENDER_PER_REEL, "wake": WAKE_SECONDS, "llm": llm}
