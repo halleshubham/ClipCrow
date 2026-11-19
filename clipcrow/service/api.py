@@ -153,6 +153,10 @@ class PackChoice(BaseModel):
     pack: str
 
 
+class Recharge(BaseModel):
+    rupees: int = Field(ge=1, le=10_000_000)
+
+
 def _clean_reading(r) -> dict:
     """What the editing pass said it understood (shown to a person): its intent, the passages it saw, and the result of its final read-through."""
     if not isinstance(r, dict):
@@ -411,6 +415,12 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         d["expires_at"] = expires_at(job, days)
         return d
 
+    def no_minutes(minutes: float, have: float, plan) -> str:
+        if catalog.payg and plan.monthly_minutes == 0:
+            return f"This video is {minutes} min long and your balance is {have:.0f} min. Recharge on your Account page, then start it again."
+        return (f"This video is {minutes} min long and you have {have:.0f} min left on the {plan.name} plan this month. "
+                f"Upgrade, buy minutes, or wait for the month to reset.")
+
     def enforce_limits(user: User, minutes: float, job_id: str) -> None:
         """A new job from this person must stay inside the cost limits (an operator is exempt). Raises the refusal, after which the caller discards the job."""
         if user.email in admins:
@@ -430,7 +440,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         except HTTPException:
             signed_in = False
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
-                "signup": bool(accounts) and allow_signup, "signup_paused": bool(accounts) and allow_signup and accounts.signups_today() >= limits.signups_per_day,
+                "pricing": catalog.payg.view() if catalog.payg else None, "signup": bool(accounts) and allow_signup, "signup_paused": bool(accounts) and allow_signup and accounts.signups_today() >= limits.signups_per_day,
                 "email": email, "admin": bool(email and email in admins), "mail": bool(mailer), "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(sociobird) and (not accounts or sociobird_shared),
                 "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready(),
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
@@ -473,7 +483,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     def welcome(user: User) -> None:
         """A new account gets the sample job (when the operator made one) and one welcome mail. Neither may ever fail the sign-in."""
-        link = ""
+        link, bonus = "", (catalog.payg.signup_bonus_minutes if catalog.payg else 0)
+        if bonus:
+            accounts.add_credits(user.id, bonus)                       # once: this runs only for a brand-new account
         try:
             if sample_path:
                 job = import_sample(store, sample_path, user.id)
@@ -483,7 +495,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             log.exception("sample job for a new account failed")
         if mailq:
             try:
-                mailq.send(welcome_mail(user.email, effective_plan(user).monthly_minutes, base_url, link))
+                mailq.send(welcome_mail(user.email, effective_plan(user).monthly_minutes, base_url, link, bonus))
             except ValueError:
                 pass
 
@@ -610,7 +622,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             u["jobs_now"] = by_owner.get(u["id"], 0)
         recent_failed = [{"id": j.id, "owner": next((u["email"] for u in users if u["id"] == j.owner), ""), "error": (j.error or "")[:160], "when": j.created_at}
                          for j in sorted((j for j in jobs if j.status == "failed"), key=lambda j: j.created_at, reverse=True)[:10]]
-        return {"users": users, "signups_today": accounts.signups_today(), "signup_cap": limits.signups_per_day,
+        return {"users": users, "plans": list(catalog.plans), "signups_today": accounts.signups_today(), "signup_cap": limits.signups_per_day,
                 "jobs": {s: sum(1 for j in jobs if j.status == s) for s in ("queued", "running", "done", "failed", "cancelled")},
                 "disk_free_gb": round(snap.disk_free_gb, 1), "disk_free_pct": round(snap.disk_free_pct), "failed_last_hour": snap.failed_last_hour,
                 "unserved_tasks": snap.unserved_tasks, "mail": mailer.name if mailer else "off", "mail_failures_hour": snap.mail_failures_hour,
@@ -882,7 +894,28 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return {"enabled": bool(razorpay), "subscribed": bool(user.subscription), "current": effective_plan(user).id,
                 "plans": [{"id": p.id, "name": p.name, "price_label": p.price_label, "monthly_minutes": p.monthly_minutes,
                            "can_subscribe": bool(p.razorpay_plan_id) and p.id != "free"} for p in catalog.plans.values()],
-                "packs": [{"id": k.id, "minutes": k.minutes, "label": k.label} for k in catalog.packs.values()]}
+                "packs": [{"id": k.id, "minutes": k.minutes, "label": k.label} for k in catalog.packs.values()],
+                "payg": catalog.payg.view() if catalog.payg else None}
+
+    @app.get("/api/pricing")
+    def pricing() -> dict:
+        """Public: the price and the recharge options, for the landing page and the New job page. Nothing about any person."""
+        return {"payg": catalog.payg.view() if catalog.payg else None, "plan": {"name": catalog.plan("free").name, "retention_days": catalog.plan("free").retention_days}}
+
+    @app.post("/api/billing/recharge", dependencies=[Depends(authed)])
+    def recharge(body: Recharge, request: Request) -> dict:
+        user, rz = request.state.user, need_billing()
+        g = catalog.payg
+        if g is None:
+            raise HTTPException(404, "Recharging is not turned on.")
+        paise = body.rupees * 100
+        if not g.min_recharge_paise <= paise <= g.max_recharge_paise:
+            raise HTTPException(422, f"Recharge between Rs {g.min_recharge_paise // 100} and Rs {g.max_recharge_paise // 100}.")
+        try:
+            link = rz.create_payment_link(paise, f"ClipCrow recharge Rs {body.rupees}", user.id, "custom")
+        except BillingError as e:
+            raise HTTPException(UPSTREAM, str(e))
+        return {"url": link["url"], "minutes": g.minutes_for(paise)}
 
     @app.post("/api/billing/subscribe", dependencies=[Depends(authed)])
     def subscribe(body: PlanChoice, request: Request) -> dict:
@@ -1164,8 +1197,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 store.delete(job.id)
                 abandon(rec, finished=True)
                 have = max(plan.monthly_minutes - accounts.used_this_month(user.id), 0) + accounts.get(user.id).credits
-                raise HTTPException(402, f"This video is {minutes} min long and you have {have:.0f} min left on the {plan.name} plan this "
-                                         f"month. Upgrade, buy minutes, or wait for the month to reset.")
+                raise HTTPException(402, no_minutes(minutes, have, plan))
             job.reserved_minutes = minutes
         store.save(job)
         pictures.adopt(brand_owner(request), params.pictures, store.dir(job.id) / "pictures")      # only now: a refused job keeps the person's pictures
@@ -1239,8 +1271,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             if left is None:
                 store.delete(job.id)
                 have = max(plan.monthly_minutes - accounts.used_this_month(user.id), 0) + accounts.get(user.id).credits
-                raise HTTPException(402, f"This video is {minutes} min long and you have {have:.0f} min left on the {plan.name} plan this "
-                                         f"month. Upgrade, buy minutes, or wait for the month to reset.")
+                raise HTTPException(402, no_minutes(minutes, have, plan))
             job.reserved_minutes = minutes
         store.save(job)
         pictures.adopt(brand_owner(request), params.pictures, store.dir(job.id) / "pictures")

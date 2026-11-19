@@ -75,3 +75,9 @@ details summary::-webkit-details-marker { display: none; } details p { margin: 1
 .final { text-align: center; padding: clamp(56px, 9vw, 100px) 16px; }
 .final img { background: #F5F4F0; border-radius: 22px; padding: 8px; } .final h2 { margin: 22px 0 24px; }
 .foot { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 24px; padding: 28px 16px 44px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); } .foot a { color: var(--muted); }
+
+.price-card { max-width: 640px; padding: clamp(22px, 4vw, 36px); border: 1px solid var(--accent-line); border-radius: 22px; background: var(--surface); }
+.price { margin: 0; font-size: clamp(34px, 6vw, 52px); font-weight: 800; letter-spacing: -.02em; line-height: 1.1; } .price #price-unit { font-size: 18px; font-weight: 600; color: var(--ink-2); letter-spacing: 0; }
+.price-lead { margin: 14px 0 20px; color: var(--ink-2); }
+.quick { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0; } .quick:empty { display: none; }
+.quick .q { display: grid; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); font-size: 14px; } .quick .q strong { font-size: 18px; } .quick .q span { color: var(--muted); }

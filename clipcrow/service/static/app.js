@@ -269,7 +269,7 @@ function renderAcct() {
   box.replaceChildren();
   const c = state.config;
   if (!c || !c.accounts || !c.signed_in) return;
-  box.append(c.admin && el('a', { href: '#/admin', text: 'Operator' }), el('a', { href: '#/account', text: c.email, translate: 'no' }),
+  box.append(...(c.admin ? [el('a', { href: '#/admin', text: 'Operator' })] : []), el('a', { href: '#/account', text: c.email, translate: 'no' }),
     el('button', { class: 'btn', type: 'button', text: 'Sign out', onclick: async () => {
       try { await api('/auth/logout', { method: 'POST' }); } catch (_) { /* already signed out */ }
       state.config = await api('/config'); renderAcct(); location.hash = '#/'; route();
@@ -287,7 +287,7 @@ async function adminView() {
   const stat = (label, value, bad) => el('div', { class: 'stat' }, el('div', { class: bad ? 'num bad' : 'num', text: String(value) }), el('div', { class: 'small muted', text: label }));
   const rows = ov.users.map((u) => {
     const mins = el('input', { type: 'number', 'aria-label': `Add minutes for ${u.email}`, placeholder: '+ minutes', inputmode: 'numeric' });
-    const plan = el('select', { 'aria-label': `Plan for ${u.email}` }, ['free', 'pro'].map((p) => el('option', { value: p, text: p, selected: p === u.plan })));
+    const plan = el('select', { 'aria-label': `Plan for ${u.email}` }, (ov.plans || ['free']).map((p) => el('option', { value: p, text: p, selected: p === u.plan })));
     return el('tr', {},
       el('td', { translate: 'no', text: u.email + (u.disabled ? ' (disabled)' : '') }),
       el('td', {}, plan, el('button', { class: 'btn', type: 'button', text: 'Apply', onclick: () => act(`/admin/users/${u.id}/plan`, { plan: plan.value }) })),
@@ -336,10 +336,13 @@ async function accountView() {
       el('div', { class: 'row', style: { justifyContent: 'space-between' } },
         el('div', {}, el('strong', { translate: 'no', text: me.email }), el('div', { class: 'small muted', text: `${me.plan.name} plan${me.plan.price_label ? ' · ' + me.plan.price_label : ''}` })),
         me.plan_until && el('div', { class: 'small muted', text: `Renews or ends ${new Date(me.plan_until).toLocaleDateString()}` })),
-      el('div', {}, el('div', { class: 'row small', style: { justifyContent: 'space-between' } }, el('span', { text: 'Minutes of video used this month' }),
-          el('span', { text: `${me.used_minutes} of ${me.plan.monthly_minutes}` })),
-        el('div', { class: me.left_minutes < 5 ? 'meter low' : 'meter', role: 'img', 'aria-label': `${me.used_minutes} of ${me.plan.monthly_minutes} minutes used` }, el('div', { style: { width: `${pct}%` } }))),
-      me.credit_minutes > 0 && el('div', { class: 'small' }, `Plus ${me.credit_minutes} purchased minutes. ${me.left_minutes} minutes left in all.`),
+      me.plan.monthly_minutes === 0
+        ? el('div', {}, el('div', { class: 'balance' }, el('span', { class: me.left_minutes < 5 ? 'num bad' : 'num', text: String(me.left_minutes) }), el('span', { text: ' minutes of video left' })),
+            el('div', { class: 'small muted', text: `${me.used_minutes} used this month. Minutes you buy never expire.` }))
+        : el('div', {}, el('div', { class: 'row small', style: { justifyContent: 'space-between' } }, el('span', { text: 'Minutes of video used this month' }),
+            el('span', { text: `${me.used_minutes} of ${me.plan.monthly_minutes}` })),
+          el('div', { class: me.left_minutes < 5 ? 'meter low' : 'meter', role: 'img', 'aria-label': `${me.used_minutes} of ${me.plan.monthly_minutes} minutes used` }, el('div', { style: { width: `${pct}%` } }))),
+      me.plan.monthly_minutes > 0 && me.credit_minutes > 0 && el('div', { class: 'small' }, `Plus ${me.credit_minutes} purchased minutes. ${me.left_minutes} minutes left in all.`),
       el('div', { class: 'small muted', text: `Finished jobs are kept for ${me.plan.retention_days} days, then deleted.` })),
     billing,
     el('section', { class: 'card stack' }, el('h2', { text: 'Email' }),
@@ -363,7 +366,28 @@ async function renderBilling(box) {
     } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
   };
   const buy = info.plans.filter((p) => p.can_subscribe && p.id !== info.current);
-  const parts = [el('h2', { text: 'Plan and minutes' })];
+  const parts = [el('h2', { text: info.payg ? 'Recharge' : 'Plan and minutes' })];
+  if (info.payg) {
+    const g = info.payg;
+    const amount = el('input', { id: 'recharge-amount', type: 'number', min: String(g.min_recharge), max: String(g.max_recharge), step: '1', inputmode: 'numeric', placeholder: `₹ ${g.min_recharge} or more` });
+    const preview = el('div', { class: 'small muted', 'aria-live': 'polite', text: `₹${g.price_per_minute} for each minute of video. Minutes never expire.` });
+    const rupeesToMinutes = (r) => { const pct = Math.max(0, ...g.tiers.filter((t) => r >= t.from).map((t) => t.bonus_percent)); return Math.floor(((r / g.price_per_minute) * (100 + pct)) / 100 * 10) / 10; };
+    const show = () => { const r = Number(amount.value); preview.textContent = r >= g.min_recharge && r <= g.max_recharge ? `₹${r} adds ${rupeesToMinutes(r)} minutes.` : `₹${g.price_per_minute} for each minute of video. Minutes never expire.`; };
+    amount.addEventListener('input', show);
+    const pay = async (rupees, btn) => {
+      err.hidden = true; btn.disabled = true;
+      try { const r = await api('/billing/recharge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rupees }) }); location.assign(r.url); }
+      catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+    };
+    const quick = el('div', { class: 'chips' }, g.quick.map((q) => {
+      const b = el('button', { class: 'btn', type: 'button', text: `₹${q.rupees} · ${q.minutes} min${q.bonus_percent ? ` (+${q.bonus_percent}%)` : ''}` });
+      b.addEventListener('click', () => pay(q.rupees, b));
+      return b;
+    }));
+    const go = el('button', { class: 'btn primary', type: 'button', text: 'Recharge' });
+    go.addEventListener('click', () => { const r = Number(amount.value); if (!(r >= g.min_recharge && r <= g.max_recharge)) { err.textContent = `Enter an amount between ₹${g.min_recharge} and ₹${g.max_recharge}.`; err.hidden = false; return; } pay(r, go); });
+    parts.push(quick, el('div', { class: 'row' }, el('div', { class: 'grow' }, el('label', { class: 'field', for: 'recharge-amount', text: 'Or choose an amount (₹)' }), amount), go), preview);
+  }
   for (const p of buy) {
     const b = el('button', { class: 'btn dark', type: 'button', text: info.subscribed ? 'Cancel your current plan first' : `Choose ${p.name}`, disabled: info.subscribed });
     if (!info.subscribed) b.addEventListener('click', () => go('/billing/subscribe', { plan: p.id }, p.name, b));
@@ -593,6 +617,12 @@ async function newJobView() {
   const gpuHelp = () => ($('gpu') ? ` ${GPU_HELP}` : '');
   const setCost = (value, detail) => { const v = $('cost-val'); if (v) v.textContent = value; costTip.dataset.tip = detail; };
   const estimateCost = () => {
+    if (c.accounts && c.pricing && $('cost-val')) {                          // pay as you go: a minute of video is a minute of balance, at a price you can see
+      if (!file || !videoSeconds) { setCost('— min', 'Choose a video to see how many minutes it uses.' + gpuHelp()); return; }
+      const minutes = Math.max(1, Math.ceil(videoSeconds / 60));
+      setCost(`${minutes} min`, `This video uses ${minutes} minute${minutes > 1 ? 's' : ''} of your balance (₹${(minutes * c.pricing.price_per_minute).toLocaleString()} at ₹${c.pricing.price_per_minute} a minute). Failed or cancelled jobs give the minutes back.` + gpuHelp());
+      return;
+    }
     const n = c.gpu_worker && c.gpu_worker.estimate;
     if (!n || !$('cost-val')) return;
     if (!file || !videoSeconds) { setCost('₹ —', (file ? 'The video length could not be read, so there is no estimate.' : 'Choose a video to see a rough cost.') + gpuHelp()); return; }
@@ -774,8 +804,8 @@ async function newJobView() {
       el('div', { class: 'grp' },
         c.gpu_worker && c.gpu_worker.enabled && el('div', { class: 'gpu' }, icon('cpu', 18),
           el('select', { id: 'gpu', 'aria-label': 'Which GPU does the heavy work' }, [['auto', 'GPU: automatic'], ['pod', 'GPU: on-demand (billed by time)'], ['home', 'GPU: home only']].map(([v, t]) => el('option', { value: v, text: t }))),
-          !(c.gpu_worker.estimate) && tip(GPU_HELP, 'the GPU choice')),
-        c.gpu_worker && c.gpu_worker.estimate && el('div', { class: 'cost' }, icon('wallet', 18), el('span', { class: 'cost-val', id: 'cost-val', 'aria-live': 'polite', text: '₹ —' }), costTip),
+          !(c.gpu_worker.estimate || (c.accounts && c.pricing)) && tip(GPU_HELP, 'the GPU choice')),
+        ((c.gpu_worker && c.gpu_worker.estimate) || (c.accounts && c.pricing)) && el('div', { class: 'cost' }, icon('wallet', 18), el('span', { class: 'cost-val', id: 'cost-val', 'aria-live': 'polite', text: '₹ —' }), costTip),
         status, cancelBtn, submit))));
 
   const $ = (id) => form.querySelector('#' + id);

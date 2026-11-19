@@ -16,7 +16,7 @@ def test_the_landing_page_is_public_self_contained_and_links_to_the_app(tmp_path
     r = c.get("/landing/")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"] and "one long video" in r.text.lower()      # no sign-in needed
     html = r.text
-    assert "<script" not in html and 'style="' not in html                                                              # the CSP allows neither
+    assert "<script" not in html.replace('<script src="/landing/landing.js" defer></script>', "") and 'style="' not in html                                                              # the CSP allows neither
     assert not re.findall(r'(?:src|href)="https?://', html)                                                             # nothing from another site
     assert 'href="/#/"' in html and "/#/privacy" in html and "/#/terms" in html and "support@shackyapps.in" in html
     for path in re.findall(r'(?:src|href)="(/[^"#]+)"', html):                                                          # every local file it names exists

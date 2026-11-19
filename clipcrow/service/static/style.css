@@ -269,6 +269,8 @@ details.adv > .stack { padding: 18px 0 22px; }
 .cost-val { font-weight: 700; font-variant-numeric: tabular-nums; }
 @media (max-width: 720px) { .ess-grid { grid-template-columns: 1fr; } .pair2 { grid-template-columns: 1fr; } .seg { flex-direction: column; } .abar select { width: 100%; flex: 1 1 0; } .abar .gpu { flex: 1 1 100%; } .abar .grp { flex: 1 1 100%; } }
 
+.balance { font-size: 15px; } .balance .num { font-size: 32px; font-weight: 800; font-variant-numeric: tabular-nums; margin-right: 6px; } .balance .num.bad { color: var(--bad); }
+
 /* operator page */
 .statrow { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
 .stat { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); }

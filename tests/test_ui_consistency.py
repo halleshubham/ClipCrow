@@ -64,3 +64,8 @@ def test_a_select_is_drawn_as_a_control_you_open_not_as_a_text_box():
     css = read("style.css")
     rule = css[css.index("select:not(.plain)"):].split("}", 1)[0]
     assert "background-image" in rule and "--raised" in rule and "cursor: pointer" in rule         # a chevron, a raised face, a hand
+
+
+def test_a_false_value_is_never_appended_to_the_page_as_text():
+    """`el()` skips false in its children, but `node.append(cond && el(...))` writes the word "false" into the header."""
+    assert not re.findall(r"\.append\([^)\n]*\b\w+(?:\.\w+)* && el\(", read("app.js")), "use ...(cond ? [el(...)] : []) with append"

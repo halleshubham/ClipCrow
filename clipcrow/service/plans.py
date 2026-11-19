@@ -12,6 +12,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -33,22 +34,53 @@ class CreditPack:
     label: str
 
 
+@dataclass(frozen=True)
+class Payg:
+    """Pay as you go: a prepaid balance in minutes of video, recharged with any amount from ``min_recharge_paise`` to ``max_recharge_paise``.
+    One minute of video uploaded costs one minute of balance. A bigger recharge earns bonus minutes (``bonus_tiers``: (from paise, extra percent)).
+    New accounts get ``signup_bonus_minutes`` once. Minutes bought never expire."""
+    price_paise_per_minute: int = 1000
+    min_recharge_paise: int = 10000
+    max_recharge_paise: int = 2_000_000
+    signup_bonus_minutes: float = 10.0
+    bonus_tiers: tuple = ((200_000, 5), (500_000, 10))
+
+    def bonus_percent(self, amount_paise: int) -> int:
+        return max([pct for start, pct in self.bonus_tiers if amount_paise >= start] or [0])
+
+    def minutes_for(self, amount_paise: int) -> float:
+        """The minutes a payment of this size buys, bonus included, rounded down to a tenth of a minute. Computed from the PAID amount, never from what a client says."""
+        base = amount_paise / self.price_paise_per_minute
+        return int(base * (100 + self.bonus_percent(amount_paise)) / 100 * 10) / 10
+
+    def view(self) -> dict:
+        """What the pages show (rupees, not paise). No secrets here: this is public."""
+        r = lambda paise: paise // 100
+        return {"price_per_minute": self.price_paise_per_minute / 100, "min_recharge": r(self.min_recharge_paise), "max_recharge": r(self.max_recharge_paise),
+                "signup_bonus_minutes": self.signup_bonus_minutes,
+                "tiers": [{"from": r(a), "bonus_percent": pct} for a, pct in self.bonus_tiers],
+                "quick": [{"rupees": r(a), "minutes": self.minutes_for(a), "bonus_percent": self.bonus_percent(a)}
+                          for a in (30_000, 50_000, 100_000, 200_000, 500_000) if self.min_recharge_paise <= a <= self.max_recharge_paise]}
+
+
 @dataclass
 class Catalog:
     plans: dict[str, Plan] = field(default_factory=dict)
     packs: dict[str, CreditPack] = field(default_factory=dict)
+    payg: Optional[Payg] = None
 
     def plan(self, plan_id: str) -> Plan:
         return self.plans.get(plan_id) or self.plans["free"]
 
 
 DEFAULTS = {
+    # ONE plan: pay as you go. No subscription; a prepaid balance in minutes of video (see ``Payg``). Change the numbers in a plans.json named by CLIPCROW_PLANS.
     "plans": [
-        {"id": "free", "name": "Free", "monthly_minutes": 30, "retention_days": 7, "source_days": 3},
-        {"id": "pro", "name": "Pro", "monthly_minutes": 600, "retention_days": 30, "source_days": 14,
-         "razorpay_plan_id": "", "price_label": ""},
+        {"id": "free", "name": "Pay as you go", "monthly_minutes": 0, "retention_days": 30, "source_days": 7, "price_label": "₹10 per minute of video"},
     ],
     "packs": [],
+    "payg": {"price_paise_per_minute": 1000, "min_recharge_paise": 10000, "max_recharge_paise": 2000000, "signup_bonus_minutes": 10,
+             "bonus_tiers": [[200000, 5], [500000, 10]]},
 }
 
 
@@ -66,6 +98,14 @@ def load_catalog(path: str | Path | None = None) -> Catalog:
         if pack.minutes <= 0 or pack.amount_paise < 100:
             raise ValueError(f"pack {pack.id!r}: needs minutes > 0 and at least 100 paise")
         cat.packs[pack.id] = pack
+    if data.get("payg"):
+        raw = dict(data["payg"])
+        raw["bonus_tiers"] = tuple(sorted((int(a), int(pct)) for a, pct in raw.get("bonus_tiers", [])))
+        payg = Payg(**raw)
+        if payg.price_paise_per_minute < 1 or not 100 <= payg.min_recharge_paise <= payg.max_recharge_paise or payg.signup_bonus_minutes < 0 \
+                or any(a < 0 or not 0 <= pct <= 100 for a, pct in payg.bonus_tiers):
+            raise ValueError("payg: a price of at least 1 paise a minute, 100 <= min <= max recharge, a bonus of 0 or more, tiers of 0 to 100 percent")
+        cat.payg = payg
     if "free" not in cat.plans:
         raise ValueError("the plans must include one with id 'free'")
     return cat

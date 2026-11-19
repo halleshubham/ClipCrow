@@ -32,6 +32,13 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
    - *Access:* set `CLIPCROW_TOKEN` (one shared token) **or** `CLIPCROW_ACCOUNTS=1` (sign-up and per-user jobs). Without either
      the container refuses to start on a public address, on purpose.
    - *Planner:* `ANTHROPIC_API_KEY`. For Marathi and Hindi also `CLIPCROW_INDIC_MODEL=large-v3`.
+   - *Pricing (one plan, pay as you go):* the built-in catalogue is ONE plan, "Pay as you go": a prepaid balance in minutes of video, recharged with any amount; one minute of video uploaded
+     uses one minute of balance; minutes never expire; a failed or cancelled job gives its minutes back. The numbers are in `plans.json` (`CLIPCROW_PLANS`), key `payg`:
+     `price_paise_per_minute` (1000 = Rs 10), `min_recharge_paise` (10000), `max_recharge_paise` (2000000), `signup_bonus_minutes` (10, once per new account),
+     `bonus_tiers` (`[[200000, 5], [500000, 10]]`: from Rs 2000 add 5% minutes, from Rs 5000 add 10%). Set them, then check Rs per minute against what a job costs you
+     (the operator-side estimate in the New job form shows it when accounts are off; as a guide a 60-minute video with 10 clips cost about Rs 190 to make at the time of writing: about Rs 3 a minute).
+     No Razorpay *subscription* is needed: recharges are Razorpay payment links, and the webhook only needs the `payment_link.paid` event. Subscription plans still work if a plan with a
+     `razorpay_plan_id` is added. The landing page and the New job page read the price from `GET /api/pricing`.
    - *Accounts and plans:* put a `plans.json` in the `/data` volume and set `CLIPCROW_PLANS=/data/plans.json`. The built-in
      plan numbers are placeholders and there are no prices in the code.
    - *Razorpay:* `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`; in the Razorpay dashboard add the webhook

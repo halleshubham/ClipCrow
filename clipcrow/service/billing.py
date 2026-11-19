@@ -141,6 +141,21 @@ def apply_event(event: dict, event_id: str, accounts: Accounts, catalog: Catalog
     if name == "payment_link.paid":
         link = (payload.get("payment_link") or {}).get("entity") or {}
         notes = link.get("notes") or {}
+        if notes.get("pack") == "custom":                                 # a pay-as-you-go recharge: the minutes come from the amount PAID
+            amount = int(link.get("amount_paid") or 0)
+            payg = catalog.payg
+            if payg is None or link.get("status") != "paid" or not payg.min_recharge_paise <= amount <= payg.max_recharge_paise:
+                return "ignored"
+            if not accounts.first_time(f"link:{link.get('id')}"):
+                return "duplicate"
+            try:
+                user = accounts.get(notes.get("user_id", ""))
+            except KeyError:
+                return "ignored"
+            minutes = payg.minutes_for(amount)
+            accounts.add_credits(user.id, minutes)
+            say(user, "paid", f"a recharge of Rs {amount // 100}: {minutes:g} minutes added")
+            return "applied"
         pack = catalog.packs.get(notes.get("pack", ""))
         if pack is None or link.get("status") != "paid" or int(link.get("amount_paid") or 0) != pack.amount_paise:
             return "ignored"                                            # unknown pack, not paid, or the wrong amount

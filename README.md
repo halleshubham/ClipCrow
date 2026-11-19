@@ -98,7 +98,7 @@ involvement).
   and per IP). Email goes through Resend (default) or SMTP (`docs/email-task.md`, `docs/deploy.md`). Session cookie (HttpOnly, SameSite=Strict, only its hash
   is stored), per-user jobs (someone else's job is a 404 everywhere), account deletion (type your email to confirm; cancels a Razorpay subscription first
   and stops if that fails), cost limits per person (active jobs, jobs a day, minutes a job, sign-ups a day), an operator page (`#/admin`, for the emails in
-  `CLIPCROW_ADMINS`), health and alert mails, a daily database backup, Terms and Privacy pages (a draft: `docs/legal-checklist.md`). A new account gets a welcome mail and a sample job (`CLIPCROW_SAMPLE_DIR`, `clipcrow export-sample`). The marketing page is at `/landing/`. Serve it behind TLS.
+  `CLIPCROW_ADMINS`), health and alert mails, a daily database backup, Terms and Privacy pages (a draft: `docs/legal-checklist.md`). One plan, pay as you go: a prepaid balance in minutes, recharged with any amount (Razorpay payment links), a bonus on big recharges, free minutes once at sign-up (`docs/deploy.md`, Pricing). A new account gets a welcome mail and a sample job (`CLIPCROW_SAMPLE_DIR`, `clipcrow export-sample`). The marketing page is at `/landing/`. Serve it behind TLS.
 - **Minutes and plans**: a job reserves its source minutes (rounded up) from the month's allowance, then from purchased
   credits, atomically; a job that fails or is cancelled gives them back once. Plans live in a JSON file
   (`CLIPCROW_PLANS`; the built-in numbers are placeholders and there are **no prices in the code**: a plan's price is the
