@@ -28,3 +28,13 @@ def test_the_landing_page_is_public_self_contained_and_links_to_the_app(tmp_path
 def test_the_landing_css_respects_reduced_motion_and_both_themes():
     css = (STATIC / "landing" / "landing.css").read_text(encoding="utf-8")
     assert "prefers-reduced-motion: reduce" in css and "prefers-color-scheme: light" in css and "@import" not in css and "url(http" not in css
+
+
+def test_the_landing_page_names_the_two_use_cases_and_has_a_cost_estimator():
+    html = (STATIC / "landing" / "index.html").read_text(encoding="utf-8")
+    low = html.lower()
+    assert "vox populi" in low and "podcast" in low and "many reels" in low                      # use case 1
+    assert "raw take" in low and "clean, branded production" in low and "ums" in low             # use case 2
+    assert 'id="est-min"' in html and 'id="est-cost"' in html and 'id="examples"' in html         # the estimator and the examples (filled from /api/pricing)
+    js = (STATIC / "landing" / "landing.js").read_text(encoding="utf-8")
+    assert "/api/pricing" in js and "innerHTML" not in js                                         # the numbers come from the server; text only
