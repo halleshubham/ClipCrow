@@ -26,7 +26,7 @@ log = logging.getLogger("clipcrow.pod")
 
 API_BASE = "https://api.raceengineering.ai/v1/gpu/"
 DEFAULT_BOOT = "bash /workspace/post_resume.sh; bash /workspace/start_worker.sh"
-CAN = ("transcribe", "render", "speakers")
+CAN = ("transcribe", "render", "speakers", "framing")
 
 
 class PodError(RuntimeError):

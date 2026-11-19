@@ -129,6 +129,8 @@ class RealPipeline:
         if self.hub is not None:                                              # a worker with a GPU does the voice work; else it is done here
             from .workers import RemoteSpeakers
             recut.setdefault("speakers_fn", RemoteSpeakers(hub, job.id, check=hooks.check))
+            from .workers import RemoteFraming
+            recut.setdefault("framing_fn", RemoteFraming(hub, job.id, check=hooks.check, say=say))
         return make(video, out, language=job.params.language, clean_take=job.params.clean_take, **recut, llm=Interruptible(AnthropicLLM(), hooks.check), opts=planner_options(job, out.parent / "pictures"),
                     hooks=hooks, say=say, multi=job.params.multi, graphics=job.params.graphics, clean=job.params.clean, clean_pace=job.params.clean_pace, transcribe_fn=transcribe_fn, render_fn=render_fn,
                     images=self._images() if job.params.ai_images else None,

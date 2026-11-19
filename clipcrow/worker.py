@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -243,13 +244,14 @@ def run_worker(transport: Transport, name: str, *, model: str = "large-v3", tran
                max_tasks: Optional[int] = None, poll_wait: float = POLL_WAIT, can_render: bool = False,
                render_fn: Optional[Callable] = None, cache: Optional[Path] = None, cache_gb: float = 20.0,
                pin: Optional[str] = None, can_speakers: bool = False, speakers_fn: Optional[Callable] = None, render_only: bool = False,
+               can_framing: bool = False, framing_fn: Optional[Callable] = None,
                power: Optional[int] = None, pool: str = "home") -> int:
     """Poll, do the task, upload; until ``stop()`` or ``max_tasks`` tasks. Returns the number of tasks finished."""
     if transcribe is None and not render_only:
         transcribe, label = default_transcribe(model)
     if pin is None:
         from .render import HYPERFRAMES_VERSION as pin
-    can = (["render"] if render_only else ["transcribe"] + (["render"] if can_render else []) + (["speakers"] if can_speakers else []))
+    can = (["render"] if render_only else ["transcribe"] + (["render"] if can_render else []) + (["speakers"] if can_speakers else []) + (["framing"] if can_framing else []))
     if power is None:
         power = capacity(label)
     done, failures = 0, 0
@@ -274,6 +276,8 @@ def run_worker(transport: Transport, name: str, *, model: str = "large-v3", tran
             continue
         if task.get("kind") == "render":
             ok = handle_render(transport, name, task, log, cache=cache or cache_root(), render_fn=render_fn, cache_gb=cache_gb)
+        elif task.get("kind") == "framing":
+            ok = handle_framing(transport, name, task, log, cache=cache or cache_root(), framing_fn=framing_fn, cache_gb=cache_gb)
         elif task.get("kind") == "speakers":
             ok = handle_speakers(transport, name, task, log, cache=cache or cache_root(), speakers_fn=speakers_fn, cache_gb=cache_gb)
         else:
@@ -424,6 +428,84 @@ def speakers_ready() -> tuple[bool, str]:
     return True, "voices on the GPU" if torch.cuda.is_available() else "voices on the CPU: this image's torch cannot see a GPU"
 
 
+def framing_ready() -> tuple[bool, str]:
+    """Can this machine frame clips (find the faces and plan the crop)? It needs OpenCV and its bundled face cascade; no GPU."""
+    try:
+        import cv2
+    except ImportError as e:
+        return False, f"{e.name or 'a package'} is missing"
+    if not Path(cv2.data.haarcascades).is_dir():
+        return False, "OpenCV has no face cascade"
+    return True, f"faces on {os.cpu_count() or 1} CPU core(s)"
+
+
+def default_framing(video: Path, clips: list[dict], multi: str, graphics: bool, say: Callable[[str], None], check: Callable[[], None]) -> dict:
+    """The answer to a framing task: ``{"clips": [...]}`` with the framing of each clip (``reframe.plan_framing``, several clips at once)."""
+    from .framing import plan_clips
+    spans = [(str(c["id"]), float(c["start"]), float(c["end"])) for c in clips]
+
+    def done(cid: str, took: float) -> None:
+        say(f"{cid} framed in {took:.0f} s")
+        check()
+    got = plan_clips(str(video), spans, multi=multi, graphics=graphics, done=done)
+    out = []
+    for cid, (f, took) in got.items():
+        out.append({"id": cid, "framing": f.framing, "keyframes": [[round(t, 3), round(cx, 4)] for t, cx in f.keyframes], "coverage": round(float(f.coverage), 4),
+                    "split": [[x, y] for x, y in f.split], "people": int(f.people), "fit_spans": [[a, b] for a, b in f.fit_spans],
+                    "face_zone": list(f.face_zone) if f.face_zone else None, "seconds": round(took, 1)})
+    return {"clips": out}
+
+
+def handle_framing(transport: Transport, name: str, task: dict, log: Callable[[str], None], *, cache: Path,
+                   framing_fn: Optional[Callable] = None, cache_gb: float = 20.0, beat_seconds: Optional[float] = None) -> bool:
+    """A framing task: fetch the video (cached per job, under the name a render of this job uses), frame each clip, send back JSON only."""
+    tid, meta, files = task["id"], task.get("meta") or {}, task.get("files") or {}
+    started = time.monotonic()
+    job_id = str(meta.get("job_id", ""))
+    clips = meta.get("clips")
+    if (not job_id.replace("-", "").isalnum() or len(files) != 1 or not isinstance(clips, list) or not 0 < len(clips) <= 60
+            or not all(isinstance(c, dict) and re.fullmatch(r"c\d{1,3}", str(c.get("id", ""))) and isinstance(c.get("start"), (int, float)) and isinstance(c.get("end"), (int, float))
+                       and 0 <= c["start"] < c["end"] <= 86400 for c in clips)):
+        _report_failure(transport, name, tid, ValueError("bad job id, manifest or clip list"), log)
+        return False
+    jobdir = cache / job_id
+    with Lease(transport, name, tid, float(task.get("lease_seconds") or 90), beat_seconds) as lease:
+        try:
+            (fname, size), = files.items()
+            if not fname.startswith("media/"):
+                raise ValueError(f"unexpected file {fname!r}")
+            jobdir.mkdir(parents=True, exist_ok=True)
+            os.utime(jobdir)
+            dest = safe_join(jobdir / "media", fname[len("media/"):])
+            if not (dest.is_file() and dest.stat().st_size == size):
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                log(f"task {tid[:8]}: took framing of {len(clips)} clip(s) for job {job_id}: fetching the video ({size / 1e6:.0f} MB)")
+                transport.download(f"/api/worker/tasks/{tid}/files/{fname}?worker={name}", dest)
+            else:
+                log(f"task {tid[:8]}: took framing of {len(clips)} clip(s) for job {job_id}: the video is cached")
+
+            def check() -> None:
+                if lease.lost.is_set():
+                    raise RuntimeError("the server gave this task up")
+            answer = (framing_fn or default_framing)(dest, clips, str(meta.get("multi") or "switch"), bool(meta.get("graphics")),
+                                                       lambda m: log(f"task {tid[:8]}: {m}"), check)
+        except Exception as e:
+            _report_failure(transport, name, tid, e, log)
+            return False
+        finally:
+            evict_cache(cache, int(cache_gb * 1e9), keep=jobdir)
+    if lease.lost.is_set():
+        log(f"task {tid[:8]}: the server no longer wants this result; dropped")
+        return False
+    try:
+        ok = transport.post(f"/api/worker/tasks/{tid}/result", {"worker": name, "framing": answer}, timeout=120).get("ok")
+    except Exception as e:
+        log(f"task {tid[:8]}: could not deliver the result ({type(e).__name__})")
+        return False
+    log(f"task {tid[:8]}: {len(clips)} clip(s) framed in {time.monotonic() - started:.0f} s" + ("" if ok else " (the server had already moved on)"))
+    return bool(ok)
+
+
 def default_speakers(video: Path, say: Callable[[str], None], check: Callable[[], None]) -> dict:
     """The answer to a speakers task: ``SpeakerMap`` as JSON (no cache, no picture: the server makes its own)."""
     from .seats import analyse
@@ -491,6 +573,8 @@ def main(server: str, name: str, model: str, *, render: bool = True, cache_gb: f
     if render:
         can_render, why = render_ready()
         print("rendering: " + ("ready, this worker will also render clips" if can_render else f"off ({why}); transcription only"), file=sys.stderr)
+    can_framing, why = framing_ready()
+    print("framing: " + (f"ready, this worker will also frame clips ({why})" if can_framing else f"off ({why})"), file=sys.stderr)
     can_speakers, why = speakers_ready()
     print("who is who: " + (f"ready, this worker will also tell the people in a video apart ({why})" if can_speakers else f"off ({why})"), file=sys.stderr)
     print(f"worker {name!r} serving {server} with model {model}; Ctrl-C to stop", file=sys.stderr)
@@ -504,7 +588,7 @@ def main(server: str, name: str, model: str, *, render: bool = True, cache_gb: f
                                          label="render slot", power=capacity("cuda", parallel))).start()
     try:
         run_worker(transport, name, model=model, stop=stop.is_set, log=log, can_render=can_render, cache_gb=cache_gb,
-                   can_speakers=can_speakers, pool=pool)
+                   can_speakers=can_speakers, can_framing=can_framing, pool=pool)
     except KeyboardInterrupt:
         stop.set()
         print("stopped", file=sys.stderr)

@@ -60,7 +60,7 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
          multi: str = "switch", graphics: bool = False, images=None, capture_fn=None,
          brand: BrandKit | None = None, choice: BrandingChoice | None = None, refine_text: bool = True,
          clean: bool = False, clean_pace: str = "natural", clean_take: str = "last", clean_cuts: list | None = None, clean_reading: dict | None = None,
-         speakers_fn: Callable | None = None) -> MakeResult:
+         speakers_fn: Callable | None = None, framing_fn: Callable | None = None) -> MakeResult:
     """``clean``: cut hesitation sounds, stutters, retakes and long dead air out of the raw recording first (``cleancut``). The cleaned video
     (``out/clean.mp4``) becomes the source for everything after: planning, framing, rendering and later re-renders."""
     video, out = Path(video), Path(out_dir)
@@ -192,7 +192,7 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
             speakers = speakers_fn(video, out, detector=detector, say=say, check=hk.check)
         except Exception as e:                                               # a model that will not load must never fail the job (a cancel is not an Exception): the picture alone decides
             say(f"voices could not be matched to people ({type(e).__name__}); the picture alone decides who is shown")
-    edl = apply_framing(edl, str(video), detector=detector, say=say, multi=multi, graphics=graphics, speakers=speakers)
+    edl = apply_framing(edl, str(video), detector=detector, say=say, multi=multi, graphics=graphics, speakers=speakers, framing_fn=framing_fn)
     hk.stage("frame", "done", ", ".join(f"{c.id}: {c.layout.framing}" for c in edl.clips))
     if choice is not None and choice.any():
         edl = apply_brand(edl, brand or BrandKit(), choice, out)

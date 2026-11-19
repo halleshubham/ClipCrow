@@ -1432,6 +1432,10 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             if body.speakers is None:
                 return {"ok": hub.finish(task_id, body.worker, error="the worker sent no answer")}
             return {"ok": hub.finish(task_id, body.worker, result={"speakers": body.speakers.model_dump()})}
+        if kind == "framing":
+            if body.framing is None:
+                return {"ok": hub.finish(task_id, body.worker, error="the worker sent no answer")}
+            return {"ok": hub.finish(task_id, body.worker, result={"framing": body.framing.model_dump()})}
         if not body.words:
             return {"ok": hub.finish(task_id, body.worker, error="the worker found no speech")}
         return {"ok": hub.finish(task_id, body.worker, result={"language": body.language, "engine": body.engine, "words": [w.model_dump() for w in body.words]})}

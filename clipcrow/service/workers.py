@@ -64,7 +64,7 @@ class PollIn(_M):
     wait: float = Field(default=20.0, ge=0.0, le=25.0)             # how long the server may hold the request open
     device: str = Field(default="", max_length=60)                 # e.g. "NVIDIA GeForce RTX 4060 (cuda)" or "cpu"
     model: str = Field(default="", max_length=40)
-    can: list[Literal["transcribe", "render", "speakers"]] = Field(default_factory=lambda: ["transcribe"], max_length=3)
+    can: list[Literal["transcribe", "render", "speakers", "framing"]] = Field(default_factory=lambda: ["transcribe"], max_length=4)
     pin: str = Field(default="", max_length=40)                    # the HyperFrames version this worker renders with
     direct: bool = False                                           # can send a finished clip straight to the bucket (see DirectIn)
     pool: Literal["home", "rented"] = "home"                       # which kind of machine this is: jobs can ask for one kind
@@ -129,12 +129,54 @@ class SpeakersIn(_M):
         return self
 
 
+MAX_FRAMING_CLIPS, MAX_KEYFRAMES = 60, 12000
+
+
+class FramingOneIn(_M):
+    """One clip's framing as a worker worked it out: untrusted, every number bounded (the same shape as ``reframe.Framing``)."""
+    id: str = Field(pattern=r"^c\d{1,3}$")
+    framing: Literal["cover", "track", "fit_blur", "split"]
+    keyframes: list[tuple[float, float]] = Field(default_factory=list, max_length=MAX_KEYFRAMES)
+    coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    split: list[tuple[float, float]] = Field(default_factory=list, max_length=4)
+    people: int = Field(default=1, ge=1, le=8)
+    fit_spans: list[tuple[float, float]] = Field(default_factory=list, max_length=200)
+    face_zone: Optional[tuple[float, float, float, float]] = None
+    seconds: float = Field(default=0.0, ge=0.0, le=86_400.0)
+
+    @model_validator(mode="after")
+    def _in_range(self):
+        if any(not (0.0 <= t <= 3600.0 and 0.0 <= cx <= 1.0) for t, cx in self.keyframes):
+            raise ValueError("a keyframe is outside the clip or the frame")
+        if any(not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0) for x, y in self.split):
+            raise ValueError("a split point is outside the frame")
+        if any(not (0.0 <= a < b <= 3600.0) for a, b in self.fit_spans):
+            raise ValueError("a graphic span is outside the clip")
+        if self.face_zone is not None:
+            x0, y0, x1, y1 = self.face_zone
+            if not (0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0):
+                raise ValueError("the face zone is outside the frame")
+        return self
+
+
+class FramingIn(_M):
+    """A worker's answer to "frame these clips"."""
+    clips: list[FramingOneIn] = Field(default_factory=list, max_length=MAX_FRAMING_CLIPS)
+
+
+def framing_from_in(o: FramingOneIn):
+    from ..reframe import Framing
+    return Framing(o.framing, [tuple(k) for k in o.keyframes], o.coverage, [tuple(p) for p in o.split], o.people,
+                   [tuple(s) for s in o.fit_spans], tuple(o.face_zone) if o.face_zone else None)
+
+
 class ResultIn(_M):
     worker: str = Field(pattern=WORKER_NAME)
     language: Optional[str] = Field(default=None, pattern=r"^[a-z]{2,3}$")
     words: list[WordIn] = Field(default_factory=list, max_length=MAX_WORDS)
     error: str = Field(default="", max_length=300)
     speakers: Optional[SpeakersIn] = None                                   # the answer to a "speakers" task
+    framing: Optional[FramingIn] = None                                     # the answer to a "framing" task
     engine: str = Field(default="", pattern=r"^[a-z0-9_.-]{0,30}$")        # what recognised the speech (shown in the job log; part of the transcript reuse record)
     warnings: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=20)     # a render's notes, each shown in the job log
 
@@ -203,6 +245,9 @@ class HubView:
 
     def submit_speakers(self, job_id, files, meta, max_seconds: float = 1800.0):
         return self._hub.submit_speakers(job_id, files, meta, max_seconds, pool=self.pool)
+
+    def submit_framing(self, job_id, files, meta, max_seconds: float = 3600.0):
+        return self._hub.submit_framing(job_id, files, meta, max_seconds, pool=self.pool)
 
     def submit_render(self, job_id, files, meta, upload_dir, max_seconds: float = 3600.0, direct: bool = False):
         return self._hub.submit_render(job_id, files, meta, upload_dir, max_seconds, direct, pool=self.pool)
@@ -318,6 +363,13 @@ class WorkerHub:
             if not _clean_name(name) or not name.startswith("media/"):
                 raise WorkerError("a file in this task has a name the worker protocol does not allow")
         return self._add(Task(uuid.uuid4().hex, job_id, "speakers", dict(files), dict(meta), self._clock(), max_seconds=max_seconds, pool=pool))
+
+    def submit_framing(self, job_id: str, files: dict[str, Path], meta: dict, max_seconds: float = 3600.0, pool: str = "") -> Task:
+        """A "frame these clips" task: the video under ``media/<name>`` (the name a render of this job uses, so the worker keeps it for the renders)."""
+        for name in files:
+            if not _clean_name(name) or not name.startswith("media/"):
+                raise WorkerError("a file in this task has a name the worker protocol does not allow")
+        return self._add(Task(uuid.uuid4().hex, job_id, "framing", dict(files), dict(meta), self._clock(), max_seconds=max_seconds, pool=pool))
 
     def submit_render(self, job_id: str, files: dict[str, Path], meta: dict, upload_dir: Path, max_seconds: float = 3600.0,
                       direct: bool = False, pool: str = "") -> Task:
@@ -681,6 +733,37 @@ class RemoteSpeakers:
         except (WorkerError, ValidationError, KeyError, TypeError, ValueError, OSError) as e:      # a cancelled job raises something else
             say(f"the GPU worker did not deliver ({str(e)[:120]}); working it out on the server instead")
             return local()
+
+
+@dataclass
+class RemoteFraming:
+    """``framing_fn`` for ``framing.apply_framing``: the clips' framing (face tracking: CPU work on a long video) done by a worker that can, in parallel,
+    else here. Only for what has to look at the picture: with a voice map the framing follows the voices, which is cheap and stays on the server."""
+    hub: WorkerHub
+    job_id: str
+    check: Callable[[], None] = lambda: None
+    say: Callable[[str], None] = lambda _m: None
+
+    def __call__(self, video, spans, *, multi: str = "switch", graphics: bool = False, speakers=None) -> dict:
+        say = self.say
+        if (speakers is not None and multi != "off" and not graphics) or not spans or not self.hub.online("framing"):
+            return {}
+        video = Path(video)
+        asked = {cid for cid, _a, _b in spans}
+        try:
+            say(f"asking the GPU worker to frame the {len(spans)} clip(s)")
+            meta = {"job_id": self.job_id, "multi": multi, "graphics": bool(graphics),
+                    "clips": [{"id": cid, "start": round(float(a), 3), "end": round(float(b), 3)} for cid, a, b in spans]}
+            task = self.hub.submit_framing(self.job_id, {f"media/{video.name}": video}, meta, max_seconds=min(7200.0, 600.0 + 120.0 * len(spans)))
+            result = self.hub.wait(task, self.check, say=say)
+            got = FramingIn.model_validate(result["framing"])
+            if any(o.id not in asked for o in got.clips) or len({o.id for o in got.clips}) != len(got.clips):
+                raise WorkerError("the worker framed clips that were not asked for")
+            say(f"the GPU worker framed {len(got.clips)} clip(s)")
+            return {o.id: (framing_from_in(o), o.seconds) for o in got.clips}
+        except (WorkerError, ValidationError, KeyError, TypeError, ValueError, OSError) as e:      # a cancelled job raises something else
+            say(f"the GPU worker did not deliver ({str(e)[:120]}); framing the clips on the server instead")
+            return {}
 
 
 # --- the job side: a render function that prefers a worker -------------------------------------------------------------

@@ -11,7 +11,7 @@ import re
 from typing import Callable
 
 CURRENCY = "INR"
-_KIND = {"transcribe": "Speech recognition", "render": "Render", "speakers": "Who is who"}
+_KIND = {"transcribe": "Speech recognition", "render": "Render", "speakers": "Who is who", "framing": "Framing"}
 
 
 def load_rates(raw: str | None = None) -> dict[str, float]:
