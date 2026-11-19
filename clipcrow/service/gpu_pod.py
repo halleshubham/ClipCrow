@@ -104,6 +104,9 @@ def jupyter_run(web_url: str, command: str, timeout: float = 180.0) -> str:
 
 
 class PodController:
+    RETRY_SECONDS = 40.0                            # wait this long before asking a provider with no free GPU again
+    MAX_ATTEMPTS = 6                                # then the job goes on without it (the server does the work)
+
     def __init__(self, client, hub, pod_id: str, *, hourly: float = 0.0, idle_seconds: float = 600.0, max_daily: float = 500.0,
                  boot: Optional[Callable[[str], None]] = None, can: tuple = CAN, clock: Callable[[], float] = time.monotonic,
                  today: Callable[[], str] = lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"), threaded: bool = True):
@@ -113,6 +116,7 @@ class PodController:
         self.state = "unknown"                      # unknown | asleep | waking | awake
         self.error = ""
         self._awake_since = 0.0
+        self._retry_at, self._attempts = 0.0, 0         # a provider with no free GPU right now is asked again, a few times
         self._last_busy = clock()
         self._spent_day, self._spent = today(), 0.0
         self._lock = threading.RLock()
@@ -184,7 +188,9 @@ class PodController:
             if self.state == "awake" and unserved and now - self._awake_since > 180 and max(u["age"] for u in unserved) > 120:
                 self.state = "unknown"                                  # it should be serving but nobody answers: ask the provider what it is
                 return
-            if self.state == "asleep" and unserved and not self._over_budget() and any(u["kind"] in self.can and u.get("pool") != "home" for u in unserved):
+            if not unserved:
+                self._attempts = 0
+            if self.state == "asleep" and unserved and now >= self._retry_at and not self._over_budget() and any(u["kind"] in self.can and u.get("pool") != "home" for u in unserved):
                 self._wake()
             elif self.state == "awake" and not busy and (now - self._last_busy >= self.idle_seconds or self._over_budget()):
                 self._sleep()
@@ -209,7 +215,12 @@ class PodController:
             with self._lock:
                 self.error = str(e) if isinstance(e, PodError) else f"waking the pod failed ({type(e).__name__}: {str(e)[:80]})"
                 self._spent += (self._clock() - self._awake_since) / 3600.0 * self.hourly
-                self.state, self._awake_since = "unknown", 0.0          # look at the provider again before trying anything else
+                self._attempts += 1
+                self._awake_since = 0.0
+                if "503" in self.error and self._attempts < self.MAX_ATTEMPTS:      # no free GPU right now: stay asleep, ask again soon
+                    self.state, self._retry_at = "asleep", self._clock() + self.RETRY_SECONDS
+                else:
+                    self.state = "unknown"                              # look at the provider again before trying anything else
             log.warning("waking the GPU pod failed: %s", self.error)
 
     def _sleep(self) -> None:

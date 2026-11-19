@@ -352,7 +352,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     if start_runner and (accounts or any(env_days()) or storage):
         app.state.sweeper = Sweeper(store, days_for, storage=storage, mirror=mirror, local_clip_days=local_clip_days,
-                                    extra=([lambda: expire_uploads()] if direct else []) + [pictures.expire])          # resolved when it runs: defined further down
+                                    extra=([lambda: getattr(app.state, "expire_uploads", lambda: None)()] if direct else []) + [pictures.expire])          # resolved when it runs (the first run can come before create_app has defined it, then it is skipped)
         app.state.sweeper.start()
 
     def purge_remote(job_id: str, message: str = "The stored copies could not be removed just now, so nothing was deleted. Try again in a minute.") -> None:

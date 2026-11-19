@@ -128,3 +128,37 @@ def test_the_controller_exists_only_when_a_key_and_a_pod_are_configured():
     assert from_env(hub, {}) is None and from_env(hub, {"RACE_GPU_API_KEY": "k" * 20}) is None
     c = from_env(hub, {"RACE_GPU_API_KEY": "k" * 20, "RACE_POD_ID": "p1", "CLIPCROW_POD_HOURLY": "55", "CLIPCROW_POD_IDLE_MINUTES": "5"})
     assert c.hourly == 55.0 and c.idle_seconds == 300.0 and hub.standby is not None
+
+
+def test_a_provider_with_no_free_gpu_is_asked_again_before_giving_up(tmp_path):
+    now, hub, ctl, booted, a = setup(tmp_path)
+    calls = []
+
+    def resume(pid):
+        calls.append(1)
+        if len(calls) < 3:
+            raise PodError("the GPU provider answered 503 to resume-pod/")
+        return "https://pod.invalid/lab?token=SECRET"
+    ctl.client.resume = resume
+    ctl.tick()
+    hub.submit("j", a, "mr", pool="rented")
+    ctl.tick()
+    assert ctl.state == "asleep" and hub.online(pool="rented")      # still queued for the pod, not sent to the server
+    ctl.tick()
+    assert len(calls) == 1                                          # not before the pause between attempts
+    now[0] += ctl.RETRY_SECONDS + 1
+    ctl.tick()
+    now[0] += ctl.RETRY_SECONDS + 1
+    ctl.tick()
+    assert len(calls) == 3 and ctl.state == "awake" and ctl.status()["error"] == ""
+
+
+def test_after_the_last_attempt_the_controller_gives_up_for_now(tmp_path):
+    now, hub, ctl, booted, a = setup(tmp_path)
+    ctl.client.resume = lambda pid: (_ for _ in ()).throw(PodError("the GPU provider answered 503 to resume-pod/"))
+    ctl.tick()
+    hub.submit("j", a, "mr", pool="rented")
+    for _ in range(ctl.MAX_ATTEMPTS + 2):
+        ctl.tick()
+        now[0] += ctl.RETRY_SECONDS + 1
+    assert ctl.state in ("unknown", "asleep") and "503" in ctl.status()["error"]
