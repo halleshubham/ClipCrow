@@ -225,3 +225,6 @@ AI images stay `full`; explicit `full`/`panel` are unchanged. Render code change
 
 ## 2026-11-19: home GPU only after the pods
 `hub_view`: when a pod controller is configured, "Automatic" jobs start with the on-demand pool (`rented`); `_reroute` widens to any connected worker (the home GPU) only when the pods are not available, then the server. The two env restrictions on the production service (`CLIPCROW_WORKER_DISABLED`, `CLIPCROW_GPU_FALLBACK`) were removed. The home worker image still has to carry the current render build to render.
+
+## 2026-11-19: New job form reorganised
+The options used every time (language, clips, reel length min and max, people in the video, brand toggles for logo, cover title, full-video banner and ending video, raw-recording clean-up) are always visible; **More options** keeps the rare ones. New parts in `app.js`: `fieldLabel`, `segmented` (hidden input, radiogroup, arrow keys), `chip` (toggle pill with its "i"). Selects now show a chevron on a raised face (the old `select` rule lost to the `:is(input, select)` rule on specificity and had never drawn its chevron). The GPU choice and the rough cost sit beside Generate clips. Icons added (`wallet cpu timer megaphone user-round columns-2 hash indian-rupee`). `.layout` uses `minmax(0, 1fr)` on phones so a wide child cannot push the page sideways.

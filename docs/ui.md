@@ -37,3 +37,10 @@ Helper text everyone needs stays visible; longer explanations go behind an "i" t
 - **Long hints become an "i" by themselves** (`decorate()` in `app.js`): a `.hint` longer than ~24 characters under a `label.field`, and the grey line under a checkbox title. Mark a hint `data-keep` when people need it before choosing (a size limit); a status line (`role`/`aria-live`) never moves.
   For a label that needs its own explanation write `tip('the longer text', 'what it is about')`.
 - Phones: the four navigation icons are hidden under 440 px (the labels already fill the width); everything else keeps its icon.
+
+## New job form (2026-11-19)
+Research behind it (sources: NN/g on [drop-downs](https://nngroup.com/articles/dropdown-list) and on progressive disclosure, Baymard on drop-down misuse, W3C WCAG 1.4.13 for the help popovers): hide only what people rarely need; a few choices belong side by side, not in a menu; a menu must look like a menu; help is reachable by hover, keyboard and tap and never holds the only copy of a limit; the price and the main button sit together.
+- **Everything used every time is on the page**: language, clips to make, reel length (shortest to longest, one field), people in the video, brand toggles (logo, cover title, full-video banner, ending video) and "Raw recording: cut fumbles and dead air". **More options** holds only the rare ones.
+- **`segmented()`** for 2 to 4 short choices (one tap, arrow keys, `role="radiogroup"`; the value lives in a hidden input with the same id). **`chip()`** for a yes/no option: icon, short name, a tick when on, the explanation behind an "i". **`fieldLabel()`**: an icon, the label and its "i". Option names are short; the long text is the "i".
+- **Selects** are drawn as a control you open: raised face, chevron, pointer (`select:not(.plain)`), so they no longer look like text boxes.
+- **The action bar** carries the GPU choice, the rough cost (`≈ ₹…`, the breakdown behind its "i") and Generate clips.

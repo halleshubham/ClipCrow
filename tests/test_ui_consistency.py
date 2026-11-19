@@ -4,7 +4,7 @@ import re
 from clipcrow.service.api import STATIC
 
 # Input types the stylesheet has been checked against (see docs/ui.md). Add one only after looking at it in dark AND light next to a text field.
-STYLED_INPUT_TYPES = {"text", "password", "number", "checkbox", "file", "range", "color", "datetime-local", "date"}
+STYLED_INPUT_TYPES = {"text", "password", "number", "checkbox", "file", "range", "color", "datetime-local", "date", "hidden"}
 
 
 def read(name):
@@ -45,3 +45,22 @@ def test_the_script_parses():
         pytest.skip("needs node")
     r = subprocess.run([node, "--check", str(STATIC / "app.js")], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[:400]
+
+
+def test_the_options_people_use_every_time_are_not_hidden_behind_more_options():
+    """New job: language, clip count, reel length, people, brand toggles, raw-recording clean-up, the GPU choice and the cost are on the page itself."""
+    js = read("app.js")
+    start = js.index("async function newJobView()")
+    body = js[start:]
+    more = body.index("el('details', { class: 'adv' }")
+    for needle in ("id: 'language'", "id: 'clips'", "id: 'min_clip'", "id: 'max_clip'", "segmented('multi'", "chip('logo'", "chip('cover'", "chip('show_banner'", "chip('outro'", "chip('clean'"):
+        assert body.index(needle) < more, f"{needle} must sit above 'More options'"
+    after = body[more:]
+    assert "id: 'gpu'" in after and "id: 'cost-val'" in after                     # beside Generate clips
+    assert body.index("id: 'gpu'") > more and body.index("id: 'cost-val'") > body.index("class: 'actionbar'")
+
+
+def test_a_select_is_drawn_as_a_control_you_open_not_as_a_text_box():
+    css = read("style.css")
+    rule = css[css.index("select:not(.plain)"):].split("}", 1)[0]
+    assert "background-image" in rule and "--raised" in rule and "cursor: pointer" in rule         # a chevron, a raised face, a hand

@@ -28,7 +28,8 @@ LUCIDE = """plus list palette badge-check download archive play scissors pencil 
 refresh-cw info circle-help sliders-horizontal music volume-2 captions shuffle users mic share-2
 send image type clock triangle-alert sparkles link copy eye folder user log-out layers zoom-in
 languages gauge file-text rotate-ccw external-link chevron-down chevron-right circle-check
-circle-x loader wand-sparkles film upload house settings""".split()
+circle-x loader wand-sparkles film upload house settings
+wallet cpu timer megaphone user-round columns-2 hash indian-rupee""".split()
 PLATFORMS = """youtube instagram facebook tiktok x linkedin telegram threads pinterest bluesky
 reddit whatsapp snapchat mastodon""".split()
 
