@@ -24,5 +24,6 @@ python3 $W/src/scripts/install_fonts.py $W/fonts >$W/logs/fonts.log 2>&1; step "
 bash $W/src/scripts/fetch_gsap.sh $W/clipcrow-vendor >$W/logs/gsap.log 2>&1; step "gsap rc=$?"
 python3 -m venv --system-site-packages $W/venv && step "venv"
 $W/venv/bin/pip install -q "$W/src[llm,vision,service,storage,asr,assets]" soundfile sentencepiece "nvidia-cublas-cu12" "nvidia-cudnn-cu12==9.*" >$W/logs/pip.log 2>&1; step "pip rc=$?"
+$W/venv/bin/pip install -q "transformers==5.23.0" >>$W/logs/pip.log 2>&1; step "transformers pin rc=$?"      # the newest tokenizers does not match the transformers pip picks
 $W/venv/bin/python -c "import clipcrow, torch, transformers; print('python ok', torch.__version__, torch.cuda.is_available(), transformers.__version__)" 2>&1 | tail -2
 step "DONE"
