@@ -469,6 +469,7 @@ function pictureField() {
 }
 
 // ---- the New job form's own parts: a label with its icon and help, a segmented choice, a toggle chip --------------
+const GPU_HELP = 'Automatic tries the on-demand GPU first (it wakes when needed and is billed by time) and uses the home GPU only if the on-demand one cannot take the work. The server does it last.';
 function fieldLabel(ic, text, forId, help) {
   return el(forId ? 'label' : 'div', { class: 'field ic', for: forId || null }, icon(ic, 16), el('span', { text }), help ? tip(help, text) : null);
 }
@@ -525,11 +526,12 @@ async function newJobView() {
   // a planning estimate of the GPU cost for this video, from its length (read in the browser) and how many reels were asked for
   let videoSeconds = 0;
   const costTip = tip('Choose a video to see a rough cost.', 'the cost');
+  const gpuHelp = () => ($('gpu') ? ` ${GPU_HELP}` : '');
   const setCost = (value, detail) => { const v = $('cost-val'); if (v) v.textContent = value; costTip.dataset.tip = detail; };
   const estimateCost = () => {
     const n = c.gpu_worker && c.gpu_worker.estimate;
     if (!n || !$('cost-val')) return;
-    if (!file || !videoSeconds) { setCost('—', file ? 'The video length could not be read, so there is no estimate.' : 'Choose a video to see a rough cost.'); return; }
+    if (!file || !videoSeconds) { setCost('₹ —', (file ? 'The video length could not be read, so there is no estimate.' : 'Choose a video to see a rough cost.') + gpuHelp()); return; }
     const minutes = videoSeconds / 60, reels = Math.max(1, Number($('clips').value) || Math.max(3, Math.round(minutes / 6)));   // no count asked: about one reel per six minutes
     const l = n.llm;
     const ai = ((l.in_fixed + l.in_per_minute * minutes + l.in_per_reel * reels) * l.usd_in + l.out_per_reel * reels * l.usd_out) / 1e6 * l.usd_inr * n.markup;
@@ -540,7 +542,7 @@ async function newJobView() {
     const home = gpu(n.home_rate, 0), pod = gpu(n.pod_rate, n.wake);
     const use = choice === 'home' ? home : choice === 'pod' ? pod : (c.gpu_worker.pod && c.gpu_worker.pod.enabled !== false ? pod : (c.gpu_worker.online ? home : pod));
     const both = $('gpu') ? ` Home GPU: ${rupees(ai + home)}. On-demand GPU: ${rupees(ai + pod)}.` : '';
-    setCost(`≈ ${rupees(ai + use)}`, `Rough cost for ${Math.round(minutes)} min of video and ${reels} reel${reels > 1 ? 's' : ''}: AI planning ${rupees(ai)} + GPU ${use > 0 ? rupees(use) : 'none'}, with a ${Math.round(n.margin_percent)}% margin.${both} A guide, not a quote.`);
+    setCost(`≈ ${rupees(ai + use)}`, `Rough cost for ${Math.round(minutes)} min of video and ${reels} reel${reels > 1 ? 's' : ''}: AI planning ${rupees(ai)} + GPU ${use > 0 ? rupees(use) : 'none'}, with a ${Math.round(n.margin_percent)}% margin.${both} A guide, not a quote.${gpuHelp()}`);
   };
   const readLength = () => {
     videoSeconds = 0;
@@ -658,9 +660,11 @@ async function newJobView() {
         el('p', { class: 'note', id: 'brand-note', 'aria-live': 'polite' })),
       el('div', {}, el('div', { class: 'chips' }, chip('clean', 'scissors', 'Raw recording: cut fumbles and dead air',
         'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.')),
-        el('div', { id: 'clean-opts', class: 'ess-grid ess-sub', hidden: true },
-          select('clean_pace', 'How tight', [['natural', 'Natural: keep short pauses'], ['fast', 'Fast: YouTube talking head'], ['tight', 'Tight: Reels and Shorts jump cuts']]),
-          select('clean_take', 'When a passage is said twice', [['last', 'Keep the last take'], ['best', 'Keep the best take (the AI judges)']])))),
+        el('div', { id: 'clean-opts', class: 'pair2', hidden: true },
+          select('clean_pace', 'How tight', [['natural', 'Natural'], ['fast', 'Fast'], ['tight', 'Tight']],
+            'Natural keeps short pauses (talks, courses, interviews). Fast is tighter (YouTube talking head). Tight is jump-cut style (Reels and Shorts).'),
+          select('clean_take', 'A passage said twice', [['last', 'Keep the last take'], ['best', 'Keep the best take']],
+            'Keep the last take is the usual retake. Keep the best take lets the AI judge which one is better.')))),
     el('details', { class: 'adv' }, el('summary', {}, 'More options', el('span', { class: 'sub', text: 'spread, speaker card, pictures, music, effects' })),
       el('div', { class: 'stack' },
       el('div', { class: 'grid2', style: { marginTop: 0 } },
@@ -706,8 +710,8 @@ async function newJobView() {
       el('div', { class: 'grp' },
         c.gpu_worker && c.gpu_worker.enabled && el('div', { class: 'gpu' }, icon('cpu', 18),
           el('select', { id: 'gpu', 'aria-label': 'Which GPU does the heavy work' }, [['auto', 'GPU: automatic'], ['pod', 'GPU: on-demand (billed by time)'], ['home', 'GPU: home only']].map(([v, t]) => el('option', { value: v, text: t }))),
-          tip('Automatic tries the on-demand GPU first (it wakes when needed and is billed by time) and uses the home GPU only if the on-demand one cannot take the work. The server does it last.', 'the GPU choice')),
-        c.gpu_worker && c.gpu_worker.estimate && el('div', { class: 'cost' }, icon('wallet', 18), el('span', { class: 'cost-val', id: 'cost-val', 'aria-live': 'polite', text: '—' }), costTip),
+          !(c.gpu_worker.estimate) && tip(GPU_HELP, 'the GPU choice')),
+        c.gpu_worker && c.gpu_worker.estimate && el('div', { class: 'cost' }, icon('wallet', 18), el('span', { class: 'cost-val', id: 'cost-val', 'aria-live': 'polite', text: '₹ —' }), costTip),
         status, cancelBtn, submit))));
 
   const $ = (id) => form.querySelector('#' + id);
