@@ -491,7 +491,7 @@ async function newJobView() {
     const out = $('gpu-est'), n = c.gpu_worker && c.gpu_worker.estimate;
     if (!out || !n) return;
     if (!file || !videoSeconds) { out.textContent = file ? 'The video length could not be read, so no estimate.' : 'Choose a video to see a rough cost.'; return; }
-    const reels = Math.max(1, Number($('clips').value) || 3), minutes = videoSeconds / 60;
+    const minutes = videoSeconds / 60, reels = Math.max(1, Number($('clips').value) || Math.max(3, Math.round(minutes / 6)));   // no count asked: about one reel per six minutes
     const l = n.llm;
     const ai = ((l.in_fixed + l.in_per_minute * minutes + l.in_per_reel * reels) * l.usd_in + l.out_per_reel * reels * l.usd_out) / 1e6 * l.usd_inr * n.markup;
     const gpuBase = videoSeconds * n.listen + ($('multi').value !== 'off' ? videoSeconds * n.who : 0) + reels * n.render;

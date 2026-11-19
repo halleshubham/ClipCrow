@@ -84,7 +84,7 @@ def estimate_numbers(rates: dict, pod_hourly=None) -> dict:
         usd_inr = max(1.0, float(os.environ.get("CLIPCROW_USD_INR") or 88.0))
     except ValueError:
         usd_inr = 88.0
-    # planning numbers for the language-model part (from real jobs: one plan call that reads the transcript, then about 2.3k tokens in and 0.4k out per reel)
-    llm = {"usd_in": pin, "usd_out": pout, "usd_inr": usd_inr, "in_fixed": 2500, "in_per_minute": 400, "in_per_reel": 2300, "out_per_reel": 450}
+    # planning numbers for the language-model part (fitted to a real 61-minute Marathi job with 10 reels: scoring reads the transcript, then each reel needs a detail call and a text-refine call or two)
+    llm = {"usd_in": pin, "usd_out": pout, "usd_inr": usd_inr, "in_fixed": 1000, "in_per_minute": 1200, "in_per_reel": 9500, "out_per_reel": 6400}
     return {"currency": "INR", "markup": markup, "home_rate": home, "pod_rate": pod, "listen": LISTEN_PER_SECOND, "who": WHO_PER_SECOND,
             "render": RENDER_PER_REEL, "wake": WAKE_SECONDS, "llm": llm}
