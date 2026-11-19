@@ -27,7 +27,7 @@ def sweep(store: JobStore, days_for: Callable[[Job], tuple[int, int]], *, now: O
     now = now or datetime.now(timezone.utc)
     out = {"jobs": 0, "sources": 0, "evicted": 0}
     for job in store.list():
-        if job.status in ("queued", "running"):
+        if job.status in ("queued", "running") or job.sample:
             continue
         keep_days, source_days = days_for(job)
         age = _age_days(job, now)

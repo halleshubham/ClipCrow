@@ -61,6 +61,10 @@ def main(argv: list[str] | None = None) -> int:
     sv.add_argument("--insecure", action="store_true", help="allow a non-local address without CLIPCROW_TOKEN")
     sv.add_argument("--accounts", action="store_true", default=os.environ.get("CLIPCROW_ACCOUNTS") == "1", help="multi-user: sign-up, per-user jobs, minutes metered against a plan, retention")
     sv.add_argument("--no-signup", action="store_true", default=os.environ.get("CLIPCROW_SIGNUP") == "0", help="with --accounts: do not let new people register")
+    es = sub.add_parser("export-sample", help="save a finished job as the sample every new account starts with (set CLIPCROW_SAMPLE_DIR to the folder)")
+    es.add_argument("job_id")
+    es.add_argument("--data", default="data", help="the service's data folder")
+    es.add_argument("--to", required=True, help="the folder to write (job.json and out/)")
     rc = sub.add_parser("r2-cors", help="set (or show) the bucket's CORS rule that lets browsers upload straight to R2")
     rc.add_argument("--origin", action="append", default=[], help="the site's address, e.g. https://clips.example.com (repeat for several)")
     rc.add_argument("--show", action="store_true", help="print the current rule instead of changing it")
@@ -143,6 +147,12 @@ def main(argv: list[str] | None = None) -> int:
                              worker_token=os.environ.get("CLIPCROW_WORKER_TOKEN") or None,
                              worker_pickup_seconds=float(os.environ.get("CLIPCROW_WORKER_PICKUP_SECONDS", "120") or 120))
             uvicorn.run(app, host=a.host, port=a.port, log_level="info", timeout_graceful_shutdown=20)
+            return 0
+        if a.cmd == "export-sample":
+            from .service.jobs import JobStore
+            from .service.sample import export_sample
+            n = export_sample(JobStore(a.data), a.job_id, a.to)
+            print(f"sample written to {a.to} ({n} files). Set CLIPCROW_SAMPLE_DIR to that folder on the server.")
             return 0
         if a.cmd == "r2-cors":
             from .service.storage import S3Storage

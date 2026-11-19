@@ -318,3 +318,14 @@ def billing_mail(to: str, kind: str, detail: str) -> Message:
         return plain_mail(to, "Your ClipCrow plan has ended", ["Your subscription has ended, so your account is now on the Free plan. Your jobs and clips stay until their normal expiry.",
                                                                "You can subscribe again on your Account page."], "billing-ended")
     return plain_mail(to, "Your subscription is cancelled", ["Your plan stays active until the end of the period you paid for, then your account moves to Free."], "billing-cancelled")
+
+
+def welcome_mail(to: str, minutes: float, site: str, sample_link: str) -> Message:
+    """Sent once, when an address signs in for the first time. Fixed words; the plan's minutes and our own links are the only values."""
+    lines = [f"Your account is ready on the Free plan: {minutes:g} minutes of video a month.",
+             "To make clips: drop a long video on the New job page, choose its language, how many clips and how long, and press Generate clips. Pictures, your logo, an ending video and a watch-the-full-video banner are on the same page.",
+             *([f"Open the sample job to see what ClipCrow makes from a real recording: {sample_link}"] if sample_link else []),
+             *([f"Start here: {site}"] if site else []),
+             "Questions or ideas? Reply to this mail or write to support@shackyapps.in. We read everything."]
+    text, page = _page("Welcome to ClipCrow", lines)
+    return Message(to=to, subject="Welcome to ClipCrow", text=text, html=page, kind="welcome")

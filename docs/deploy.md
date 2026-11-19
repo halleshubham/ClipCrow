@@ -42,6 +42,12 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
      (`https://clipcrow.shackyapps.in`: the links in mails are built from it, never from a request header). **Set these before deploying a build that has
      email sign-in, or nobody can sign in** (the server starts and prints a warning). `CLIPCROW_SECRET_KEY` (optional) keys the sign-in codes; without it a
      random key is made once in `<data>/clipcrow.secret` (mode 600).
+   - *Sample job and welcome mail:* every new account gets one welcome mail and, when `CLIPCROW_SAMPLE_DIR` is set, a finished **sample job** copied from that folder (it costs the
+     person no minutes and retention never deletes it). Make the folder from any finished job on the server: `clipcrow export-sample <job id> --data /data --to /data/sample`, then set
+     `CLIPCROW_SAMPLE_DIR=/data/sample`. Pick a short, good-looking recording whose people agree to its use: every new account can watch it. The original video is not exported.
+   - *Landing page:* the marketing page is served by the app at `/landing/` (`clipcrow/service/static/landing/`, one HTML file and one stylesheet, no script, no third-party request).
+     To make it the front door, point the public domain's `/` at `/landing/` in your proxy (Cloudflare redirect or Coolify), or host the folder on Cloudflare Pages: copy
+     `landing/`, `icons.css`, `logo.png`, `logo-mark.png`, `icon-512.png` and the favicons beside it and change the "Start free" links from `/#/` to the app's address.
    - *Operating:* `CLIPCROW_ADMINS` (comma-separated emails that see the Operator page), `CLIPCROW_ALERT_EMAIL` (who gets alert mails: disk nearly full, jobs stuck,
      failures, GPU tasks nobody can take, mail failing), per-person cost limits `CLIPCROW_MAX_ACTIVE_JOBS` (3), `CLIPCROW_MAX_JOBS_PER_DAY` (30),
      `CLIPCROW_MAX_JOB_MINUTES` (240), `CLIPCROW_MAX_SIGNUPS_PER_DAY` (200; 0 turns a limit off), `CLIPCROW_BLOCKED_EMAIL_DOMAINS` (added to the built-in

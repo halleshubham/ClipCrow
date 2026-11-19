@@ -38,8 +38,9 @@ from ..costs import estimate_cost, estimate_total
 from ..edl import load_edl
 from ..planner.source import probe_source
 from .accounts import AccountError, Accounts, CODE_MINUTES, CODE_WAIT_S, User
+from .sample import import_sample
 from .ops import Limits, Snapshot, Watchdog, admin_emails, disk_snapshot, is_throwaway, job_refusal, jobs_since
-from .mailer import MailQueue, Mailer, Message, Outbox, billing_mail, job_done_mail, plain_mail, sign_in_code_mail
+from .mailer import MailQueue, Mailer, Message, Outbox, billing_mail, job_done_mail, plain_mail, sign_in_code_mail, welcome_mail
 from .billing import BillingError, Razorpay, apply_event
 from .brand import MAX_LOGO_BYTES, MAX_MUSIC_BYTES, MAX_OUTRO_BYTES, TRACK_ID, BrandStore, track_path
 from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
@@ -255,7 +256,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                sociobird: SocioBird | None = None, sociobird_shared: bool = False, storage: S3Storage | None = None,
                storage_redirect: bool = False, backup_source: bool = False, local_clip_days: int = 0,
                worker_token: str | None = None, worker_pickup_seconds: float = 120.0, worker_lease_seconds: float = 90.0,
-               mailer: Mailer | None = None, public_url: str = "", limits: Limits | None = None, alert_email: str = "") -> FastAPI:
+               mailer: Mailer | None = None, public_url: str = "", limits: Limits | None = None, alert_email: str = "", sample_dir: str = "") -> FastAPI:
     """``accounts``: multi-user mode (sign-up, per-user jobs, minutes metered against the plan). Without it the app is
     single-user, optionally behind ``token``."""
     store = JobStore(data_dir)
@@ -468,6 +469,24 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 "credit_minutes": round(user.credits, 1), "plan_until": user.plan_until, "subscribed": bool(user.subscription),
                 "notify_job_done": user.notify_job_done, "mail": bool(mailer), "admin": user.email in admins}
 
+    sample_path = (sample_dir or os.environ.get("CLIPCROW_SAMPLE_DIR", "")).strip()
+
+    def welcome(user: User) -> None:
+        """A new account gets the sample job (when the operator made one) and one welcome mail. Neither may ever fail the sign-in."""
+        link = ""
+        try:
+            if sample_path:
+                job = import_sample(store, sample_path, user.id)
+                if job is not None and base_url:
+                    link = f"{base_url}/#/jobs/{job.id}"
+        except Exception:                                              # noqa: BLE001
+            log.exception("sample job for a new account failed")
+        if mailq:
+            try:
+                mailq.send(welcome_mail(user.email, effective_plan(user).monthly_minutes, base_url, link))
+            except ValueError:
+                pass
+
     @app.post("/api/auth/code")
     def sign_in_code(body: CodeRequest, request: Request) -> JSONResponse:
         """Step one of signing in (and of signing up): mail a 6-digit code. The answer is the same for every well-formed address."""
@@ -492,10 +511,13 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     @app.post("/api/auth/verify")
     def sign_in_verify(body: CodeVerify, request: Request) -> JSONResponse:
         need_accounts()
+        first_time = accounts.by_email(body.email) is None
         try:
             user = accounts.verify_code(body.email, body.code, who=request.client.host if request.client else "", allow_signup=allow_signup)
         except AccountError as e:
             raise HTTPException(429 if "Too many" in str(e) else 401, str(e))
+        if first_time:
+            welcome(user)
         return set_session(JSONResponse({"ok": True}), request, user)
 
     @app.post("/api/auth/logout")
