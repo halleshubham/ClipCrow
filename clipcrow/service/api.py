@@ -39,6 +39,7 @@ from ..edl import load_edl
 from ..planner.source import probe_source
 from .accounts import AccountError, Accounts, CODE_MINUTES, CODE_WAIT_S, User
 from .sample import import_sample
+from .economics import economics as job_economics, suggest_min_minutes, suggest_price, target_markup
 from .ops import Limits, Snapshot, Watchdog, admin_emails, disk_snapshot, is_throwaway, job_refusal, jobs_since
 from .mailer import MailQueue, Mailer, Message, Outbox, billing_mail, job_done_mail, plain_mail, sign_in_code_mail, welcome_mail
 from .billing import BillingError, Razorpay, apply_event
@@ -415,6 +416,10 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         d["expires_at"] = expires_at(job, days)
         return d
 
+    def charge_minutes(duration: float) -> int:
+        """Minutes of balance a job of this length is charged: one a minute, at least the minimum charge (pay as you go)."""
+        return max(catalog.payg.min_job_minutes if catalog.payg else 1, math.ceil(duration / 60), 1)
+
     def no_minutes(minutes: float, have: float, plan) -> str:
         if catalog.payg and plan.monthly_minutes == 0:
             return f"This video is {minutes} min long and your balance is {have:.0f} min. Recharge on your Account page, then start it again."
@@ -603,6 +608,23 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         app.state.watchdog = Watchdog(snapshot, lambda subject, body: mailq.send(plain_mail(alert_to, subject, [body], "alert")))
         app.state.watchdog.start()
 
+    def job_cost(job_id: str) -> Optional[dict]:
+        """What making this job cost, in rupees: the AI at the model's list price plus the metered GPU time. None when the plan is not on disk."""
+        path = store.dir(job_id) / "out" / "edl.json"
+        if not path.is_file():
+            return None
+        try:
+            edl = load_edl(path)
+        except Exception:                                              # noqa: BLE001 - one unreadable plan must not break the page
+            return None
+        usd = estimate_total(edl.ai.calls) if edl.ai else 0
+        rate = max(1.0, float(os.environ.get("CLIPCROW_USD_INR") or 88.0))
+        gpu = gpu_summary(store.gpu_usage(job_id)).get("est_cost", 0.0)
+        return {"ai": round((usd or 0) * rate, 2), "gpu": round(gpu, 2), "total": round((usd or 0) * rate + gpu, 2)}
+
+    def price_per_minute() -> float:
+        return catalog.payg.price_paise_per_minute / 100 if catalog.payg else 0.0
+
     def admin_only(request: Request) -> User:
         user = authed(request)
         if user is None or user.email not in admins:
@@ -622,7 +644,23 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             u["jobs_now"] = by_owner.get(u["id"], 0)
         recent_failed = [{"id": j.id, "owner": next((u["email"] for u in users if u["id"] == j.owner), ""), "error": (j.error or "")[:160], "when": j.created_at}
                          for j in sorted((j for j in jobs if j.status == "failed"), key=lambda j: j.created_at, reverse=True)[:10]]
-        return {"users": users, "plans": list(catalog.plans), "signups_today": accounts.signups_today(), "signup_cap": limits.signups_per_day,
+        owners = {u["id"]: u["email"] for u in users}
+        rows, markup = [], target_markup()
+        for j in [j for j in jobs if j.status == "done" and j.reserved_minutes and not j.sample][:30]:        # newest first
+            c = job_cost(j.id)
+            if c is None:
+                continue
+            e = job_economics(j.reserved_minutes * price_per_minute(), c["total"], markup)
+            rows.append({"id": j.id, "owner": owners.get(j.owner or "", ""), "minutes": j.reserved_minutes, "video_minutes": round((j.source or {}).get("duration", 0) / 60, 1),
+                         "cost_ai": c["ai"], "cost_gpu": c["gpu"], **e})
+        per_min = [(r["cost_ai"] + r["cost_gpu"]) / r["video_minutes"] for r in rows if r["video_minutes"] >= 15]
+        shorts = [r["cost_ai"] + r["cost_gpu"] for r in rows if r["video_minutes"] < 5]
+        total_rev, total_cost = sum(r["revenue"] for r in rows), sum(r["cost"] for r in rows)
+        money = {"jobs": rows, "price_per_minute": price_per_minute(), "min_job_minutes": catalog.payg.min_job_minutes if catalog.payg else 1,
+                 "target_markup_percent": round(markup), "totals": job_economics(total_rev, total_cost, markup),
+                 "suggested_price_per_minute": suggest_price(per_min, markup), "suggested_min_job_minutes": suggest_min_minutes(shorts, price_per_minute(), markup) if shorts else None,
+                 "note": "Revenue is the list price of the minutes charged (free-trial minutes included); cost is the AI at list price plus metered GPU time. Server, storage and the payment fee are not counted."}
+        return {"money": money, "users": users, "plans": list(catalog.plans), "signups_today": accounts.signups_today(), "signup_cap": limits.signups_per_day,
                 "jobs": {s: sum(1 for j in jobs if j.status == s) for s in ("queued", "running", "done", "failed", "cancelled")},
                 "disk_free_gb": round(snap.disk_free_gb, 1), "disk_free_pct": round(snap.disk_free_pct), "failed_last_hour": snap.failed_last_hour,
                 "unserved_tasks": snap.unserved_tasks, "mail": mailer.name if mailer else "off", "mail_failures_hour": snap.mail_failures_hour,
@@ -1185,7 +1223,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         job.remote[rec.rel] = f"remote:{rec.size}"              # in the bucket already; retention removes it with the job
         if accounts:
             job.owner = user.id
-            minutes = max(1, math.ceil(info.duration / 60))
+            minutes = charge_minutes(info.duration)
             plan = effective_plan(user)
             try:
                 enforce_limits(user, minutes, job.id)
@@ -1260,7 +1298,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise
         job.source = {"duration": info.duration, "width": info.width, "height": info.height}
         if accounts:
-            minutes = max(1, math.ceil(info.duration / 60))
+            minutes = charge_minutes(info.duration)
             plan = effective_plan(user)
             try:
                 enforce_limits(user, minutes, job.id)
@@ -1991,6 +2029,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             "disclosure_recommended": any(a.ai == "generated" for a in edl.assets),
             "clips": [{"id": c.id, "title": c.title, "decided": c.ai.decided if c.ai else []} for c in edl.clips],
             "gpu": gpu_summary(store.gpu_usage(job_id)),
+            **({"economics": (lambda c, j: {**job_economics(j.reserved_minutes * price_per_minute(), c["total"], target_markup()), "cost_ai": c["ai"], "cost_gpu": c["gpu"],
+                                            "minutes": j.reserved_minutes})(job_cost(job_id), store.get(job_id))}
+               if request.state.user is not None and request.state.user.email in admins and job_cost(job_id) else {}),
         }
 
     app.mount("/", StaticFiles(directory=STATIC, html=True), name="ui")

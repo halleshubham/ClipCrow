@@ -276,6 +276,24 @@ function renderAcct() {
     } }));
 }
 
+function moneyCard(m) {
+  const pct = (v) => (v == null ? 'n/a' : `${v}%`);
+  const rs = (v) => `₹${Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 })}`;
+  const t = m.totals;
+  const lines = [
+    el('p', { class: t.below_target ? 'alert' : 'small', text: `Last ${m.jobs.length} charged jobs: charged ${rs(t.revenue)}, cost ${rs(t.cost)}, markup ${pct(t.markup_percent)} (target ${m.target_markup_percent}%), profit share of the price ${pct(t.profit_share_percent)}.` }),
+    el('p', { class: 'small', text: `Price now ₹${m.price_per_minute} a minute, minimum ${m.min_job_minutes} minutes a job. ` +
+      (m.suggested_price_per_minute ? `For a ${m.target_markup_percent}% markup on recent long recordings the price needs to be about ₹${m.suggested_price_per_minute} a minute` : 'Not enough long recordings yet to suggest a price') +
+      `${m.suggested_min_job_minutes ? `, and a minimum of about ${m.suggested_min_job_minutes} minutes a job for short ones` : ''}.` }),
+    el('p', { class: 'small muted', text: m.note + ' Set the price in plans.json or CLIPCROW_PRICE_PER_MINUTE, the minimum in CLIPCROW_MIN_JOB_MINUTES, the target in CLIPCROW_MARGIN_PERCENT.' }),
+  ];
+  const rows = m.jobs.map((j) => el('tr', { class: j.below_target ? 'low' : '' },
+    el('td', {}, el('a', { href: `#/jobs/${j.id}`, text: j.id })), el('td', { translate: 'no', text: j.owner }), el('td', { text: `${j.video_minutes} → ${j.minutes}` }),
+    el('td', { text: rs(j.revenue) }), el('td', { text: rs(j.cost) }), el('td', { text: pct(j.markup_percent) })));
+  return el('section', { class: 'card stack' }, el('h2', { text: 'Money' }), ...lines,
+    rows.length ? el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['Job', 'Person', 'Video min → charged', 'Charged', 'Cost', 'Markup'].map((h) => el('th', { text: h })))), el('tbody', {}, rows))) : null);
+}
+
 async function adminView() {
   const ov = await api('/admin/overview');
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
@@ -304,6 +322,7 @@ async function adminView() {
         stat('GPU worker', ov.gpu_worker.online ? 'online' : 'offline'), stat('GPU tasks stuck', ov.unserved_tasks, ov.unserved_tasks > 0),
         ov.pod && stat('on-demand GPU', ov.pod.state))),
     err,
+    moneyCard(ov.money),
     el('section', { class: 'card stack' }, el('h2', { text: 'People' }),
       el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['Email', 'Plan', 'This month', 'Jobs', 'Extra minutes', ''].map((t) => el('th', { text: t })))), el('tbody', {}, rows)))),
     el('section', { class: 'card stack' }, el('h2', { text: 'Recent failures' }),
@@ -619,8 +638,8 @@ async function newJobView() {
   const estimateCost = () => {
     if (c.accounts && c.pricing && $('cost-val')) {                          // pay as you go: a minute of video is a minute of balance, at a price you can see
       if (!file || !videoSeconds) { setCost('— min', 'Choose a video to see how many minutes it uses.' + gpuHelp()); return; }
-      const minutes = Math.max(1, Math.ceil(videoSeconds / 60));
-      setCost(`${minutes} min`, `This video uses ${minutes} minute${minutes > 1 ? 's' : ''} of your balance (₹${(minutes * c.pricing.price_per_minute).toLocaleString()} at ₹${c.pricing.price_per_minute} a minute). Failed or cancelled jobs give the minutes back.` + gpuHelp());
+      const least = c.pricing.min_job_minutes || 1, real = Math.max(1, Math.ceil(videoSeconds / 60)), minutes = Math.max(least, real);
+      setCost(`${minutes} min`, `This video uses ${minutes} minute${minutes > 1 ? 's' : ''} of your balance (₹${(minutes * c.pricing.price_per_minute).toLocaleString()} at ₹${c.pricing.price_per_minute} a minute)${minutes > real ? `; every job is charged at least ${least} minutes` : ''}. Failed or cancelled jobs give the minutes back.` + gpuHelp());
       return;
     }
     const n = c.gpu_worker && c.gpu_worker.estimate;
@@ -1204,6 +1223,8 @@ async function jobView(jobId) {
             el('tbody', {}, u.gpu.tasks.map((t) => el('tr', {}, el('td', { text: t.ok ? t.step : `${t.step} (failed)` }), el('td', { translate: 'no', text: t.worker }),
               el('td', { class: 'num', text: dur(t.seconds) }), el('td', { class: 'num', text: t.rate_per_hour ? t.rate_per_hour.toFixed(2) : 'no rate' }), el('td', { class: 'num', text: t.rate_per_hour ? `₹${t.est_cost.toFixed(2)}` : '—' }))),
               el('tr', {}, el('td', { text: 'Total' }), el('td'), el('td', { class: 'num', text: dur(u.gpu.seconds) }), el('td'), el('td', { class: 'num', text: u.gpu.rented ? `₹${u.gpu.est_cost.toFixed(2)}` : '—' }))))] : []),
+        ...(u.economics ? [el('h2', { style: { marginTop: '20px' }, text: 'Money (operator only)' }),
+          el('p', { class: u.economics.below_target ? 'alert' : 'small', text: `Charged ${u.economics.minutes} min = ₹${u.economics.revenue}, cost ₹${u.economics.cost} (AI ₹${u.economics.cost_ai}, GPU ₹${u.economics.cost_gpu}): markup ${u.economics.markup_percent == null ? 'n/a' : u.economics.markup_percent + '%'} against a target of ${u.economics.target_markup_percent}%.` })] : []),
         el('h2', { style: { marginTop: '20px' }, text: 'Assets and AI involvement' }),
         el('div', { class: 'chips' }, u.assets.map((a) => el('span', { class: 'chip plain', text: `${a.id}: AI ${a.ai}` }))),
         el('p', { class: 'small', style: { marginTop: '12px' } },

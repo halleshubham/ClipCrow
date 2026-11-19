@@ -2,7 +2,7 @@
 """What did finished jobs cost to make? Reads the AI usage (tokens, at the model's price) and the metered GPU time of every finished job from a running server
 and prints rupees per job and per minute of video, so the price per minute (`plans.json`, `payg`) can be set from evidence.
 
-    CLIPCROW_URL=https://clipcrow.example CLIPCROW_TOKEN=... python scripts/job_costs.py [--usd-inr 88]
+    CLIPCROW_URL=https://clipcrow.example CLIPCROW_TOKEN=... python scripts/job_costs.py [--usd-inr 88] [--margin 100] [--price 8] [--min-minutes 3]
 
 The token is read from the environment (never printed). In accounts mode use an operator's session instead: this script is for the single-token mode or a copy of
 the data. Not counted: the server's own CPU, storage and bandwidth, Razorpay's fee (about 2% plus GST on the fee), failed or repeated runs.
@@ -25,6 +25,9 @@ def get(base: str, token: str, path: str):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--usd-inr", type=float, default=88.0)
+    ap.add_argument("--margin", type=float, default=None, help="target markup on cost, in percent (100 means price = twice the cost); default CLIPCROW_MARGIN_PERCENT or 50")
+    ap.add_argument("--price", type=float, default=8.0, help="the price per minute now, in rupees")
+    ap.add_argument("--min-minutes", type=int, default=3, help="the minimum charge now, in minutes")
     a = ap.parse_args()
     base, token = os.environ.get("CLIPCROW_URL", "").rstrip("/"), os.environ.get("CLIPCROW_TOKEN", "")
     if not base or not token:
@@ -50,6 +53,20 @@ def main() -> int:
         if group:
             per = [(r["ai"] + r["gpu"]) / r["minutes"] for r in group if r["minutes"]]
             print(f"{name}: {len(group)} jobs, median Rs {statistics.median(per):.2f} a minute, range Rs {min(per):.2f} to Rs {max(per):.2f}")
+    markup = a.margin if a.margin is not None else float(os.environ.get("CLIPCROW_MARGIN_PERCENT") or 50)
+    long_ = sorted((r["ai"] + r["gpu"]) / r["minutes"] for r in rows if not r["clean"] and r["minutes"] >= 15)
+    shorts = [r["ai"] + r["gpu"] for r in rows if r["minutes"] < 5]
+    print(f"\nTarget markup {markup:g}% (price = cost x {1 + markup / 100:g}); price now Rs {a.price:g} a minute, minimum {a.min_minutes} minutes")
+    if long_:
+        p75 = long_[min(len(long_) - 1, -(-3 * len(long_) // 4) - 1)]
+        need = -(-(p75 * (1 + markup / 100) * 2) // 1) / 2                      # rounded up to half a rupee
+        print(f"  long recordings: the 75th percentile cost is Rs {p75:.2f} a minute, so the price needs to be about Rs {need:g} a minute"
+              + (" (the current price is enough)" if a.price >= need else " (the current price is BELOW it)"))
+    if shorts:
+        med = statistics.median(shorts)
+        least = max(1, -(-(med * (1 + markup / 100)) // a.price))
+        print(f"  short takes: the median cost is Rs {med:.2f} a job, so the minimum charge needs to be about {least:g} minutes"
+              + (" (the current minimum is enough)" if a.min_minutes >= least else " (the current minimum is BELOW it)"))
     return 0
 
 

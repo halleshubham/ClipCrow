@@ -277,6 +277,7 @@ details.adv > .stack { padding: 18px 0 22px; }
 .stat .num { text-align: left; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; } .stat .num.bad { color: var(--bad); }
 .tablewrap { overflow-x: auto; } .tablewrap table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .tablewrap th, .tablewrap td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; } .tablewrap td select, .tablewrap td input { width: auto; min-width: 90px; max-width: 120px; }
+tr.low td { color: var(--warn); }
 ul.plain { margin: 0; padding-left: 18px; }
 
 /* legal pages and the footer */

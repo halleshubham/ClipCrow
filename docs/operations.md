@@ -21,7 +21,7 @@ From the production server's 37 finished jobs (`scripts/job_costs.py` re-runs th
 | 76 min (with the pod's GPU Rs 53) | 10 | Rs 194 + Rs 56 GPU | Rs 3.3 |
 | 87 min | 10 | Rs 210 | Rs 2.4 |
 | a 1 min raw take (23 runs, 0.3 to 1.7 min) | 1 | Rs 3 to 9 | about Rs 6 (a fixed Rs 4 to 6 per take, so short takes cost more a minute) |
-Long recordings cost about **Rs 2.4 to 3.9 a minute**; at Rs 10 a minute that is a 65 to 75% gross margin before Razorpay's fee (about 2.4%) and the server. A 1-minute raw take costs about Rs 5.5 to sell at Rs 10 (about 45%). A free 10-minute trial costs about Rs 17 to 35 in AI.
+Long recordings cost about **Rs 2.4 to 3.9 a minute**; at Rs 8 a minute that is a 50 to 70% profit share (a 105% to 230% markup) before Razorpay's fee (about 2.4%) and the server. A 1-minute raw take costs about Rs 5.5 and is charged the 3-minute minimum (Rs 24), which is a 340% markup. Without a minimum it would be Rs 8, a 45% markup. A free 10-minute trial costs about Rs 17 to 35 in AI.
 Caveats: only 2 of the 37 jobs have metered GPU time (metering is recent; earlier jobs ran on the server's CPU or the home GPU, which costs electricity, not rupees on a bill); the server, storage and bandwidth are not counted; the raw takes tested were all under 2 minutes, so a 30-minute raw recording (the AI reads the whole transcript to judge retakes) will cost more than the table suggests: measure one before promising a price for long raw takes; my own test runs are in the data.
 
 ## Restore test (do it once before launch, then every quarter)

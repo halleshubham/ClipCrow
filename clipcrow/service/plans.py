@@ -36,10 +36,11 @@ class CreditPack:
 
 @dataclass(frozen=True)
 class Payg:
-    """Pay as you go: a prepaid balance in minutes of video, recharged with any amount from ``min_recharge_paise`` to ``max_recharge_paise``.
+    """Pay as you go: a prepaid balance in minutes of video (the price, the minimum charge, the bonus and the free minutes are all configurable: plans.json, or the environment: CLIPCROW_PRICE_PER_MINUTE in rupees, CLIPCROW_MIN_JOB_MINUTES, CLIPCROW_SIGNUP_BONUS_MINUTES), recharged with any amount from ``min_recharge_paise`` to ``max_recharge_paise``.
     One minute of video uploaded costs one minute of balance. A bigger recharge earns bonus minutes (``bonus_tiers``: (from paise, extra percent)).
     New accounts get ``signup_bonus_minutes`` once. Minutes bought never expire."""
-    price_paise_per_minute: int = 1000
+    price_paise_per_minute: int = 800
+    min_job_minutes: int = 3                # the least a job is charged, however short the video: a tiny job costs the AI almost as much as a bigger one
     min_recharge_paise: int = 10000
     max_recharge_paise: int = 2_000_000
     signup_bonus_minutes: float = 10.0
@@ -57,7 +58,7 @@ class Payg:
         """What the pages show (rupees, not paise). No secrets here: this is public."""
         r = lambda paise: paise // 100
         return {"price_per_minute": self.price_paise_per_minute / 100, "min_recharge": r(self.min_recharge_paise), "max_recharge": r(self.max_recharge_paise),
-                "signup_bonus_minutes": self.signup_bonus_minutes,
+                "signup_bonus_minutes": self.signup_bonus_minutes, "min_job_minutes": self.min_job_minutes,
                 "tiers": [{"from": r(a), "bonus_percent": pct} for a, pct in self.bonus_tiers],
                 "quick": [{"rupees": r(a), "minutes": self.minutes_for(a), "bonus_percent": self.bonus_percent(a)}
                           for a in (30_000, 50_000, 100_000, 200_000, 500_000) if self.min_recharge_paise <= a <= self.max_recharge_paise]}
@@ -76,10 +77,10 @@ class Catalog:
 DEFAULTS = {
     # ONE plan: pay as you go. No subscription; a prepaid balance in minutes of video (see ``Payg``). Change the numbers in a plans.json named by CLIPCROW_PLANS.
     "plans": [
-        {"id": "free", "name": "Pay as you go", "monthly_minutes": 0, "retention_days": 30, "source_days": 7, "price_label": "₹10 per minute of video"},
+        {"id": "free", "name": "Pay as you go", "monthly_minutes": 0, "retention_days": 30, "source_days": 7, "price_label": "₹8 per minute of video"},
     ],
     "packs": [],
-    "payg": {"price_paise_per_minute": 1000, "min_recharge_paise": 10000, "max_recharge_paise": 2000000, "signup_bonus_minutes": 10,
+    "payg": {"price_paise_per_minute": 800, "min_job_minutes": 3, "min_recharge_paise": 10000, "max_recharge_paise": 2000000, "signup_bonus_minutes": 10,
              "bonus_tiers": [[200000, 5], [500000, 10]]},
 }
 
@@ -101,8 +102,15 @@ def load_catalog(path: str | Path | None = None) -> Catalog:
     if data.get("payg"):
         raw = dict(data["payg"])
         raw["bonus_tiers"] = tuple(sorted((int(a), int(pct)) for a, pct in raw.get("bonus_tiers", [])))
+        env = os.environ
+        if env.get("CLIPCROW_PRICE_PER_MINUTE"):
+            raw["price_paise_per_minute"] = round(float(env["CLIPCROW_PRICE_PER_MINUTE"]) * 100)
+        if env.get("CLIPCROW_MIN_JOB_MINUTES"):
+            raw["min_job_minutes"] = int(env["CLIPCROW_MIN_JOB_MINUTES"])
+        if env.get("CLIPCROW_SIGNUP_BONUS_MINUTES"):
+            raw["signup_bonus_minutes"] = float(env["CLIPCROW_SIGNUP_BONUS_MINUTES"])
         payg = Payg(**raw)
-        if payg.price_paise_per_minute < 1 or not 100 <= payg.min_recharge_paise <= payg.max_recharge_paise or payg.signup_bonus_minutes < 0 \
+        if payg.price_paise_per_minute < 1 or not 100 <= payg.min_recharge_paise <= payg.max_recharge_paise or payg.signup_bonus_minutes < 0 or payg.min_job_minutes < 1 \
                 or any(a < 0 or not 0 <= pct <= 100 for a, pct in payg.bonus_tiers):
             raise ValueError("payg: a price of at least 1 paise a minute, 100 <= min <= max recharge, a bonus of 0 or more, tiers of 0 to 100 percent")
         cat.payg = payg

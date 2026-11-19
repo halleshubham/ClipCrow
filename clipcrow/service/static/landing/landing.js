@@ -25,7 +25,12 @@ const reelsFor = (minutes) => Math.min(10, Math.max(1, Math.round(minutes / 5.5)
       li.textContent = `New accounts get ${g.signup_bonus_minutes} free minutes to try it.`;
       document.getElementById('price-points').prepend(li);
     }
-    const cost = (minutes) => minutes * g.price_per_minute;
+    if (g.min_job_minutes > 1) {
+      const li = document.createElement('li');
+      li.textContent = `Each job is charged at least ${g.min_job_minutes} minutes, however short the video.`;
+      document.getElementById('price-points').append(li);
+    }
+    const cost = (minutes) => Math.max(minutes, g.min_job_minutes || 1) * g.price_per_minute;
     // the estimator
     const input = document.getElementById('est-min');
     const show = () => {
