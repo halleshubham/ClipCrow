@@ -259,7 +259,7 @@ def test_posting_needs_a_finished_clip_a_login_and_a_configured_server(tmp_path,
     assert locked.get("/api/publish/channels").status_code == 401
 
 
-def test_with_accounts_posting_is_off_unless_the_operator_shares_the_channels_and_people_only_see_their_own(tmp_path, video_bytes):
+def test_with_accounts_posting_needs_the_persons_own_connection_unless_the_operator_shares_the_channels(tmp_path, video_bytes):
     cat = Catalog(plans={"free": Plan("free", "Free", 100, 7, 3)})
 
     def build(root, shared):
@@ -269,7 +269,8 @@ def test_with_accounts_posting_is_off_unless_the_operator_shares_the_channels_an
         sign_up(c, "a@example.com")
         return c, app
     c, app = build(tmp_path / "off", False)
-    assert c.get("/api/config").json()["publishing"] is False and c.get("/api/publish/channels").status_code == 404
+    r = c.get("/api/publish/channels")                                                                  # people connect their OWN SocioBird; the operator's is not used
+    assert c.get("/api/config").json()["publishing"] is True and r.status_code == 409 and "Connect your SocioBird" in r.json()["detail"]
     c, app = build(tmp_path / "on", True)
     assert c.get("/api/config").json()["publishing"] is True
     jid = wait(c, upload(c, video_bytes).json()["id"])["id"]

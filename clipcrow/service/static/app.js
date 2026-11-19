@@ -398,6 +398,41 @@ async function adminView() {
         : el('p', { class: 'small muted', text: 'None.' }))));
 }
 
+// "Posting": the person's own SocioBird connection (a pasted API key, stored encrypted on the server; the key is never shown again).
+async function postingCard() {
+  let st;
+  try { st = await api('/sociobird'); } catch (e) { if (e instanceof SignInNeeded) throw e; return null; }
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const done = async (fn) => { err.hidden = true; try { await fn(); await route(); } catch (ex) { err.textContent = ex.message; err.hidden = false; } };
+  const body = [el('h2', { text: 'Posting' })];
+  const back = new URLSearchParams(location.search).get('sociobird');                   // where SocioBird sent the browser back to
+  if (back) {
+    body.push(el('div', { class: back === 'connected' ? 'note' : 'alert', role: back === 'connected' ? 'status' : 'alert', text: back === 'connected' ? 'SocioBird is connected.' : 'SocioBird could not be connected. Try again, or paste your API key instead.' }));
+    history.replaceState(null, '', location.pathname + location.hash);
+  }
+  if (st.connected) {
+    body.push(el('p', { class: 'row', style: { margin: 0 } }, el('span', { class: 'chip ok', text: 'SocioBird connected' }), el('span', { class: 'small muted', text: `${st.label || ''}${st.since ? ' · since ' + when(st.since) : ''}` })));
+    if (st.last_error) body.push(el('div', { class: 'alert', role: 'alert', text: `${st.last_error}. Connect again with a fresh key below.` }));
+    body.push(el('p', { class: 'small muted', style: { margin: 0 }, text: 'Your clips are posted to the channels in your own SocioBird, never anyone else’s. Posts already scheduled stay in SocioBird after you disconnect.' }),
+      el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Disconnect SocioBird', onclick: () => { if (confirm('Disconnect SocioBird? We forget your key. Posts already scheduled stay in SocioBird.')) done(() => api('/sociobird', { method: 'DELETE' })); } })));
+  } else {
+    body.push(el('p', { class: 'small muted', style: { margin: 0 }, text: st.shared ? 'Until you connect your own SocioBird, posts go to the channels this site shares. Connect yours to post to your own channels.' : 'Connect your SocioBird account to post your clips to your own channels.' }));
+  }
+  const key = el('input', { id: 'sb-key', type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste your SocioBird API key' });
+  const go = el('button', { class: st.oauth ? 'btn' : 'btn primary', type: 'button', text: st.connected ? 'Replace key' : 'Connect with a key' });
+  go.addEventListener('click', () => done(async () => { await api('/sociobird/key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: key.value }) }); key.value = ''; }));
+  const keyForm = el('div', { class: 'stack' }, el('div', {}, fieldLabel('send', 'SocioBird API key', 'sb-key', 'In SocioBird open Settings, then Public API, and copy your API Key. Your SocioBird plan must include API access. We try the key once, then keep it encrypted; it is never shown again, and you can disconnect at any time.'), key),
+    el('div', { class: 'row' }, go));
+  if (st.oauth && !st.connected) {
+    const sign = el('button', { class: 'btn primary', type: 'button', text: 'Connect with SocioBird' });
+    sign.addEventListener('click', () => done(async () => { const r = await api('/sociobird/oauth/start', { method: 'POST' }); location.assign(r.url); }));
+    body.push(el('div', { class: 'row' }, sign), el('details', { class: 'adv' }, el('summary', { text: 'Use an API key instead' }), keyForm), err);
+  } else {
+    body.push(keyForm, err);
+  }
+  return el('section', { class: 'card stack' }, ...body);
+}
+
 async function accountView() {
   if (!state.config.accounts) { app.replaceChildren(el('div', { class: 'card empty', text: 'Accounts are not turned on.' })); return; }
   const me = await api('/me');
@@ -417,6 +452,7 @@ async function accountView() {
     el('div', {}, el('label', { class: 'field', for: 'del-email', text: 'Type your email to confirm' }), confirmEmail),
     el('div', {}, el('button', { class: 'btn', type: 'submit', style: { color: 'var(--bad)' }, text: 'Delete my account' })));
   const billing = el('div', { id: 'billing' });
+  const postingBox = await postingCard();
   app.replaceChildren(el('div', { class: 'stack' },
     el('h1', { text: 'Account' }),
     el('section', { class: 'card stack' },
@@ -432,6 +468,7 @@ async function accountView() {
       me.plan.monthly_minutes > 0 && me.credit_minutes > 0 && el('div', { class: 'small' }, `Plus ${me.credit_minutes} purchased minutes. ${me.left_minutes} minutes left in all.`),
       el('div', { class: 'small muted', text: `Finished jobs are kept for ${me.plan.retention_days} days, then deleted.` })),
     billing,
+    postingBox,
     el('section', { class: 'card stack' }, el('h2', { text: 'Email' }),
       el('label', { class: 'check', for: 'notify' }, notify, el('span', {}, el('strong', { text: 'Email me when a job finishes' }), el('br'),
         el('span', { class: 'muted', text: me.mail ? 'One mail per job, when it is done or could not finish. Off by default.' : 'Email is not set up on this server.' })))),
@@ -1828,8 +1865,16 @@ const PLATFORM_WORD = { youtube: 'YouTube', instagram: 'Instagram', 'instagram-s
 const YT_SHORTS_SECONDS = 180;               // YouTube's help page: vertical videos up to 3 minutes are Shorts (checked 2026-11; other platforms' limits are not known reliably, so only this one is mentioned)
 const MAX_CHANNELS = 6;                      // the server accepts at most this many channels in one post
 
+const needsSocioBird = (e) => /^Connect your SocioBird|^SocioBird refused your connection/.test(e.message || '');
+function connectCard(message) {
+  return el('div', { class: 'stack' }, el('h1', { text: 'Share' }), el('section', { class: 'card stack' }, el('h2', { text: 'Connect SocioBird to post' }),
+    el('p', { text: message }), el('div', { class: 'row' }, el('a', { class: 'btn primary', href: '#/account', text: 'Open my Account page' }))));
+}
+
 async function shareView(jobId, clipId) {
-  const [job, channels, usage] = await Promise.all([api(`/jobs/${jobId}`), api('/publish/channels'), api(`/jobs/${jobId}/usage`).catch(() => ({ disclosure_recommended: false }))]);
+  let job, channels, usage;
+  try { [job, channels, usage] = await Promise.all([api(`/jobs/${jobId}`), api('/publish/channels'), api(`/jobs/${jobId}/usage`).catch(() => ({ disclosure_recommended: false }))]); }
+  catch (e) { if (needsSocioBird(e)) { app.replaceChildren(connectCard(e.message)); return { cleanup() {} }; } throw e; }
   const clip = job.clips.find((c) => c.id === clipId);
   if (!clip) { app.replaceChildren(el('div', { class: 'card empty', text: 'No such clip.' })); return { cleanup() {} }; }
   let timer = null, dead = false;
@@ -1932,8 +1977,10 @@ async function shareView(jobId, clipId) {
 // ---- bulk scheduling: chosen reels, chosen channels, N posts a day at each platform's best times --------------------------------------
 
 async function scheduleView(jobId, clipsParam) {
-  const [job, channels, prefs, usage] = await Promise.all([api(`/jobs/${jobId}`), api('/publish/channels'), api('/publish/schedule/prefs'),
-    api(`/jobs/${jobId}/usage`).catch(() => ({ disclosure_recommended: false }))]);
+  let job, channels, prefs, usage;
+  try { [job, channels, prefs, usage] = await Promise.all([api(`/jobs/${jobId}`), api('/publish/channels'), api('/publish/schedule/prefs'),
+    api(`/jobs/${jobId}/usage`).catch(() => ({ disclosure_recommended: false }))]); }
+  catch (e) { if (needsSocioBird(e)) { app.replaceChildren(connectCard(e.message)); return { cleanup() {} }; } throw e; }
   const ready = job.clips.filter((c) => c.ready);
   let dead = false, timer = null;
   if (job.status !== 'done' || !ready.length) { app.replaceChildren(el('div', { class: 'card empty', text: 'This job has no finished reels to schedule.' })); return { cleanup() {} }; }

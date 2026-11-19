@@ -61,6 +61,10 @@ CREATE TABLE IF NOT EXISTS users (
   notify_job_done INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS login_codes (
   email TEXT PRIMARY KEY, code_hash TEXT NOT NULL, expires_at REAL NOT NULL, tries INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS sociobird_links (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, token_enc TEXT NOT NULL, label TEXT NOT NULL DEFAULT '',
+  connected_at TEXT NOT NULL, last_ok_at TEXT, last_error TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS oauth_states (state_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS login_sends (email TEXT NOT NULL, at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS login_sends_email ON login_sends(email, at);
 CREATE TABLE IF NOT EXISTS sessions (
@@ -141,6 +145,49 @@ class Accounts:
     def by_email(self, email: str) -> Optional[User]:
         row = self._q("SELECT * FROM users WHERE email=?", ((email or "").strip().lower(),)).fetchone()
         return self._user(row) if row else None
+
+    # --- a person's own SocioBird connection (the credential is stored encrypted; see secretbox.py) -------------
+    def set_link(self, user_id: str, kind: str, token: str, label: str = "") -> None:
+        from . import secretbox
+        self._q("INSERT OR REPLACE INTO sociobird_links(user_id, kind, token_enc, label, connected_at, last_ok_at, last_error) VALUES (?,?,?,?,?,?, '')",
+                (user_id, kind, secretbox.seal(self._secret, "sociobird", token), label[:80], _now(), _now()))
+
+    def get_link(self, user_id: str) -> Optional[dict]:
+        """The connection without its credential: ``{kind, label, connected_at, last_ok_at, last_error}``."""
+        row = self._q("SELECT kind, label, connected_at, last_ok_at, last_error FROM sociobird_links WHERE user_id=?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+    def link_token(self, user_id: str) -> Optional[str]:
+        """The plaintext credential, for the one call that uses it; None when there is none or it cannot be opened with this server's secret."""
+        from . import secretbox
+        row = self._q("SELECT token_enc FROM sociobird_links WHERE user_id=?", (user_id,)).fetchone()
+        return secretbox.open_(self._secret, "sociobird", row["token_enc"]) if row else None
+
+    def mark_link(self, user_id: str, ok: bool, error: str = "") -> None:
+        if ok:
+            self._q("UPDATE sociobird_links SET last_ok_at=?, last_error='' WHERE user_id=?", (_now(), user_id))
+        else:
+            self._q("UPDATE sociobird_links SET last_error=? WHERE user_id=?", (error[:200], user_id))
+
+    def new_oauth_state(self, user_id: str) -> str:
+        """A random single-use value for one SocioBird authorisation, tied to THIS person and valid 10 minutes. Only its hash is stored."""
+        state = secrets.token_urlsafe(32)
+        self._q("DELETE FROM oauth_states WHERE expires_at < ?", (time.time(),))
+        self._q("DELETE FROM oauth_states WHERE user_id=?", (user_id,))                      # one pending authorisation per person
+        self._q("INSERT INTO oauth_states VALUES (?,?,?)", (hashlib.sha256(state.encode()).hexdigest(), user_id, time.time() + 600))
+        return state
+
+    def take_oauth_state(self, state: str) -> Optional[str]:
+        """The person this state was made for, and the state is used up; None for an unknown, used or expired one. (The browser comes back from another site, so
+        the session cookie may not be sent: the state alone says who started this, and it cannot be used for anyone else.)"""
+        h = hashlib.sha256((state or "").encode()).hexdigest()
+        with self._lock:
+            row = self._db.execute("SELECT user_id, expires_at FROM oauth_states WHERE state_hash=?", (h,)).fetchone()
+            self._db.execute("DELETE FROM oauth_states WHERE state_hash=?", (h,))
+        return row["user_id"] if row and row["expires_at"] > time.time() else None
+
+    def delete_link(self, user_id: str) -> None:
+        self._q("DELETE FROM sociobird_links WHERE user_id=?", (user_id,))
 
     def signups_today(self) -> int:
         return int(self._q("SELECT COUNT(*) AS n FROM users WHERE created_at >= ?", (datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00"),)).fetchone()["n"])

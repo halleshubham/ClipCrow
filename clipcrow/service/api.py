@@ -14,6 +14,9 @@ import hashlib
 import os
 import hmac
 import json
+import urllib.error
+import urllib.parse
+import urllib.request
 import subprocess
 import time
 import logging
@@ -26,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Callable, Literal, Optional, Union
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
@@ -130,6 +133,10 @@ class CodeVerify(BaseModel):
 
 class ConfirmEmail(BaseModel):
     email: str                      # typed again to confirm deleting the account
+
+
+class SocioBirdKey(BaseModel):
+    key: str = Field(min_length=8, max_length=300)
 
 
 class SettingsBody(BaseModel):
@@ -267,7 +274,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                sociobird: SocioBird | None = None, sociobird_shared: bool = False, storage: S3Storage | None = None,
                storage_redirect: bool = False, backup_source: bool = False, local_clip_days: int = 0,
                worker_token: str | None = None, worker_pickup_seconds: float = 120.0, worker_lease_seconds: float = 90.0,
-               mailer: Mailer | None = None, public_url: str = "", limits: Limits | None = None, alert_email: str = "", sample_dir: str = "") -> FastAPI:
+               mailer: Mailer | None = None, public_url: str = "", limits: Limits | None = None, alert_email: str = "", sample_dir: str = "", sociobird_factory: Callable[[str], SocioBird] | None = None,
+               sociobird_oauth_exchange: Callable[[str], str] | None = None) -> FastAPI:
     """``accounts``: multi-user mode (sign-up, per-user jobs, minutes metered against the plan). Without it the app is
     single-user, optionally behind ``token``."""
     store = JobStore(data_dir)
@@ -452,7 +460,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             signed_in = False
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
                 "pricing": catalog.payg.view() if catalog.payg else None, "signup": bool(accounts) and allow_signup, "signup_paused": bool(accounts) and allow_signup and accounts.signups_today() >= limits.signups_per_day,
-                "email": email, "admin": bool(email and email in admins), "mail": bool(mailer), "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(sociobird) and (not accounts or sociobird_shared),
+                "email": email, "admin": bool(email and email in admins), "mail": bool(mailer), "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(accounts) or bool(sociobird),
                 "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready(),
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
                 "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online()),
@@ -819,18 +827,123 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     # --- publishing (SocioBird) -------------------------------------------------------------------
     publish_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="clipcrow-publish")
 
-    def need_publishing() -> SocioBird:
-        if not sociobird or (accounts and not sociobird_shared):
+    SB_BASE = (os.environ.get("SOCIOBIRD_API_URL") or "https://go.sociobird.app/api").strip()
+    make_sociobird = sociobird_factory or (lambda key: SocioBird(SB_BASE, key))
+    NOT_CONNECTED = "Connect your SocioBird account first: open your Account page and add it under Posting."
+
+    def need_publishing(request: Request) -> SocioBird:
+        """The SocioBird client for THIS person. With accounts on it is built from their own stored key (never the operator's, unless the operator chose shared
+        posting); without accounts it is the server's one client."""
+        user = getattr(request.state, "user", None)
+        if accounts and user is not None:
+            key = accounts.link_token(user.id)
+            if key:
+                return make_sociobird(key)
+            if sociobird and sociobird_shared:
+                return sociobird
+            raise HTTPException(409, NOT_CONNECTED)
+        if not sociobird:
             raise HTTPException(404, "Posting to social channels is not set up on this server.")
         return sociobird
 
-    @app.get("/api/publish/channels", dependencies=[Depends(authed)])
-    def publish_channels() -> list[dict]:
-        sb = need_publishing()
+    def refused(user, e: PublishError) -> None:
+        """SocioBird turned our request down with 401 or 403: the key was revoked or the plan has no API. Remember it so the Account page says reconnect."""
+        if accounts and user is not None and re.search(r"\((401|403)\)", str(e)):
+            accounts.mark_link(user.id, False, "SocioBird refused the connection")
+            raise HTTPException(409, "SocioBird refused your connection (the key was removed, or your SocioBird plan has no API access). Reconnect it on your Account page.")
+
+    def sociobird_status(user: User) -> dict:
+        link = accounts.get_link(user.id) if accounts else None
+        return {"connected": bool(link), "kind": link["kind"] if link else "", "label": link["label"] if link else "", "since": link["connected_at"] if link else "",
+                "last_error": link["last_error"] if link else "", "shared": bool(sociobird and sociobird_shared), "oauth": bool(oauth_id)}
+
+    @app.get("/api/sociobird", dependencies=[Depends(authed)])
+    def sociobird_get(request: Request) -> dict:
+        need_accounts()
+        return sociobird_status(request.state.user)
+
+    @app.post("/api/sociobird/key", dependencies=[Depends(authed)])
+    def sociobird_connect(body: SocioBirdKey, request: Request) -> dict:
+        """Connect with a person's own SocioBird API key. It is tried once (listing their channels) before anything is stored, then stored encrypted."""
+        user = request.state.user
+        need_accounts()
+        key = body.key.strip()
+        if re.search(r"[\s\x00-\x1f]", key):
+            raise HTTPException(422, "That does not look like a SocioBird API key: it has spaces or line breaks.")
         try:
-            return [{"id": c.id, "name": c.name, "platform": c.platform, "brand": c.brand, "limit": LIMITS.get(c.platform, 2000)}
-                    for c in sb.channels()]
+            channels = make_sociobird(key).channels()
         except PublishError as e:
+            if re.search(r"\((401|403)\)", str(e)):
+                raise HTTPException(422, "SocioBird did not accept that key. Copy it again from SocioBird (Settings, Public API); your SocioBird plan must include API access.")
+            raise HTTPException(UPSTREAM, str(e))
+        accounts.set_link(user.id, "key", key, f"{len(channels)} channel{'s' if len(channels) != 1 else ''}")
+        return sociobird_status(user)
+
+    # --- connecting with SocioBird's OAuth (authorisation code) ------------------------------------------------------
+    # The operator registers ClipCrow once in SocioBird (Developer settings) with the redirect URL <public address>/api/sociobird/callback and sets
+    # SOCIOBIRD_OAUTH_CLIENT_ID and SOCIOBIRD_OAUTH_CLIENT_SECRET. Not yet tried against the live SocioBird (docs/sociobird-per-user-task.md, step 0).
+    oauth_id = os.environ.get("SOCIOBIRD_OAUTH_CLIENT_ID", "").strip()
+    oauth_web = (os.environ.get("SOCIOBIRD_OAUTH_URL") or "https://go.sociobird.app").rstrip("/")
+    oauth_token_url = os.environ.get("SOCIOBIRD_OAUTH_TOKEN_URL") or f"{SB_BASE}/oauth/token"
+
+    def exchange_code(code: str) -> str:
+        """Swap the authorisation code for SocioBird's access token (server to server; the client secret never leaves the server). Raises PublishError."""
+        secret = os.environ.get("SOCIOBIRD_OAUTH_CLIENT_SECRET", "")
+        if not (oauth_id and secret):
+            raise PublishError("SocioBird sign-in is not set up on this server.")
+        data = json.dumps({"grant_type": "authorization_code", "code": code, "client_id": oauth_id, "client_secret": secret}).encode()
+        req = urllib.request.Request(oauth_token_url, data=data, method="POST", headers={"Content-Type": "application/json", "User-Agent": "ClipCrow/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:                        # noqa: S310 (the operator's configured https address)
+                token = json.loads(r.read(100_000)).get("access_token")
+        except (urllib.error.URLError, TimeoutError, ValueError):
+            raise PublishError("SocioBird did not accept the sign-in.") from None
+        if not isinstance(token, str) or not 8 <= len(token) <= 400:
+            raise PublishError("SocioBird did not return an access token.")
+        return token
+    swap_code = sociobird_oauth_exchange or exchange_code
+
+    @app.post("/api/sociobird/oauth/start", dependencies=[Depends(authed)])
+    def sociobird_oauth_start(request: Request) -> dict:
+        user = request.state.user
+        need_accounts()
+        if not oauth_id:
+            raise HTTPException(404, "Signing in with SocioBird is not turned on here. Paste your API key instead.")
+        state = accounts.new_oauth_state(user.id)
+        return {"url": f"{oauth_web}/oauth/authorize?" + urllib.parse.urlencode({"client_id": oauth_id, "response_type": "code", "state": state})}
+
+    @app.get("/api/sociobird/callback", include_in_schema=False)
+    def sociobird_oauth_callback(code: str = "", state: str = "", error: str = "") -> RedirectResponse:
+        """Where SocioBird sends the browser back. It always ends in a redirect to the Account page with ``?sociobird=connected`` or ``failed``."""
+        back = lambda outcome: RedirectResponse(f"/dashboard?sociobird={outcome}#/account", status_code=303)
+        uid = accounts.take_oauth_state(state[:200]) if accounts else None
+        if uid is None or error or not code or len(code) > 500:
+            return back("failed")
+        try:
+            token = swap_code(code)
+            channels = make_sociobird(token).channels()
+        except PublishError:
+            log.warning("SocioBird sign-in failed for an account")
+            return back("failed")
+        accounts.set_link(uid, "oauth", token, f"{len(channels)} channel{'s' if len(channels) != 1 else ''}")
+        return back("connected")
+
+    @app.delete("/api/sociobird", dependencies=[Depends(authed)])
+    def sociobird_disconnect(request: Request) -> dict:
+        user = request.state.user
+        need_accounts().delete_link(user.id)
+        return sociobird_status(user)
+
+    @app.get("/api/publish/channels", dependencies=[Depends(authed)])
+    def publish_channels(request: Request) -> list[dict]:
+        sb = need_publishing(request)
+        try:
+            out = [{"id": c.id, "name": c.name, "platform": c.platform, "brand": c.brand, "limit": LIMITS.get(c.platform, 2000)} for c in sb.channels()]
+            if accounts and request.state.user is not None:
+                accounts.mark_link(request.state.user.id, True)
+            return out
+        except PublishError as e:
+            refused(getattr(request.state, "user", None), e)
             raise HTTPException(UPSTREAM, str(e))
 
     @app.get("/api/jobs/{job_id}/clips/{clip_id}/posts", dependencies=[Depends(authed)])
@@ -865,12 +978,12 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     @app.get("/api/publish/schedule/prefs", dependencies=[Depends(authed)])
     def schedule_prefs_get(request: Request) -> dict:
-        need_publishing()
+        need_publishing(request)
         return schedule_prefs.get(brand_owner(request))
 
     @app.put("/api/publish/schedule/prefs", dependencies=[Depends(authed)])
     def schedule_prefs_put(body: SchedulePrefsBody, request: Request) -> dict:
-        need_publishing()
+        need_publishing(request)
         try:
             return schedule_prefs.put(brand_owner(request), body.timezone, body.times)
         except ScheduleError as e:
@@ -885,7 +998,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     def publish_bulk(job_id: str, body: PublishBulk, request: Request) -> dict:
         """Schedule the chosen reels on the chosen channels, ``per_day`` reels a day on each channel, at its platform's best times. With ``dry_run`` only the
         plan is returned. Everything is checked before anything is queued."""
-        sb = need_publishing()
+        sb = need_publishing(request)
         job = job_or_404(job_id, request)
         if len(set(body.clips)) != len(body.clips) or len(set(body.channels)) != len(body.channels):
             raise HTTPException(422, "Each reel and each channel can be chosen once.")
@@ -980,7 +1093,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     @app.post("/api/jobs/{job_id}/clips/{clip_id}/publish", dependencies=[Depends(authed)], status_code=202)
     def clip_publish(job_id: str, clip_id: str, body: PublishBody, request: Request) -> list[dict]:
-        sb = need_publishing()
+        sb = need_publishing(request)
         job = job_or_404(job_id, request)
         info, path, ai_media = postable_clip(job_id, job, clip_id)
         if ai_media and not body.ai_confirmed:

@@ -63,7 +63,12 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
      failures, GPU tasks nobody can take, mail failing), per-person cost limits `CLIPCROW_MAX_ACTIVE_JOBS` (3), `CLIPCROW_MAX_JOBS_PER_DAY` (30),
      `CLIPCROW_MAX_JOB_MINUTES` (240), `CLIPCROW_MAX_SIGNUPS_PER_DAY` (200; 0 turns a limit off), `CLIPCROW_BLOCKED_EMAIL_DOMAINS` (added to the built-in
      list of throw-away mail domains). `GET /api/health` answers `{"ok": true}` for an uptime monitor.
-   - *Posting:* `SOCIOBIRD_API_URL` (the API root, `https://go.sociobird.app/api`: ClipCrow adds `/public/v1/...`), `SOCIOBIRD_API_KEY` (and `CLIPCROW_SOCIOBIRD_SHARED=1` if accounts are on).
+   - *Posting, per person (accounts on):* each person connects their OWN SocioBird on their Account page, under Posting: by pasting their API key (SocioBird: Settings, Public API; the plan must include API access), or, when you have registered
+     ClipCrow in SocioBird, with a "Connect with SocioBird" button (OAuth). The key or token is encrypted with a key derived from the server secret (`CLIPCROW_SECRET_KEY`, or `<data>/clipcrow.secret`: **back that file up with the database, or every
+     connection must be made again**) and is never shown or logged. Nobody posts through someone else's SocioBird. For OAuth: in SocioBird's Developer settings create the ClipCrow app with the redirect URL
+     `https://<your domain>/api/sociobird/callback`, then set `SOCIOBIRD_OAUTH_CLIENT_ID` and `SOCIOBIRD_OAUTH_CLIENT_SECRET` (optionally `SOCIOBIRD_OAUTH_URL`, default `https://go.sociobird.app`, and `SOCIOBIRD_OAUTH_TOKEN_URL`).
+     **The OAuth path follows SocioBird's source code and is not yet tried against the live service**: do the manual round trip with a second SocioBird account first (`docs/sociobird-per-user-task.md`, step 0). The pasted key path needs none of this.
+   - *Posting, shared (optional):* `SOCIOBIRD_API_URL` (the API root, `https://go.sociobird.app/api`: ClipCrow adds `/public/v1/...`), `SOCIOBIRD_API_KEY` (and `CLIPCROW_SOCIOBIRD_SHARED=1` if accounts are on).
    - *R2:* see section 3.
 4. **Deploy.** The first start takes a minute (health check `start_period` is 90 s). Then, in the container terminal:
    `clipcrow selftest` should print `ok` for every line, ending with a real render.

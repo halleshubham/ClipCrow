@@ -1,6 +1,6 @@
 # Scope: per-user SocioBird (OAuth), so every account posts to its own channels
 
-Status: scoping only, nothing built. Written 2026-11-19.
+Status: **built 2026-11-19** (the pasted-key connection and the OAuth connection; the OAuth round trip is still untried against the live SocioBird, step 0 below). Originally scoped the same day.
 
 ## Why
 Today one SocioBird API key (`SOCIOBIRD_API_KEY`) belongs to the operator's workspace. With accounts on, posting is off unless `CLIPCROW_SOCIOBIRD_SHARED=1`,

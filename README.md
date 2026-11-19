@@ -140,7 +140,7 @@ involvement).
   `docs/deploy.md`. If the bucket cannot be reached from the browser, a file under 90 MB falls back to the ordinary upload;
   if it is reachable but the rule does not expose `ETag`, the page says so. Tested with an S3-compatible server and a real
   browser; **not tried against live R2**.
-- **Not built yet**: per-user SocioBird keys (`docs/sociobird-per-user-task.md`), a public API, teams, a job queue across several machines,
+- **Per-user SocioBird**: each account connects its own (a pasted key, or OAuth once the operator has registered the app); see `docs/deploy.md`. **Not built yet**: a public API, teams, a job queue across several machines,
   a live preview and a timeline editor.
 - Browser tests: `node scripts/e2e_ui.js <video> <dir>` (Playwright, real render and re-render, ~8 min; `JOB_ID=<id>`
   re-tests the editor on a job that already exists) and `scripts/e2e_accounts.js` (sign-up, usage, billing section,
