@@ -232,5 +232,6 @@ The options used every time (language, clips, reel length min and max, people in
 ## 2026-11-19: per-user SocioBird scoped
 `docs/sociobird-per-user-task.md`: each account connects its own SocioBird workspace (OAuth authorisation code against a static app owned by the operator's workspace, or a pasted API key), the token stored encrypted, a per-user client in `need_publishing()`. Read from the SocioBird source (no refresh token, no expiry, the approver's own workspace is what a token acts for); step 0 is one real round trip with a second account. Nothing built.
 
-## 2026-11-19: email scoped (Resend and SMTP)
+## 2026-11-19: email scoped (Resend and SMTP), sign-in by email code only
 `docs/email-task.md`: one `Mailer` interface with a Resend (HTTPS API) and an SMTP implementation, chosen by `CLIPCROW_EMAIL=resend|smtp|off` with an optional fallback provider; password reset and email verification first, then billing and job-finished mails. Hashed single-use tokens, links from `CLIPCROW_PUBLIC_URL` only, header-injection refused, no enumeration, bounces and complaints via Resend's signed webhook. Nothing built.
+Decisions the same day: sender `support@shackyapps.in`, Resend the default provider, job-finished mail only when opted in, and **sign-in by emailed one-time code only, no password login** (sign-up and sign-in are one flow; hashed single-use 6-digit code, 10 minutes, 5 tries; existing password accounts keep their account by signing in with a code to the same address). Still not built.
