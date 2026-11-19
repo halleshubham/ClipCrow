@@ -179,7 +179,7 @@ def test_poll_validates_what_a_worker_claims_it_can_do(tmp_path):
         assert c.post("/api/worker/poll", json={**body, "wait": 0}, headers=AUTH).status_code == 422, body
     assert c.get("/api/config").json()["gpu_worker"]["render"] is False
     poll_render(c)
-    assert c.get("/api/config").json()["gpu_worker"] == {"enabled": True, "online": True, "render": True}
+    assert {k: v for k, v in c.get("/api/config").json()["gpu_worker"].items() if k != "estimate"} == {"enabled": True, "online": True, "render": True}
     poll_render(c, name="old", pin="0.0.1")
     assert c.get("/api/config").json()["gpu_worker"]["render"] is True               # the matching one still counts
 
