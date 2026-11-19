@@ -52,9 +52,10 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
    - *Sample job and welcome mail:* every new account gets one welcome mail and, when `CLIPCROW_SAMPLE_DIR` is set, a finished **sample job** copied from that folder (it costs the
      person no minutes and retention never deletes it). Make the folder from any finished job on the server: `clipcrow export-sample <job id> --data /data --to /data/sample`, then set
      `CLIPCROW_SAMPLE_DIR=/data/sample`. Pick a short, good-looking recording whose people agree to its use: every new account can watch it. The original video is not exported.
-   - *Landing page:* the marketing page is served by the app at `/landing/` (`clipcrow/service/static/landing/`, one HTML file and one stylesheet, no script, no third-party request).
-     To make it the front door, point the public domain's `/` at `/landing/` in your proxy (Cloudflare redirect or Coolify), or host the folder on Cloudflare Pages: copy
-     `landing/`, `icons.css`, `logo.png`, `logo-mark.png`, `icon-512.png` and the favicons beside it and change the "Start free" links from `/#/` to the app's address.
+   - *Landing page and dashboard:* the marketing page is the front door at `/` (`clipcrow/service/static/index.html`, with `landing/landing.css` and `landing/landing.js`: no inline script, no third-party request); the app is at
+     `/dashboard` (hash routes such as `/dashboard#/jobs/<id>`; mail links use this form). `/landing/` redirects to `/`, and an old link or bookmark like `/#/jobs/<id>` is sent on to `/dashboard#/jobs/<id>` by the landing page.
+     Someone already signed in sees "Open dashboard" on the landing page. To host the landing page elsewhere (Cloudflare Pages), copy `index.html`, `landing/`, `icons.css`, `logo.png`, `logo-mark.png`, `icon-512.png` and the favicons beside it
+     and change the "Start free" and Terms/Privacy links to the app's `/dashboard` address.
    - *Operator settings (no redeploy):* about 35 settings can be changed on the Operator page (`#/admin/settings`) and apply at once: pricing (price, minimum charge, free minutes, recharge limits, two bonus tiers, plan name), the margin target and cost rates,
      sign-up (open or closed, a daily cap, blocked mail domains, extra operators), per-person limits and the upload size, how long files are kept, GPU behaviour (fallback, workers switched off, pickup wait, the pod's idle time and daily spend), the alert address, the planning model and framing threads.
      They are saved in `<data>/settings.json` (mode 600) and beat the environment and `plans.json`; Reset puts one back to what the server started with. Secrets are never settings: the page lists which outside services are connected, yes or no, never a value.

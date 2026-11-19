@@ -18,7 +18,7 @@ const fail = (m) => { console.error('FAIL:', m); process.exit(1); };
   page.on('requestfailed', (r) => { if (!/ERR_ABORTED/.test(r.failure()?.errorText || '')) problems.push(`request failed: ${r.url()}`); });
 
   if (process.env.JOB_ID) {                       // re-test the editor on a job that is already rendered
-    await page.goto(`${base}/#/jobs/${process.env.JOB_ID}`);
+    await page.goto(`${base}/dashboard#/jobs/${process.env.JOB_ID}`);
     await page.waitForSelector('.clipcard video', { timeout: 30000 });
   } else {
     await page.goto(base);

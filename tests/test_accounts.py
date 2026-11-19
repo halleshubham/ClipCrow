@@ -261,7 +261,7 @@ def test_job_done_mail_goes_only_to_people_who_asked_for_it(tmp_path, video_byte
     jid2 = upload(c, video_bytes).json()["id"]
     wait(c, jid2)
     done = [m for m in box.sent if m.kind == "job-done"]
-    assert len(done) == 1 and done[0].to == "a@example.com" and f"https://clipcrow.example/#/jobs/{jid2}" in done[0].text
+    assert len(done) == 1 and done[0].to == "a@example.com" and f"https://clipcrow.example/dashboard#/jobs/{jid2}" in done[0].text
     assert a.get(uid).notify_job_done is True
 
 

@@ -287,7 +287,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             try:
                 owner = accounts.get(job.owner)
                 if owner.notify_job_done:
-                    mailq.send(job_done_mail(owner.email, job.status == "done", f"{base_url}/#/jobs/{job.id}" if base_url else ""))
+                    mailq.send(job_done_mail(owner.email, job.status == "done", f"{base_url}/dashboard#/jobs/{job.id}" if base_url else ""))
             except (KeyError, ValueError):
                 pass
     runner.on_finish = finish
@@ -501,7 +501,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             if sample_path:
                 job = import_sample(store, sample_path, user.id)
                 if job is not None and base_url:
-                    link = f"{base_url}/#/jobs/{job.id}"
+                    link = f"{base_url}/dashboard#/jobs/{job.id}"
         except Exception:                                              # noqa: BLE001
             log.exception("sample job for a new account failed")
         if mailq:
@@ -2147,6 +2147,17 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                                             "minutes": j.reserved_minutes})(job_cost(job_id), store.get(job_id))}
                if request.state.user is not None and request.state.user.email in admins and job_cost(job_id) else {}),
         }
+
+    # The landing page is the front door (static/index.html, served at /); the app itself is at /dashboard (hash routes: /dashboard#/jobs/...).
+    @app.get("/dashboard", include_in_schema=False)
+    @app.get("/dashboard/", include_in_schema=False)
+    def dashboard_page() -> FileResponse:
+        return FileResponse(STATIC / "dashboard.html", media_type="text/html")
+
+    @app.get("/landing", include_in_schema=False)
+    @app.get("/landing/", include_in_schema=False)
+    def old_landing_address() -> RedirectResponse:
+        return RedirectResponse("/", status_code=301)
 
     app.mount("/", StaticFiles(directory=STATIC, html=True), name="ui")
     return app

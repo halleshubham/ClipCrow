@@ -49,7 +49,7 @@ def test_a_new_account_gets_one_welcome_mail_and_a_finished_sample_job_that_cost
     clip = jobs[0]["clips"][0]
     assert c.get(f"/api/jobs/{jobs[0]['id']}/clips/{clip['id']}/video").status_code in (200, 206)    # the clip really plays
     welcome = [m for m in app.state.outbox.sent if m.kind == "welcome"]
-    assert len(welcome) == 1 and welcome[0].to == "new@example.com" and f"https://clipcrow.example/#/jobs/{jobs[0]['id']}" in welcome[0].text
+    assert len(welcome) == 1 and welcome[0].to == "new@example.com" and f"https://clipcrow.example/dashboard#/jobs/{jobs[0]['id']}" in welcome[0].text
     assert "30 minutes" in welcome[0].text
     sign_up(TestClient(app), "new@example.com")                                                    # signing in again: no second sample, no second welcome
     assert len(c.get("/api/jobs").json()) == 1 and len([m for m in app.state.outbox.sent if m.kind == "welcome"]) == 1

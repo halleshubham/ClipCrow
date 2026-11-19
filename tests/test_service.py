@@ -315,7 +315,7 @@ def test_the_ui_never_builds_markup_from_strings():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
         assert banned not in js, banned
-    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    html = (STATIC / "dashboard.html").read_text(encoding="utf-8")
     assert "onclick=" not in html and "<script>" not in html and 'style="' not in html          # CSP: no inline code
     assert "http://" not in js and "https://" not in js and "//cdn" not in html                 # nothing third-party
 
@@ -408,7 +408,7 @@ def test_the_app_drains_when_it_shuts_down(tmp_path, video_bytes, monkeypatch):
 
 def test_ui_files_are_revalidated_so_a_deploy_never_leaves_old_javascript(tmp_path):
     c, _ = client(tmp_path)
-    for path in ("/", "/app.js", "/style.css"):
+    for path in ("/", "/dashboard", "/app.js", "/style.css"):
         r = c.get(path)
         assert r.status_code == 200 and r.headers["cache-control"] == "no-cache", path
         assert r.headers.get("etag")

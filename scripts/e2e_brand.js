@@ -17,7 +17,7 @@ const fail = (m) => { console.error('FAIL:', m); process.exit(1); };
   page.on('requestfailed', (r) => { if (!/ERR_ABORTED/.test(r.failure()?.errorText || '')) problems.push(`request failed: ${r.url()}`); });
   page.on('dialog', (d) => d.accept());
 
-  await page.goto(`${base}/#/new`);
+  await page.goto(`${base}/dashboard#/new`);
   await page.waitForSelector('h1:has-text("New job")');
   if (!(await page.locator('#logo').isDisabled()) || !(await page.locator('#outro').isDisabled())) fail('logo/outro are offered before anything is uploaded');
   if (await page.locator('#cover').isDisabled()) fail('the cover needs no upload');

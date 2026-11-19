@@ -4,7 +4,7 @@ from pathlib import Path
 
 STATIC = Path(__file__).resolve().parent.parent / "clipcrow" / "service" / "static"
 APP = (STATIC / "app.js").read_text(encoding="utf-8")
-HTML = (STATIC / "index.html").read_text(encoding="utf-8")
+HTML = (STATIC / "dashboard.html").read_text(encoding="utf-8")
 CSS = (STATIC / "style.css").read_text(encoding="utf-8")
 ICONS = (STATIC / "icons.css").read_text(encoding="utf-8")
 DEFINED = set(re.findall(r"\.i-([a-z0-9-]+)\s*\{\s*--m:", ICONS + CSS))

@@ -9,6 +9,21 @@ const EXAMPLES = [
 ];
 const reelsFor = (minutes) => Math.min(10, Math.max(1, Math.round(minutes / 5.5)));
 
+// An old link or bookmark such as /#/jobs/abc (the app used to live at /) goes to the dashboard with the same hash.
+const toDashboard = () => { if (location.hash.startsWith('#/')) location.replace('/dashboard' + location.hash); };
+toDashboard();
+window.addEventListener('hashchange', toDashboard);
+
+// Someone who is already signed in sees "Open dashboard" instead of "Start free".
+(async () => {
+  try {
+    const cfg = await (await fetch('/api/config', { credentials: 'same-origin' })).json();
+    if (cfg.signed_in || !cfg.needs_login) {
+      for (const [id, text] of [['nav-cta', 'Open dashboard'], ['nav-signin', '']]) { const n = document.getElementById(id); if (n) { if (text) n.textContent = text; else n.hidden = true; } }
+    }
+  } catch (_) { /* the plain buttons stay */ }
+})();
+
 (async () => {
   try {
     const res = await fetch('/api/pricing', { credentials: 'omit' });

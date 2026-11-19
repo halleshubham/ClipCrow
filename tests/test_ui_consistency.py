@@ -13,7 +13,7 @@ def read(name):
 
 def test_every_input_type_the_ui_uses_has_been_styled():
     used = set(re.findall(r"el\('input',\s*\{[^}]*?type:\s*'([a-z-]+)'", read("app.js")))
-    used |= set(re.findall(r"<input[^>]*type=\"([a-z-]+)\"", read("index.html")))
+    used |= set(re.findall(r"<input[^>]*type=\"([a-z-]+)\"", read("dashboard.html")))
     unknown = used - STYLED_INPUT_TYPES
     assert not unknown, (f"new input type(s) {sorted(unknown)}: style them in style.css so they look like the text field (docs/ui.md), "
                          f"then add them to STYLED_INPUT_TYPES")
