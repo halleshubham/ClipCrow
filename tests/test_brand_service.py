@@ -153,7 +153,7 @@ def test_deleting_the_account_removes_the_brand_files(tmp_path):
     c.post("/api/brand/logo", files={"file": ("l.png", png(tmp_path / "l.png").read_bytes(), "image/png")})
     folders = [p for p in (tmp_path / "data" / "brand").iterdir()]
     assert len(folders) == 1 and list(folders[0].rglob("logo.png"))   # the owner folder holds one folder per brand
-    assert c.request("DELETE", "/api/account", json={"password": PW}).status_code == 200
+    assert c.request("DELETE", "/api/account", json={"email": "a@example.com"}).status_code == 200
     assert not folders[0].exists()
 
 

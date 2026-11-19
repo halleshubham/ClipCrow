@@ -37,7 +37,9 @@ from ..branding import BrandError
 from ..costs import estimate_cost, estimate_total
 from ..edl import load_edl
 from ..planner.source import probe_source
-from .accounts import AccountError, Accounts, User
+from .accounts import AccountError, Accounts, CODE_MINUTES, CODE_WAIT_S, User
+from .ops import Limits, Snapshot, Watchdog, admin_emails, disk_snapshot, is_throwaway, job_refusal, jobs_since
+from .mailer import MailQueue, Mailer, Message, Outbox, billing_mail, job_done_mail, plain_mail, sign_in_code_mail
 from .billing import BillingError, Razorpay, apply_event
 from .brand import MAX_LOGO_BYTES, MAX_MUSIC_BYTES, MAX_OUTRO_BYTES, TRACK_ID, BrandStore, track_path
 from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
@@ -57,6 +59,7 @@ from .runner import JobRunner, Pipeline
 from .style_store import StyleStore
 from ..styles import MAX_REFERENCE_BYTES, StyleError, StyleSettings, derive, measure
 
+log = logging.getLogger("clipcrow.service")
 STATIC = Path(__file__).parent / "static"
 COOKIE = "clipcrow_token"
 SESSION_COOKIE = "clipcrow_session"
@@ -112,13 +115,33 @@ class Login(BaseModel):
     token: str
 
 
-class Credentials(BaseModel):
+class CodeRequest(BaseModel):
     email: str
-    password: str
 
 
-class Password(BaseModel):
-    password: str
+class CodeVerify(BaseModel):
+    email: str
+    code: str
+
+
+class ConfirmEmail(BaseModel):
+    email: str                      # typed again to confirm deleting the account
+
+
+class AdminCredits(BaseModel):
+    minutes: float = Field(ge=-100000, le=100000)
+
+
+class AdminPlan(BaseModel):
+    plan: str
+
+
+class AdminDisable(BaseModel):
+    disabled: bool
+
+
+class NotifyBody(BaseModel):
+    job_done: bool
 
 
 class PlanChoice(BaseModel):
@@ -231,17 +254,30 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                catalog: Catalog | None = None, allow_signup: bool = True, razorpay: Razorpay | None = None,
                sociobird: SocioBird | None = None, sociobird_shared: bool = False, storage: S3Storage | None = None,
                storage_redirect: bool = False, backup_source: bool = False, local_clip_days: int = 0,
-               worker_token: str | None = None, worker_pickup_seconds: float = 120.0, worker_lease_seconds: float = 90.0) -> FastAPI:
+               worker_token: str | None = None, worker_pickup_seconds: float = 120.0, worker_lease_seconds: float = 90.0,
+               mailer: Mailer | None = None, public_url: str = "", limits: Limits | None = None, alert_email: str = "") -> FastAPI:
     """``accounts``: multi-user mode (sign-up, per-user jobs, minutes metered against the plan). Without it the app is
     single-user, optionally behind ``token``."""
     store = JobStore(data_dir)
     catalog = catalog or load_catalog()
     runner = JobRunner(store, pipeline)
 
+    mailq = MailQueue(mailer, sync=isinstance(mailer, Outbox)) if mailer else None
+    limits = limits or Limits.from_env()
+    admins = admin_emails()
+    base_url = (public_url or os.environ.get("CLIPCROW_PUBLIC_URL", "")).strip().rstrip("/")      # links in mail come from here, never from a request header
+
     def finish(job: Job) -> None:
-        """A job that failed or was cancelled gives its minutes back."""
+        """A job that failed or was cancelled gives its minutes back; a person who asked for it gets one mail when the job ends."""
         if accounts and job.owner and job.reserved_minutes and job.status in ("failed", "cancelled"):
             accounts.refund(job.owner, job.id)
+        if accounts and mailq and job.owner and job.status in ("done", "failed"):
+            try:
+                owner = accounts.get(job.owner)
+                if owner.notify_job_done:
+                    mailq.send(job_done_mail(owner.email, job.status == "done", f"{base_url}/#/jobs/{job.id}" if base_url else ""))
+            except (KeyError, ValueError):
+                pass
     runner.on_finish = finish
     mirror = Mirror(storage, store, backup_source=backup_source) if storage else None
     if mirror:
@@ -294,6 +330,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     app.state.store, app.state.runner, app.state.accounts, app.state.catalog = store, runner, accounts, catalog
     app.state.mirror, app.state.mirror_source = mirror, backup_source
     app.state.pod = pod
+    app.state.outbox = mailer if isinstance(mailer, Outbox) else None            # tests read the sign-in code from here
     limit = max_upload_mb * 1024 * 1024
 
     @app.middleware("http")
@@ -355,7 +392,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     if start_runner and (accounts or any(env_days()) or storage):
         app.state.sweeper = Sweeper(store, days_for, storage=storage, mirror=mirror, local_clip_days=local_clip_days,
-                                    extra=([lambda: getattr(app.state, "expire_uploads", lambda: None)()] if direct else []) + [pictures.expire])          # resolved when it runs (the first run can come before create_app has defined it, then it is skipped)
+                                    extra=([lambda: getattr(app.state, "expire_uploads", lambda: None)()] if direct else []) + [pictures.expire] + ([lambda: accounts.backup(Path(data_dir) / "backups")] if accounts else []))          # resolved when it runs (the first run can come before create_app has defined it, then it is skipped)
         app.state.sweeper.start()
 
     def purge_remote(job_id: str, message: str = "The stored copies could not be removed just now, so nothing was deleted. Try again in a minute.") -> None:
@@ -373,6 +410,15 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         d["expires_at"] = expires_at(job, days)
         return d
 
+    def enforce_limits(user: User, minutes: float, job_id: str) -> None:
+        """A new job from this person must stay inside the cost limits (an operator is exempt). Raises the refusal, after which the caller discards the job."""
+        if user.email in admins:
+            return
+        mine = [j for j in store.list() if j.owner == user.id and j.id != job_id]
+        why = job_refusal(limits, active=sum(1 for j in mine if j.status in ("queued", "running")), today=jobs_since(mine, 24), minutes=minutes)
+        if why:
+            raise HTTPException(why[0], why[1])
+
     # --- config and login ---------------------------------------------------------------
     @app.get("/api/config")
     def config(request: Request) -> dict:
@@ -383,7 +429,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         except HTTPException:
             signed_in = False
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
-                "signup": bool(accounts) and allow_signup, "email": email, "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(sociobird) and (not accounts or sociobird_shared),
+                "signup": bool(accounts) and allow_signup, "signup_paused": bool(accounts) and allow_signup and accounts.signups_today() >= limits.signups_per_day,
+                "email": email, "admin": bool(email and email in admins), "mail": bool(mailer), "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(sociobird) and (not accounts or sociobird_shared),
                 "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready(),
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
                 "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online()),
@@ -418,24 +465,35 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return {"email": user.email, "plan": {"id": plan.id, "name": plan.name, "monthly_minutes": plan.monthly_minutes,
                                               "retention_days": plan.retention_days, "price_label": plan.price_label},
                 "used_minutes": round(used, 1), "left_minutes": round(max(plan.monthly_minutes - used, 0) + user.credits, 1),
-                "credit_minutes": round(user.credits, 1), "plan_until": user.plan_until, "subscribed": bool(user.subscription)}
+                "credit_minutes": round(user.credits, 1), "plan_until": user.plan_until, "subscribed": bool(user.subscription),
+                "notify_job_done": user.notify_job_done, "mail": bool(mailer), "admin": user.email in admins}
 
-    @app.post("/api/auth/register")
-    def register(body: Credentials, request: Request) -> JSONResponse:
+    @app.post("/api/auth/code")
+    def sign_in_code(body: CodeRequest, request: Request) -> JSONResponse:
+        """Step one of signing in (and of signing up): mail a 6-digit code. The answer is the same for every well-formed address."""
         need_accounts()
-        if not allow_signup:
-            raise HTTPException(403, "Sign-ups are closed on this server.")
+        if not mailq:
+            raise HTTPException(503, "Email sign-in is not set up on this server. Ask the operator to turn on email.")
+        known = accounts.by_email(body.email)
+        if known is None and is_throwaway(body.email):
+            raise HTTPException(422, "Please use a permanent email address, not a temporary one.")
+        open_now = allow_signup and accounts.signups_today() < limits.signups_per_day          # new accounts pause for the day at the cap; existing ones still sign in
         try:
-            user = accounts.register(body.email, body.password)
+            code = accounts.request_code(body.email, who=request.client.host if request.client else "", allow_signup=open_now)
         except AccountError as e:
-            raise HTTPException(422, str(e))
-        return set_session(JSONResponse({"ok": True}), request, user)
+            raise HTTPException(429 if "Too many" in str(e) else 422, str(e))
+        if code:
+            try:
+                mailq.send(sign_in_code_mail(body.email.strip().lower(), code, CODE_MINUTES))
+            except ValueError:
+                raise HTTPException(422, "Enter a valid email address.")
+        return JSONResponse({"ok": True, "wait": CODE_WAIT_S, "minutes": CODE_MINUTES})
 
-    @app.post("/api/auth/login")
-    def account_login(body: Credentials, request: Request) -> JSONResponse:
+    @app.post("/api/auth/verify")
+    def sign_in_verify(body: CodeVerify, request: Request) -> JSONResponse:
         need_accounts()
         try:
-            user = accounts.authenticate(body.email, body.password, who=request.client.host if request.client else "")
+            user = accounts.verify_code(body.email, body.code, who=request.client.host if request.client else "", allow_signup=allow_signup)
         except AccountError as e:
             raise HTTPException(429 if "Too many" in str(e) else 401, str(e))
         return set_session(JSONResponse({"ok": True}), request, user)
@@ -452,14 +510,17 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         need_accounts()
         return me_view(request.state.user)
 
+    @app.put("/api/me/notifications", dependencies=[Depends(authed)])
+    def set_notifications(body: NotifyBody, request: Request) -> dict:
+        need_accounts().set_notify(request.state.user.id, body.job_done)
+        return {"job_done": body.job_done}
+
     @app.delete("/api/account", dependencies=[Depends(authed)])
-    def delete_account(body: Password, request: Request) -> JSONResponse:
+    def delete_account(body: ConfirmEmail, request: Request) -> JSONResponse:
         user = request.state.user
         need_accounts()
-        try:
-            accounts.authenticate(user.email, body.password, who=request.client.host if request.client else "")
-        except AccountError as e:
-            raise HTTPException(403, "That password is not right.")
+        if not hmac.compare_digest((body.email or "").strip().lower().encode(), user.email.encode()):
+            raise HTTPException(403, "That is not the email of this account.")
         if any(j.status in ("queued", "running") for j in store.list() if j.owner == user.id):
             raise HTTPException(409, "Cancel your running jobs first.")
         if user.subscription and razorpay:                       # stop the charges FIRST; if that fails, delete nothing
@@ -480,6 +541,94 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(SESSION_COOKIE)
         return resp
+
+    # --- the operator: health, alerts and the admin view --------------------------------------------------
+    @app.get("/api/health")
+    def health() -> dict:
+        """A plain "is it up" answer for an uptime monitor: nothing about jobs, people or the machine."""
+        return {"ok": True}
+
+    def snapshot() -> Snapshot:
+        free_gb, free_pct = disk_snapshot(str(Path(data_dir)))
+        jobs = store.list()
+        waiting = [j for j in jobs if j.status == "queued"]
+        oldest = 0.0
+        for j in waiting:
+            try:
+                made = datetime.fromisoformat(j.created_at)
+                oldest = max(oldest, (datetime.now(timezone.utc) - (made if made.tzinfo else made.replace(tzinfo=timezone.utc))).total_seconds())
+            except ValueError:
+                pass
+        stuck = [t for t in (hub.unserved() if hub is not None else []) if t.get("age", 0) > 300]
+        return Snapshot(disk_free_gb=free_gb, disk_free_pct=free_pct, queued=len(waiting), running=sum(1 for j in jobs if j.status == "running"),
+                        oldest_queued_s=oldest, failed_last_hour=jobs_since(jobs, 1, statuses=("failed",)), unserved_tasks=len(stuck),
+                        mail_failures_hour=mailq.failures_last_hour() if mailq else 0)
+
+    alert_to = (alert_email or os.environ.get("CLIPCROW_ALERT_EMAIL", "")).strip()
+    if start_runner and mailq and alert_to:
+        app.state.watchdog = Watchdog(snapshot, lambda subject, body: mailq.send(plain_mail(alert_to, subject, [body], "alert")))
+        app.state.watchdog.start()
+
+    def admin_only(request: Request) -> User:
+        user = authed(request)
+        if user is None or user.email not in admins:
+            raise HTTPException(404, "Not found.")                  # the page does not exist for anyone else
+        return user
+
+    @app.get("/api/admin/overview", dependencies=[Depends(admin_only)])
+    def admin_overview() -> dict:
+        snap = snapshot()
+        jobs = store.list()
+        by_owner: dict[str, int] = {}
+        for j in jobs:
+            if j.owner:
+                by_owner[j.owner] = by_owner.get(j.owner, 0) + 1
+        users = accounts.list_users()
+        for u in users:
+            u["jobs_now"] = by_owner.get(u["id"], 0)
+        recent_failed = [{"id": j.id, "owner": next((u["email"] for u in users if u["id"] == j.owner), ""), "error": (j.error or "")[:160], "when": j.created_at}
+                         for j in sorted((j for j in jobs if j.status == "failed"), key=lambda j: j.created_at, reverse=True)[:10]]
+        return {"users": users, "signups_today": accounts.signups_today(), "signup_cap": limits.signups_per_day,
+                "jobs": {s: sum(1 for j in jobs if j.status == s) for s in ("queued", "running", "done", "failed", "cancelled")},
+                "disk_free_gb": round(snap.disk_free_gb, 1), "disk_free_pct": round(snap.disk_free_pct), "failed_last_hour": snap.failed_last_hour,
+                "unserved_tasks": snap.unserved_tasks, "mail": mailer.name if mailer else "off", "mail_failures_hour": snap.mail_failures_hour,
+                "gpu_worker": {"online": bool(hub and hub.online()), "render": bool(hub and hub.online("render"))},
+                "pod": pod.status() if pod is not None else None,
+                "limits": {"active_jobs": limits.active_jobs, "jobs_per_day": limits.jobs_per_day, "job_minutes": limits.job_minutes},
+                "recent_failed": recent_failed}
+
+    def admin_target(user_id: str) -> User:
+        if not re.fullmatch(r"[0-9a-f]{32}\Z", user_id or ""):
+            raise HTTPException(404, "No such account.")
+        try:
+            return accounts.get(user_id)
+        except KeyError:
+            raise HTTPException(404, "No such account.")
+
+    @app.post("/api/admin/users/{user_id}/credits")
+    def admin_credits(user_id: str, body: AdminCredits, request: Request, admin: User = Depends(admin_only)) -> dict:
+        user = admin_target(user_id)
+        accounts.add_credits(user.id, body.minutes)
+        log.info("admin %s changed the credit minutes of %s by %s", admin.id[:8], user.id[:8], body.minutes)
+        return {"credit_minutes": round(accounts.get(user.id).credits, 1)}
+
+    @app.post("/api/admin/users/{user_id}/plan")
+    def admin_plan(user_id: str, body: AdminPlan, admin: User = Depends(admin_only)) -> dict:
+        user = admin_target(user_id)
+        if body.plan not in catalog.plans:
+            raise HTTPException(422, "No such plan.")
+        accounts.set_plan(user.id, body.plan, until=None)
+        log.info("admin %s set the plan of %s to %s", admin.id[:8], user.id[:8], body.plan)
+        return {"plan": body.plan}
+
+    @app.post("/api/admin/users/{user_id}/disabled")
+    def admin_disable(user_id: str, body: AdminDisable, admin: User = Depends(admin_only)) -> dict:
+        user = admin_target(user_id)
+        if user.id == admin.id:
+            raise HTTPException(422, "You cannot disable your own account.")
+        accounts.set_disabled(user.id, body.disabled)
+        log.info("admin %s %s %s", admin.id[:8], "disabled" if body.disabled else "enabled", user.id[:8])
+        return {"disabled": body.disabled}
 
     # --- publishing (SocioBird) -------------------------------------------------------------------
     publish_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="clipcrow-publish")
@@ -761,7 +910,10 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         except ValueError:
             raise HTTPException(400, "Not JSON.")
         event_id = request.headers.get("x-razorpay-event-id") or hashlib.sha256(body).hexdigest()
-        return {"status": apply_event(event, event_id[:100], accounts, catalog)}
+        def tell(user, kind: str, detail: str) -> None:
+            if mailq:
+                mailq.send(billing_mail(user.email, kind, detail))
+        return {"status": apply_event(event, event_id[:100], accounts, catalog, tell)}
 
     # --- jobs -----------------------------------------------------------------------------
     def truthy(v) -> bool:
@@ -980,6 +1132,12 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             job.owner = user.id
             minutes = max(1, math.ceil(info.duration / 60))
             plan = effective_plan(user)
+            try:
+                enforce_limits(user, minutes, job.id)
+            except HTTPException:
+                store.delete(job.id)
+                abandon(rec, finished=True)
+                raise
             if accounts.reserve(user.id, job.id, minutes, plan.monthly_minutes) is None:
                 store.delete(job.id)
                 abandon(rec, finished=True)
@@ -1050,6 +1208,11 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if accounts:
             minutes = max(1, math.ceil(info.duration / 60))
             plan = effective_plan(user)
+            try:
+                enforce_limits(user, minutes, job.id)
+            except HTTPException:
+                store.delete(job.id)
+                raise
             left = accounts.reserve(user.id, job.id, minutes, plan.monthly_minutes)
             if left is None:
                 store.delete(job.id)

@@ -15,6 +15,7 @@ from clipcrow.service.api import create_app
 from clipcrow.service.plans import Catalog, Plan
 from clipcrow.service.publish import (Channel, PublishError, SocioBird, caption_html, settings_for, validate_when)
 from tests.test_service import FakePipeline, upload, video_bytes, wait  # noqa: F401
+from tests.mailhelp import Outbox, sign_up  # noqa: E402
 
 PW = "correct horse battery"
 CHANNELS = [{"id": "ch-yt", "name": "My YouTube", "identifier": "youtube"}, {"id": "ch-ig", "name": "My Insta", "identifier": "instagram"},
@@ -263,9 +264,9 @@ def test_with_accounts_posting_is_off_unless_the_operator_shares_the_channels_an
 
     def build(root, shared):
         a = Accounts(root / "data" / "x.db")
-        app = create_app(root / "data", FakePipeline(), accounts=a, catalog=cat, sociobird=FakeSB(), sociobird_shared=shared)
+        app = create_app(root / "data", FakePipeline(), accounts=a, mailer=Outbox(), catalog=cat, sociobird=FakeSB(), sociobird_shared=shared)
         c = TestClient(app)
-        c.post("/api/auth/register", json={"email": "a@example.com", "password": PW})
+        sign_up(c, "a@example.com")
         return c, app
     c, app = build(tmp_path / "off", False)
     assert c.get("/api/config").json()["publishing"] is False and c.get("/api/publish/channels").status_code == 404
@@ -276,7 +277,7 @@ def test_with_accounts_posting_is_off_unless_the_operator_shares_the_channels_an
     assert c.post(f"/api/jobs/{jid}/clips/{cid}/publish", json={"channels": ["ch-yt"]}).status_code == 202
     posts_when_done(c, jid, cid)
     other = TestClient(app)
-    other.post("/api/auth/register", json={"email": "b@example.com", "password": PW})
+    sign_up(other, "b@example.com")
     assert other.post(f"/api/jobs/{jid}/clips/{cid}/publish", json={"channels": ["ch-yt"]}).status_code == 404
     assert other.get(f"/api/jobs/{jid}/clips/{cid}/posts").status_code == 404
 

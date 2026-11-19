@@ -2,6 +2,8 @@
 // is inserted as text, never parsed as markup, and there are no inline handlers (the CSP forbids them).
 // Look and feel: read docs/ui.md before adding a screen or a control (shared classes, tokens only, every input styled like a field, both themes).
 
+import { LEGAL, LEGAL_UPDATED, CONTACT } from '/legal.js';
+
 const app = document.getElementById('app');
 const banner = document.getElementById('banner');
 const state = { config: null };
@@ -139,7 +141,7 @@ class SignInNeeded extends Error {}
 
 async function api(path, opts = {}) {
   const res = await fetch('/api' + path, { credentials: 'same-origin', ...opts });
-  if (res.status === 401 && path !== '/login' && path !== '/auth/login') {
+  if (res.status === 401 && path !== '/login' && path !== '/auth/verify') {
     state.config.signed_in = false;
     throw new SignInNeeded('Sign in first.');
   }
@@ -204,38 +206,60 @@ function loginView() {
 }
 
 function accountLoginView() {
-  let mode = 'login';
+  // sign-in by an emailed code only: step 1 asks for the address, step 2 for the 6-digit code (an unknown address becomes an account)
+  let step = 'email', address = '', waitTimer = 0;
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
-  const email = el('input', { id: 'email', type: 'text', inputmode: 'email', autocomplete: 'username', required: true });
-  const pw = el('input', { id: 'password', type: 'password', autocomplete: 'current-password', required: true });
+  const email = el('input', { id: 'email', type: 'text', inputmode: 'email', autocomplete: 'email' });
+  const code = el('input', { id: 'code', type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '7', pattern: '[0-9 ]*' });
   const title = el('h1');
-  const submit = el('button', { class: 'btn dark', type: 'submit' });
-  const toggle = el('button', { class: 'btn', type: 'button' });
-  const hint = el('div', { class: 'hint', hidden: true, text: 'At least 10 characters.' });
+  const lead = el('p', { class: 'small muted', style: { margin: 0 } });
+  const submit = el('button', { class: 'btn primary', type: 'submit' });
+  const again = el('button', { class: 'btn', type: 'button', text: 'Send a new code' });
+  const change = el('button', { class: 'btn', type: 'button', text: 'Use another email' });
+  const emailBox = el('div', {}, el('label', { class: 'field', for: 'email', text: 'Email' }), email);
+  const codeBox = el('div', {}, el('label', { class: 'field', for: 'code', text: 'Code from the email' }), code,
+    el('div', { class: 'hint', 'data-keep': '1', text: 'It is valid for 10 minutes. Nothing arriving? Look in spam, then ask for a new code.' }));
+  const json = { 'Content-Type': 'application/json' };
+  const countdown = (seconds) => {
+    clearInterval(waitTimer);
+    let left = seconds;
+    const tick = () => { again.disabled = left > 0; again.textContent = left > 0 ? `Send a new code (${left} s)` : 'Send a new code'; left -= 1; if (left < -1) clearInterval(waitTimer); };
+    tick(); waitTimer = setInterval(tick, 1000);
+  };
   function paint() {
-    title.textContent = mode === 'login' ? 'Sign in' : 'Create your account';
-    submit.textContent = mode === 'login' ? 'Sign in' : 'Create account';
-    toggle.textContent = mode === 'login' ? 'New here? Create an account' : 'Have an account? Sign in';
-    toggle.hidden = !state.config.signup;
-    pw.setAttribute('autocomplete', mode === 'login' ? 'current-password' : 'new-password');
-    hint.hidden = mode === 'login';
     err.hidden = true;
+    const first = step === 'email';
+    title.textContent = first ? 'Sign in or create your account' : 'Enter your code';
+    lead.textContent = first ? 'We email you a 6-digit code. No password to remember.' : `We sent a code to ${address}.`;
+    submit.textContent = first ? 'Email me a code' : 'Sign in';
+    emailBox.hidden = !first; codeBox.hidden = first; again.hidden = first; change.hidden = first;
+    (first ? email : code).focus();
   }
-  toggle.addEventListener('click', () => { mode = mode === 'login' ? 'register' : 'login'; paint(); });
-  const form = el('form', { class: 'card stack', style: { maxWidth: '420px' }, onsubmit: async (e) => {
+  const ask = async () => {
+    const r = await api('/auth/code', { method: 'POST', headers: json, body: JSON.stringify({ email: email.value }) });
+    address = email.value.trim().toLowerCase(); step = 'code'; code.value = ''; paint(); countdown(r.wait || 60);
+  };
+  again.addEventListener('click', async () => { err.hidden = true; try { await ask(); } catch (ex) { err.textContent = ex.message; err.hidden = false; } });
+  change.addEventListener('click', () => { clearInterval(waitTimer); step = 'email'; paint(); });
+  const form = el('form', { class: 'card stack', novalidate: true, style: { maxWidth: '420px' }, onsubmit: async (e) => {
     e.preventDefault();
     err.hidden = true;
+    submit.disabled = true;
     try {
-      await api(mode === 'login' ? '/auth/login' : '/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.value, password: pw.value }) });
-      state.config = await api('/config');
-      location.hash = '#/';
-      route();
+      if (step === 'email') await ask();
+      else {
+        await api('/auth/verify', { method: 'POST', headers: json, body: JSON.stringify({ email: address, code: code.value }) });
+        clearInterval(waitTimer);
+        state.config = await api('/config');
+        location.hash = '#/';
+        route();
+      }
     } catch (ex) { err.textContent = ex.message; err.hidden = false; }
-  } }, authLogo(), title,
-    el('div', {}, el('label', { class: 'field', for: 'email', text: 'Email' }), email),
-    el('div', {}, el('label', { class: 'field', for: 'password', text: 'Password' }), pw, hint),
-    err, el('div', { class: 'row' }, submit, toggle));
+    submit.disabled = false;
+  } }, authLogo(), title, lead,
+    !state.config.mail && el('div', { class: 'alert', role: 'alert', text: 'Email is not set up on this server yet, so sign-in is not available. The operator needs to turn on email.' }),
+    emailBox, codeBox, err, el('div', { class: 'row' }, submit, again, change),
+    el('p', { class: 'small muted', style: { margin: 0 } }, 'By continuing you agree to the ', el('a', { href: '#/terms', text: 'Terms' }), ' and the ', el('a', { href: '#/privacy', text: 'Privacy Policy' }), '.'));
   paint();
   app.replaceChildren(el('div', { class: 'authwrap' }, form));
 }
@@ -245,11 +269,46 @@ function renderAcct() {
   box.replaceChildren();
   const c = state.config;
   if (!c || !c.accounts || !c.signed_in) return;
-  box.append(el('a', { href: '#/account', text: c.email, translate: 'no' }),
+  box.append(c.admin && el('a', { href: '#/admin', text: 'Operator' }), el('a', { href: '#/account', text: c.email, translate: 'no' }),
     el('button', { class: 'btn', type: 'button', text: 'Sign out', onclick: async () => {
       try { await api('/auth/logout', { method: 'POST' }); } catch (_) { /* already signed out */ }
       state.config = await api('/config'); renderAcct(); location.hash = '#/'; route();
     } }));
+}
+
+async function adminView() {
+  const ov = await api('/admin/overview');
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const act = async (path, body) => {
+    err.hidden = true;
+    try { await api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); await adminView(); }
+    catch (ex) { err.textContent = ex.message; err.hidden = false; }
+  };
+  const stat = (label, value, bad) => el('div', { class: 'stat' }, el('div', { class: bad ? 'num bad' : 'num', text: String(value) }), el('div', { class: 'small muted', text: label }));
+  const rows = ov.users.map((u) => {
+    const mins = el('input', { type: 'number', 'aria-label': `Add minutes for ${u.email}`, placeholder: '+ minutes', inputmode: 'numeric' });
+    const plan = el('select', { 'aria-label': `Plan for ${u.email}` }, ['free', 'pro'].map((p) => el('option', { value: p, text: p, selected: p === u.plan })));
+    return el('tr', {},
+      el('td', { translate: 'no', text: u.email + (u.disabled ? ' (disabled)' : '') }),
+      el('td', {}, plan, el('button', { class: 'btn', type: 'button', text: 'Apply', onclick: () => act(`/admin/users/${u.id}/plan`, { plan: plan.value }) })),
+      el('td', { text: `${u.used_minutes} used, ${u.credits} extra` }),
+      el('td', { text: String(u.jobs) }),
+      el('td', {}, mins, el('button', { class: 'btn', type: 'button', text: 'Add', onclick: () => { const n = Number(mins.value); if (n) act(`/admin/users/${u.id}/credits`, { minutes: n }); } })),
+      el('td', {}, el('button', { class: 'btn', type: 'button', text: u.disabled ? 'Enable' : 'Disable', onclick: () => { if (confirm(u.disabled ? 'Enable this account?' : 'Disable this account and sign it out?')) act(`/admin/users/${u.id}/disabled`, { disabled: !u.disabled }); } })));
+  });
+  app.replaceChildren(el('div', { class: 'stack' }, el('h1', { text: 'Operator' }),
+    el('section', { class: 'card stack' }, el('h2', { text: 'Now' }),
+      el('div', { class: 'statrow' },
+        stat('jobs running', ov.jobs.running), stat('waiting', ov.jobs.queued), stat('failed in the last hour', ov.failed_last_hour, ov.failed_last_hour >= 5),
+        stat('disk free (GB)', ov.disk_free_gb, ov.disk_free_pct < 10), stat('sign-ups today', `${ov.signups_today} of ${ov.signup_cap}`), stat('mail', ov.mail, ov.mail === 'off'),
+        stat('GPU worker', ov.gpu_worker.online ? 'online' : 'offline'), stat('GPU tasks stuck', ov.unserved_tasks, ov.unserved_tasks > 0),
+        ov.pod && stat('on-demand GPU', ov.pod.state))),
+    err,
+    el('section', { class: 'card stack' }, el('h2', { text: 'People' }),
+      el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['Email', 'Plan', 'This month', 'Jobs', 'Extra minutes', ''].map((t) => el('th', { text: t })))), el('tbody', {}, rows)))),
+    el('section', { class: 'card stack' }, el('h2', { text: 'Recent failures' }),
+      ov.recent_failed.length ? el('ul', { class: 'plain' }, ov.recent_failed.map((f) => el('li', {}, el('a', { href: `#/jobs/${f.id}`, text: f.id }), ` ${f.owner}: ${f.error || 'no message'}`)))
+        : el('p', { class: 'small muted', text: 'None.' }))));
 }
 
 async function accountView() {
@@ -257,16 +316,18 @@ async function accountView() {
   const me = await api('/me');
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
   const pct = me.plan.monthly_minutes ? Math.min(100, (me.used_minutes / me.plan.monthly_minutes) * 100) : 100;
-  const pw = el('input', { id: 'del-pw', type: 'password', autocomplete: 'current-password' });
+  const confirmEmail = el('input', { id: 'del-email', type: 'text', inputmode: 'email', autocomplete: 'off' });
+  const notify = el('input', { type: 'checkbox', id: 'notify', checked: !!me.notify_job_done, disabled: !me.mail });
+  notify.addEventListener('change', async () => { try { await api('/me/notifications', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ job_done: notify.checked }) }); } catch (ex) { notify.checked = !notify.checked; err.textContent = ex.message; err.hidden = false; } });
   const delForm = el('form', { class: 'stack', onsubmit: async (e) => {
     e.preventDefault(); err.hidden = true;
     if (!confirm('Delete your account and every job and clip in it? This cannot be undone.')) return;
     try {
-      await api('/account', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw.value }) });
+      await api('/account', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: confirmEmail.value }) });
       state.config = await api('/config'); renderAcct(); location.hash = '#/'; route();
     } catch (ex) { err.textContent = ex.message; err.hidden = false; }
   } },
-    el('div', {}, el('label', { class: 'field', for: 'del-pw', text: 'Your password' }), pw),
+    el('div', {}, el('label', { class: 'field', for: 'del-email', text: 'Type your email to confirm' }), confirmEmail),
     el('div', {}, el('button', { class: 'btn', type: 'submit', style: { color: 'var(--bad)' }, text: 'Delete my account' })));
   const billing = el('div', { id: 'billing' });
   app.replaceChildren(el('div', { class: 'stack' },
@@ -281,6 +342,9 @@ async function accountView() {
       me.credit_minutes > 0 && el('div', { class: 'small' }, `Plus ${me.credit_minutes} purchased minutes. ${me.left_minutes} minutes left in all.`),
       el('div', { class: 'small muted', text: `Finished jobs are kept for ${me.plan.retention_days} days, then deleted.` })),
     billing,
+    el('section', { class: 'card stack' }, el('h2', { text: 'Email' }),
+      el('label', { class: 'check', for: 'notify' }, notify, el('span', {}, el('strong', { text: 'Email me when a job finishes' }), el('br'),
+        el('span', { class: 'muted', text: me.mail ? 'One mail per job, when it is done or could not finish. Off by default.' : 'Email is not set up on this server.' })))),
     el('section', { class: 'card stack' }, el('h2', { text: 'Delete account' }),
       el('p', { class: 'small muted', style: { margin: 0 }, text: 'Removes your account, every job and every clip. Cancel running jobs first.' }), err, delForm)));
   if (state.config.billing) await renderBilling(billing);
@@ -2012,6 +2076,14 @@ async function stylesView() {
 
 // ---- router -----------------------------------------------------------------------------------
 let cleanup = null;
+function legalView(kind) {
+  const doc = LEGAL[kind];
+  document.title = `${doc.title} - ClipCrow`;
+  app.replaceChildren(el('article', { class: 'card legal stack' }, el('h1', { text: doc.title }),
+    el('p', { class: 'small muted', text: `Last updated ${LEGAL_UPDATED}. Questions: ${CONTACT}` }),
+    ...doc.sections.flatMap(([head, paras]) => [el('h2', { text: head }), ...paras.map((t) => el('p', { text: t }))])));
+}
+
 async function route() {
   if (cleanup) { cleanup(); cleanup = null; }
   const hash = location.hash || '#/';
@@ -2021,6 +2093,8 @@ async function route() {
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   try {
+    if (hash === '#/terms') return legalView('terms');           // readable without signing in
+    if (hash === '#/privacy') return legalView('privacy');
     if (state.config.needs_login && !state.config.signed_in) return loginView();
     let m;
     if (hash === '#/' || hash === '#' || hash === '#/new') await newJobView();
@@ -2028,6 +2102,7 @@ async function route() {
     else if (hash === '#/styles') { const v = await stylesView(); cleanup = v.cleanup; }
     else if (hash === '#/jobs') await jobsView();
     else if (hash === '#/account') await accountView();
+    else if (hash === '#/admin' && state.config.admin) await adminView();
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})\/share$/))) { const v = await shareView(m[1], m[2]); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/schedule(?:\?clips=((?:c\d{1,3},?){1,30}))?$/))) { const v = await scheduleView(m[1], m[2] || ''); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})$/))) { const v = await clipEditorView(m[1], m[2]); cleanup = v.cleanup; }

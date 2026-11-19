@@ -195,3 +195,30 @@ def test_prepare_footage_shows_the_whole_frame_during_a_span_and_the_crop_otherw
     assert fit[4.0][2] > 150 and fit[4.0][0] < 80                      # the whole slide: its blue left half is there
     assert fit[1.0] == plain[1.0]                                      # outside the span nothing changed
     assert "1080,1920" in probe and "audio" in probe                   # same canvas, audio kept
+
+
+def test_clips_are_framed_in_parallel_with_the_same_result_and_the_log_in_clip_order(monkeypatch):
+    import threading
+    import time
+    from clipcrow import framing as fr
+    base = base_edl()
+    clip = EDL.model_validate(base).clips[0]
+    clips = [clip.model_copy(update={"id": f"c{i}", "source_in": float(i), "source_out": float(i) + 9}) for i in range(1, 5)]
+    edl = EDL.model_validate(base).model_copy(update={"clips": clips})
+    threads = set()
+
+    def fake_plan(video, a, b, **kw):
+        threads.add(threading.get_ident())
+        time.sleep(0.2 - 0.04 * a)                                   # the later clips finish first
+        return Framing("track", [(0.0, a / 10)], 0.9)
+    monkeypatch.setattr(fr, "plan_framing", fake_plan)
+    monkeypatch.setenv("CLIPCROW_FRAMING_THREADS", "4")
+    said = []
+    t0 = time.monotonic()
+    out = apply_framing(edl, "x.mp4", say=said.append)
+    assert time.monotonic() - t0 < 0.55 and len(threads) > 1                                              # not one after the other
+    assert [c.id for c in out.clips] == ["c1", "c2", "c3", "c4"] and [m.split(":")[0] for m in said] == ["c1", "c2", "c3", "c4"]
+    assert [c.layout.reframe[0].cx for c in out.clips] == pytest.approx([0.1, 0.2, 0.3, 0.4]) and all(m.endswith(" s]") for m in said)
+    monkeypatch.setenv("CLIPCROW_FRAMING_THREADS", "1")
+    seq = apply_framing(edl, "x.mp4")
+    assert [c.layout for c in seq.clips] == [c.layout for c in out.clips]                                  # the same EDL either way

@@ -1,6 +1,6 @@
 # Scope: a "framing" task for the GPU worker
 
-Status: scoping only, nothing built. Written 2026-11-19 after job 8b13efc5b2c1 (76-minute video, 10 clips) spent a long time in the frame stage with no
+Status: scoping only, nothing built (step 2 of "Do this first", the parallel framing on the server, was built 2026-11-19). Written 2026-11-19 after job 8b13efc5b2c1 (76-minute video, 10 clips) spent a long time in the frame stage with no
 GPU activity.
 
 ## What the frame stage does today

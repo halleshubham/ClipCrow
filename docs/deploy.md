@@ -36,6 +36,16 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
      plan numbers are placeholders and there are no prices in the code.
    - *Razorpay:* `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`; in the Razorpay dashboard add the webhook
      `https://<your domain>/api/billing/razorpay/webhook` for `subscription.*` and `payment_link.paid`.
+   - *Email (needed when accounts are on: sign-in is by emailed code):* `RESEND_API_KEY` and `MAIL_FROM` (`ClipCrow <support@shackyapps.in>`; the domain needs the SPF/DKIM/DMARC
+     records Resend shows you). Optional: `MAIL_REPLY_TO`, `CLIPCROW_EMAIL=resend|smtp|off`, a backup provider `CLIPCROW_EMAIL_FALLBACK=smtp` with
+     `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_SECURITY` (`starttls`, `ssl`; `none` only for localhost), and `CLIPCROW_PUBLIC_URL`
+     (`https://clipcrow.shackyapps.in`: the links in mails are built from it, never from a request header). **Set these before deploying a build that has
+     email sign-in, or nobody can sign in** (the server starts and prints a warning). `CLIPCROW_SECRET_KEY` (optional) keys the sign-in codes; without it a
+     random key is made once in `<data>/clipcrow.secret` (mode 600).
+   - *Operating:* `CLIPCROW_ADMINS` (comma-separated emails that see the Operator page), `CLIPCROW_ALERT_EMAIL` (who gets alert mails: disk nearly full, jobs stuck,
+     failures, GPU tasks nobody can take, mail failing), per-person cost limits `CLIPCROW_MAX_ACTIVE_JOBS` (3), `CLIPCROW_MAX_JOBS_PER_DAY` (30),
+     `CLIPCROW_MAX_JOB_MINUTES` (240), `CLIPCROW_MAX_SIGNUPS_PER_DAY` (200; 0 turns a limit off), `CLIPCROW_BLOCKED_EMAIL_DOMAINS` (added to the built-in
+     list of throw-away mail domains). `GET /api/health` answers `{"ok": true}` for an uptime monitor.
    - *Posting:* `SOCIOBIRD_API_URL` (the API root, `https://go.sociobird.app/api`: ClipCrow adds `/public/v1/...`), `SOCIOBIRD_API_KEY` (and `CLIPCROW_SOCIOBIRD_SHARED=1` if accounts are on).
    - *R2:* see section 3.
 4. **Deploy.** The first start takes a minute (health check `start_period` is 90 s). Then, in the container terminal:

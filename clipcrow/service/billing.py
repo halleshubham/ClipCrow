@@ -94,8 +94,10 @@ def _iso(epoch) -> Optional[str]:
         return None
 
 
-def apply_event(event: dict, event_id: str, accounts: Accounts, catalog: Catalog) -> str:
-    """Apply one verified webhook event. Returns a short word for the log: applied | duplicate | ignored."""
+def apply_event(event: dict, event_id: str, accounts: Accounts, catalog: Catalog, notify: Optional[Callable[[object, str, str], None]] = None) -> str:
+    """Apply one verified webhook event. Returns a short word for the log: applied | duplicate | ignored. ``notify(user, kind, detail)`` is told
+    (after the change) about: paid | payment-failed | ended | cancelled, so the person gets a mail; it never changes money or plans itself."""
+    say = notify or (lambda *_a: None)
     if not accounts.first_time(event_id):
         return "duplicate"
     name = event.get("event", "")
@@ -121,13 +123,19 @@ def apply_event(event: dict, event_id: str, accounts: Accounts, catalog: Catalog
             if name == "subscription.authenticated":
                 return "ignored"                                        # not paid yet
             accounts.set_plan(user.id, ours.id, until=_iso(sub.get("current_end")), subscription=sub_id)
+            say(user, "paid", ours.name)
+            return "applied"
+        if name == "subscription.pending":                              # a charge failed; Razorpay retries, and halts the subscription if every retry fails
+            say(user, "payment-failed", "")
             return "applied"
         if name in ("subscription.halted", "subscription.completed", "subscription.expired"):
             accounts.set_plan(user.id, "free", until=None)
             accounts.clear_subscription(user.id)
+            say(user, "ended", name.split(".")[1])
             return "applied"
         if name == "subscription.cancelled":
             accounts.clear_subscription(user.id)                        # the plan runs on until plan_until, then lapses
+            say(user, "cancelled", user.plan_until or "")
             return "applied"
         return "ignored"
     if name == "payment_link.paid":
@@ -143,5 +151,9 @@ def apply_event(event: dict, event_id: str, accounts: Accounts, catalog: Catalog
         except KeyError:
             return "ignored"
         accounts.add_credits(notes["user_id"], pack.minutes)
+        try:
+            say(accounts.get(notes["user_id"]), "paid", f"{pack.minutes:g} extra minutes")
+        except KeyError:
+            pass
         return "applied"
     return "ignored"

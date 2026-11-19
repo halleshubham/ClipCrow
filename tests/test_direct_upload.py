@@ -18,6 +18,7 @@ from clipcrow.service.api import create_app
 from clipcrow.service.plans import Catalog, Plan
 from clipcrow.service.storage import S3Storage, StorageError, signature
 from tests.test_service import FakePipeline, video_bytes, wait  # noqa: F401
+from tests.mailhelp import Outbox, sign_up  # noqa: E402
 
 PW = "correct horse battery"
 MB = 1024 * 1024
@@ -250,9 +251,9 @@ def test_unknown_and_malformed_upload_ids_are_just_not_found(tmp_path, storage):
 def accounts_app(tmp_path, storage, free=100, pipeline=None):
     a = Accounts(tmp_path / "data" / "x.db")
     cat = Catalog(plans={"free": Plan("free", "Free", free, 7, 3)})
-    app = create_app(tmp_path / "data", pipeline or FakePipeline(), storage=storage, accounts=a, catalog=cat)
+    app = create_app(tmp_path / "data", pipeline or FakePipeline(), storage=storage, accounts=a, mailer=Outbox(), catalog=cat)
     c = TestClient(app)
-    c.post("/api/auth/register", json={"email": "a@example.com", "password": PW})
+    sign_up(c, "a@example.com")
     return c, a, app
 
 
@@ -263,7 +264,7 @@ def test_with_accounts_uploads_need_a_session_and_belong_to_their_owner(tmp_path
     r = start(c, video_bytes)
     uid = r.json()["id"]
     other = TestClient(app)
-    other.post("/api/auth/register", json={"email": "b@example.com", "password": PW})
+    sign_up(other, "b@example.com")
     parts = put_parts(r.json(), video_bytes)
     assert finish(other, uid, parts).status_code == 404 and other.delete(f"/api/uploads/{uid}").status_code == 404
     done = finish(c, uid, parts)

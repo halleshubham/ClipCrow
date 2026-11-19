@@ -293,7 +293,7 @@ def test_erasing_an_account_removes_its_styles(tmp_path, ref_bytes):
     sid = make_style(c, ref_bytes)["id"]
     wait_style(c, sid)
     assert list((tmp_path / "data" / "styles").glob("*/*.json"))
-    r = c.request("DELETE", "/api/account", json={"password": PW})
+    r = c.request("DELETE", "/api/account", json={"email": "a@example.com"})
     assert r.status_code == 200, r.text
     assert not list((tmp_path / "data" / "styles").glob("*/*.json"))
 

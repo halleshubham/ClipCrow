@@ -15,6 +15,7 @@ from clipcrow.service.api import create_app
 from clipcrow.service.billing import BillingError, Razorpay, apply_event
 from clipcrow.service.plans import Catalog, CreditPack, Plan
 from tests.test_service import FakePipeline, upload, video_bytes, wait  # noqa: F401
+from tests.mailhelp import Outbox, sign_up  # noqa: E402
 
 PW = "correct horse battery"
 SECRET = "whsec_test_secret"
@@ -53,9 +54,9 @@ def sign(body: bytes, secret=SECRET) -> str:
 def env(tmp_path):
     rz = FakeRZ()
     a = Accounts(tmp_path / "data" / "clipcrow.db")
-    app = create_app(tmp_path / "data", FakePipeline(), accounts=a, catalog=catalog(), razorpay=rz)
+    app = create_app(tmp_path / "data", FakePipeline(), accounts=a, mailer=Outbox(), catalog=catalog(), razorpay=rz)
     c = TestClient(app)
-    assert c.post("/api/auth/register", json={"email": "a@example.com", "password": PW}).status_code == 200
+    assert sign_up(c, "a@example.com").status_code == 200
     return c, a, rz
 
 
@@ -123,7 +124,7 @@ def test_the_basic_auth_header_is_built_from_the_key_pair_only_for_razorpay(monk
 
 def test_an_unsigned_or_wrongly_signed_webhook_changes_nothing(env):
     c, a, _ = env
-    uid = a.authenticate("a@example.com", PW).id
+    uid = a.by_email("a@example.com").id
     raw = json.dumps(sub_event("subscription.activated", uid)).encode()
     assert c.post("/api/billing/razorpay/webhook", content=raw).status_code == 400
     assert hook(c, None, body=raw, secret="wrong").status_code == 400
@@ -134,7 +135,7 @@ def test_an_unsigned_or_wrongly_signed_webhook_changes_nothing(env):
 
 def test_a_paid_subscription_moves_the_user_to_the_plan_with_a_grace_period(env):
     c, a, _ = env
-    uid = a.authenticate("a@example.com", PW).id
+    uid = a.by_email("a@example.com").id
     end = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp())
     assert hook(c, sub_event("subscription.activated", uid, end=end)).json() == {"status": "applied"}
     u = a.get(uid)
@@ -149,7 +150,7 @@ def test_a_paid_subscription_moves_the_user_to_the_plan_with_a_grace_period(env)
 
 def test_the_same_event_twice_is_applied_once(env):
     c, a, _ = env
-    uid = a.authenticate("a@example.com", PW).id
+    uid = a.by_email("a@example.com").id
     ev = link_event(uid)
     assert hook(c, ev, event_id="evt_x").json() == {"status": "applied"}
     assert hook(c, ev, event_id="evt_x").json() == {"status": "duplicate"}
@@ -159,7 +160,7 @@ def test_the_same_event_twice_is_applied_once(env):
 
 def test_credits_come_from_our_catalog_and_only_when_the_amount_matches(env):
     c, a, _ = env
-    uid = a.authenticate("a@example.com", PW).id
+    uid = a.by_email("a@example.com").id
     for i, ev in enumerate((link_event(uid, amount=100), link_event(uid, status="created"), link_event(uid, pack="unknown"),
                             link_event("no-such-user"), link_event(uid, pack="p50", amount=29900, link_id="l9"))):
         hook(c, ev, event_id=f"evt_{i}")
@@ -168,7 +169,7 @@ def test_credits_come_from_our_catalog_and_only_when_the_amount_matches(env):
 
 def test_events_for_other_plans_unknown_users_and_unpaid_states_are_ignored(env):
     c, a, _ = env
-    uid = a.authenticate("a@example.com", PW).id
+    uid = a.by_email("a@example.com").id
     assert hook(c, sub_event("subscription.activated", uid, plan="plan_other"), event_id="e1").json()["status"] == "ignored"
     assert hook(c, sub_event("subscription.activated", "ghost"), event_id="e2").json()["status"] == "ignored"
     assert hook(c, sub_event("subscription.authenticated", uid), event_id="e3").json()["status"] == "ignored"     # not paid yet
@@ -178,9 +179,9 @@ def test_events_for_other_plans_unknown_users_and_unpaid_states_are_ignored(env)
 
 def test_a_subscription_cannot_be_hijacked_onto_another_account(env):
     c, a, _ = env
-    mine = a.authenticate("a@example.com", PW).id
+    mine = a.by_email("a@example.com").id
     hook(c, sub_event("subscription.activated", mine, sub_id="sub_mine"), event_id="e1")
-    other = a.register("b@example.com", PW).id
+    other = a.ensure_user("b@example.com").id
     a.set_plan(other, "free")
     a._q("UPDATE users SET subscription='sub_other' WHERE id=?", (other,))
     # an event that names user B but carries user A's subscription id applies to A (the id is the key), never to B
@@ -190,7 +191,7 @@ def test_a_subscription_cannot_be_hijacked_onto_another_account(env):
 
 def test_ending_states_drop_to_free_cancelling_keeps_the_paid_period(env):
     c, a, _ = env
-    uid = a.authenticate("a@example.com", PW).id
+    uid = a.by_email("a@example.com").id
     hook(c, sub_event("subscription.activated", uid), event_id="e1")
     hook(c, sub_event("subscription.cancelled", uid), event_id="e2")
     u = a.get(uid)
@@ -205,7 +206,7 @@ def test_ending_states_drop_to_free_cancelling_keeps_the_paid_period(env):
 
 def test_subscribing_returns_a_hosted_checkout_link_and_changes_nothing_by_itself(env):
     c, a, rz = env
-    uid = a.authenticate("a@example.com", PW).id
+    uid = a.by_email("a@example.com").id
     info = c.get("/api/billing").json()
     assert info["enabled"] and info["current"] == "free" and [p["id"] for p in info["plans"] if p["can_subscribe"]] == ["pro"]
     r = c.post("/api/billing/subscribe", json={"plan": "pro"})
@@ -219,7 +220,7 @@ def test_subscribing_returns_a_hosted_checkout_link_and_changes_nothing_by_itsel
 
 def test_a_subscriber_cannot_start_a_second_subscription_and_can_cancel(env):
     c, a, rz = env
-    uid = a.authenticate("a@example.com", PW).id
+    uid = a.by_email("a@example.com").id
     hook(c, sub_event("subscription.activated", uid), event_id="e1")
     assert c.post("/api/billing/subscribe", json={"plan": "pro"}).status_code == 409
     r = c.post("/api/billing/cancel")
@@ -229,7 +230,7 @@ def test_a_subscriber_cannot_start_a_second_subscription_and_can_cancel(env):
 
 def test_buying_minutes_uses_the_catalog_price_and_not_a_client_amount(env):
     c, a, rz = env
-    uid = a.authenticate("a@example.com", PW).id
+    uid = a.by_email("a@example.com").id
     r = c.post("/api/billing/credits", json={"pack": "p50", "amount": 1})
     assert r.status_code == 200 and r.json()["url"] == "https://rzp.io/i/link1"
     method, path, body = rz.calls[-1]
@@ -241,8 +242,8 @@ def test_buying_minutes_uses_the_catalog_price_and_not_a_client_amount(env):
 def test_payment_service_errors_are_a_502_with_a_plain_message(tmp_path):
     rz = FakeRZ(fail=True)
     a = Accounts(tmp_path / "d" / "x.db")
-    c = TestClient(create_app(tmp_path / "d", FakePipeline(), accounts=a, catalog=catalog(), razorpay=rz))
-    c.post("/api/auth/register", json={"email": "a@example.com", "password": PW})
+    c = TestClient(create_app(tmp_path / "d", FakePipeline(), accounts=a, mailer=Outbox(), catalog=catalog(), razorpay=rz))
+    sign_up(c, "a@example.com")
     r = c.post("/api/billing/subscribe", json={"plan": "pro"})
     assert r.status_code == 424 and "could not be reached" in r.json()["detail"]
 
@@ -250,11 +251,11 @@ def test_payment_service_errors_are_a_502_with_a_plain_message(tmp_path):
 def test_billing_endpoints_need_a_session_and_the_webhook_needs_billing(tmp_path):
     rz = FakeRZ()
     a = Accounts(tmp_path / "d" / "x.db")
-    c = TestClient(create_app(tmp_path / "d", FakePipeline(), accounts=a, catalog=catalog(), razorpay=rz))
+    c = TestClient(create_app(tmp_path / "d", FakePipeline(), accounts=a, mailer=Outbox(), catalog=catalog(), razorpay=rz))
     for path in ("/api/billing/subscribe", "/api/billing/credits", "/api/billing/cancel"):
         assert c.post(path, json={}).status_code == 401
     assert c.get("/api/billing").status_code == 401
-    c2 = TestClient(create_app(tmp_path / "e", FakePipeline(), accounts=Accounts(tmp_path / "e" / "x.db"), catalog=catalog()))
+    c2 = TestClient(create_app(tmp_path / "e", FakePipeline(), accounts=Accounts(tmp_path / "e" / "x.db"), mailer=Outbox(), catalog=catalog()))
     assert c2.post("/api/billing/razorpay/webhook", content=b"{}").status_code == 404
     assert c2.get("/api/config").json()["billing"] is False
 
@@ -264,20 +265,52 @@ def test_billing_endpoints_need_a_session_and_the_webhook_needs_billing(tmp_path
 def test_deleting_an_account_cancels_the_subscription_first_and_stops_if_that_fails(tmp_path):
     rz = FakeRZ()
     a = Accounts(tmp_path / "d" / "x.db")
-    c = TestClient(create_app(tmp_path / "d", FakePipeline(), accounts=a, catalog=catalog(), razorpay=rz))
-    c.post("/api/auth/register", json={"email": "a@example.com", "password": PW})
-    uid = a.authenticate("a@example.com", PW).id
+    c = TestClient(create_app(tmp_path / "d", FakePipeline(), accounts=a, mailer=Outbox(), catalog=catalog(), razorpay=rz))
+    sign_up(c, "a@example.com")
+    uid = a.by_email("a@example.com").id
     hook(c, sub_event("subscription.activated", uid), event_id="e1")
     rz.fail = True
-    r = c.request("DELETE", "/api/account", json={"password": PW})
+    r = c.request("DELETE", "/api/account", json={"email": "a@example.com"})
     assert r.status_code == 424 and a.count() == 1                                     # nothing was deleted
     rz.fail = False
-    assert c.request("DELETE", "/api/account", json={"password": PW}).status_code == 200
+    assert c.request("DELETE", "/api/account", json={"email": "a@example.com"}).status_code == 200
     assert rz.calls[-1] == ("POST", "/subscriptions/sub_1/cancel", {"cancel_at_cycle_end": 0}) and a.count() == 0
 
 
 def test_apply_event_is_a_plain_function_too(tmp_path):
     a = Accounts(tmp_path / "x.db")
-    u = a.register("a@example.com", PW)
+    u = a.ensure_user("a@example.com")
     assert apply_event(link_event(u.id), "e1", a, catalog()) == "applied"
     assert apply_event(link_event(u.id), "e1", a, catalog()) == "duplicate"
+
+
+# --- mails about money -------------------------------------------------------------------------------------------
+
+def billing_mails(c):
+    return [m for m in c.app.state.outbox.sent if m.kind.startswith("billing-")]
+
+
+def test_a_payment_a_failed_charge_a_cancel_and_an_end_each_send_one_mail_and_a_replay_sends_none(env):
+    c, a, _ = env
+    uid = a.by_email("a@example.com").id
+    assert hook(c, sub_event("subscription.activated", uid), event_id="m1").json()["status"] == "applied"
+    assert [m.kind for m in billing_mails(c)] == ["billing-paid"] and "Pro" in billing_mails(c)[0].text
+    hook(c, sub_event("subscription.activated", uid), event_id="m1")                  # the same event again
+    assert len(billing_mails(c)) == 1
+    hook(c, sub_event("subscription.pending", uid), event_id="m2")
+    assert billing_mails(c)[-1].kind == "billing-failed" and a.get(uid).plan == "pro"     # the plan stays while the charge is retried
+    hook(c, sub_event("subscription.cancelled", uid), event_id="m3")
+    assert billing_mails(c)[-1].kind == "billing-cancelled"
+    a.set_plan(uid, "pro", subscription="sub_1")
+    hook(c, sub_event("subscription.halted", uid), event_id="m4")
+    assert billing_mails(c)[-1].kind == "billing-ended" and a.get(uid).plan == "free"
+    assert all(m.to == "a@example.com" for m in billing_mails(c))
+
+
+def test_buying_minutes_sends_a_payment_mail_and_an_unpaid_link_sends_none(env):
+    c, a, _ = env
+    uid = a.by_email("a@example.com").id
+    hook(c, link_event(uid, status="created"), event_id="l0")
+    assert billing_mails(c) == []
+    hook(c, link_event(uid), event_id="l1")
+    assert [m.kind for m in billing_mails(c)] == ["billing-paid"] and "extra minutes" in billing_mails(c)[0].text

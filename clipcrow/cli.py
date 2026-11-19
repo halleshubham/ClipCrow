@@ -117,10 +117,17 @@ def main(argv: list[str] | None = None) -> int:
                 from .service.accounts import Accounts
                 accounts = Accounts(Path(a.data) / "clipcrow.db")
                 if a.host not in ("127.0.0.1", "::1", "localhost"):
-                    print("note: accounts use cookies and passwords: serve this behind TLS (a reverse proxy)", file=sys.stderr)
+                    print("note: accounts use cookies: serve this behind TLS (a reverse proxy)", file=sys.stderr)
             if a.host not in ("127.0.0.1", "::1", "localhost") and not token and not accounts and not a.insecure:
                 raise ValueError(f"refusing to listen on {a.host} without a login: set CLIPCROW_TOKEN "
                                  f"(or pass --insecure on a network you trust)")
+            from .service import mailer as mailer_mod
+            mailer = mailer_mod.from_env()
+            if accounts and mailer is None:
+                print("WARNING: accounts are on but email is not set up (CLIPCROW_EMAIL, RESEND_API_KEY or SMTP_HOST, MAIL_FROM): "
+                      "sign-in is by emailed code, so nobody can sign in until it is.", file=sys.stderr)
+            elif mailer is not None:
+                print(f"email: {mailer.name}", file=sys.stderr)
             from .service.storage import S3Storage
             storage = S3Storage.from_env()
             if storage:
@@ -132,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
                              backup_source=os.environ.get("CLIPCROW_R2_BACKUP_SOURCE") == "1",
                              local_clip_days=int(os.environ.get("CLIPCROW_LOCAL_CLIP_DAYS", "0") or 0),
                              sociobird_shared=os.environ.get("CLIPCROW_SOCIOBIRD_SHARED") == "1",
+                             mailer=mailer, public_url=os.environ.get("CLIPCROW_PUBLIC_URL", ""),
                              worker_token=os.environ.get("CLIPCROW_WORKER_TOKEN") or None,
                              worker_pickup_seconds=float(os.environ.get("CLIPCROW_WORKER_PICKUP_SECONDS", "120") or 120))
             uvicorn.run(app, host=a.host, port=a.port, log_level="info", timeout_graceful_shutdown=20)

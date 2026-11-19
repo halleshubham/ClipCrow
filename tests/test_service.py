@@ -12,6 +12,7 @@ from clipcrow.make import Cancelled, make
 from clipcrow.service.api import create_app
 from clipcrow.service.pipelines import planner_options
 from tests.test_planner import make_transcript, scripted
+from tests.mailhelp import Outbox, sign_up  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -379,9 +380,9 @@ def test_a_stopped_server_gives_nobody_a_failed_job_or_a_refund_for_a_requeued_o
     from clipcrow.service.plans import Catalog, Plan
     gate = threading.Event()
     a = Accounts(tmp_path / "data" / "x.db")
-    app = create_app(tmp_path / "data", FakePipeline(gate=gate), accounts=a, catalog=Catalog(plans={"free": Plan("free", "Free", 100, 7, 3)}))
+    app = create_app(tmp_path / "data", FakePipeline(gate=gate), accounts=a, mailer=Outbox(), catalog=Catalog(plans={"free": Plan("free", "Free", 100, 7, 3)}))
     c = TestClient(app)
-    c.post("/api/auth/register", json={"email": "a@example.com", "password": "correct horse battery"})
+    sign_up(c, "a@example.com")
     jid = upload(c, video_bytes).json()["id"]
     end = time.time() + 5
     while app.state.store.get(jid).status != "running" and time.time() < end:

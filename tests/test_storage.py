@@ -21,6 +21,7 @@ from clipcrow.service.retention import sweep
 from clipcrow.service.storage import Mirror, S3Storage, StorageError, signature
 from tests.test_accounts import age
 from tests.test_service import FakePipeline, upload, video_bytes, wait  # noqa: F401
+from tests.mailhelp import Outbox, sign_up  # noqa: E402
 
 PW = "correct horse battery"
 JOB = "0123456789ab"
@@ -224,10 +225,10 @@ def test_the_content_security_policy_allows_the_bucket_origin_for_media_only_whe
 def test_other_people_never_get_a_link_to_my_clip(tmp_path, storage, video_bytes):
     a = Accounts(tmp_path / "data" / "x.db")
     cat = Catalog(plans={"free": Plan("free", "Free", 100, 7, 3)})
-    app = create_app(tmp_path / "data", FakePipeline(), storage=storage, accounts=a, catalog=cat)
+    app = create_app(tmp_path / "data", FakePipeline(), storage=storage, accounts=a, mailer=Outbox(), catalog=cat)
     c, other = TestClient(app), TestClient(app)
-    c.post("/api/auth/register", json={"email": "a@example.com", "password": PW})
-    other.post("/api/auth/register", json={"email": "b@example.com", "password": PW})
+    sign_up(c, "a@example.com")
+    sign_up(other, "b@example.com")
     jid = wait(c, upload(c, video_bytes).json()["id"])["id"]
     cid = app.state.store.get(jid).clips[0].id
     synced(app, jid, [f"out/{cid}.mp4"])
@@ -259,17 +260,17 @@ def test_deleting_a_job_removes_its_bucket_copies_first_and_keeps_the_job_if_tha
 def test_deleting_an_account_purges_the_bucket_before_the_database(tmp_path, storage, video_bytes, monkeypatch):
     a = Accounts(tmp_path / "data" / "x.db")
     cat = Catalog(plans={"free": Plan("free", "Free", 100, 7, 3)})
-    app = create_app(tmp_path / "data", FakePipeline(), storage=storage, accounts=a, catalog=cat)
+    app = create_app(tmp_path / "data", FakePipeline(), storage=storage, accounts=a, mailer=Outbox(), catalog=cat)
     c = TestClient(app)
-    c.post("/api/auth/register", json={"email": "a@example.com", "password": PW})
+    sign_up(c, "a@example.com")
     jid = wait(c, upload(c, video_bytes).json()["id"])["id"]
     synced(app, jid, ["out/edl.json"])
     real = storage.delete_job
     monkeypatch.setattr(storage, "delete_job", lambda j: (_ for _ in ()).throw(StorageError("x")))
-    r = c.request("DELETE", "/api/account", json={"password": PW})
+    r = c.request("DELETE", "/api/account", json={"email": "a@example.com"})
     assert r.status_code == 424 and a.count() == 1 and (tmp_path / "data" / "jobs" / jid).exists()     # nothing was deleted
     monkeypatch.setattr(storage, "delete_job", real)
-    assert c.request("DELETE", "/api/account", json={"password": PW}).status_code == 200
+    assert c.request("DELETE", "/api/account", json={"email": "a@example.com"}).status_code == 200
     assert a.count() == 0 and objects(storage) == []
 
 

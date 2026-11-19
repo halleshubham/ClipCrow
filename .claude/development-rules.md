@@ -115,8 +115,8 @@ History, incidents and open items are in `development-log.md`: add an entry ther
 - A pipeline implements `check_ready()`, `run(job, video, out, hooks, say)` and `render_clip(...)` (re-render after an
   edit); progress goes through `make.Hooks`.
 - Accounts: every job route goes through `job_or_404(job_id, request)` (owner check; another user's job is a 404). A
-  new route that takes a job id must too. Passwords are scrypt, sessions are stored hashed, sign-in errors do not say
-  whether an email exists. Wrong password on a signed-in action is 403, never 401 (the UI treats 401 as "sign in").
+  new route that takes a job id must too. There are no passwords: sign-in is an emailed 6-digit code (HMAC-stored, 10 minutes, single use, 5 tries, per-address and per-IP limits), sessions are stored hashed, sign-in errors do not say
+  whether an email exists. A wrong confirmation on a signed-in action (deleting the account asks for the email typed again) is 403, never 401 (the UI treats 401 as "sign in"). Email: one `Mailer` interface (Resend default, SMTP, a fallback), mails go through `MailQueue`, nothing from outside reaches a header or markup unescaped, links come from `CLIPCROW_PUBLIC_URL`, failures are logged without address or body. New jobs pass `enforce_limits` before minutes are reserved; an operator (`CLIPCROW_ADMINS`) is exempt; `/api/admin/*` answers 404 to everyone else.
 - Billing: plans change and minutes are added ONLY from a signature-verified Razorpay webhook (raw body, constant-time
   compare); amounts come from the catalog, never the request; events are idempotent; no prices in code. Deleting an
   account cancels the subscription first and aborts if that fails.

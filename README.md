@@ -93,11 +93,12 @@ involvement).
   nothing asks for generated video until one is registered.
 - **Transcript check** (job page, optional): the sentences the captions are made from, with times and the clips that use them. Fix a word and save: only those clips render again, cut points stay. Where the AI
   corrected the recogniser's words the original is shown (when no cleanup changed the timeline).
-- **Accounts** (`clipcrow serve --accounts [--no-signup]`, data in `<data>/clipcrow.db`): email + password (scrypt),
-  session cookie (HttpOnly, SameSite=Strict, only its hash is stored), sign-in attempts rate limited, per-user jobs (someone
-  else's job is a 404 everywhere), account deletion (password required; cancels a Razorpay subscription first and stops if
-  that fails). **Not built**: email verification and password reset (nothing here sends mail; an operator can call
-  `Accounts.set_password`). Serve it behind TLS.
+- **Accounts** (`clipcrow serve --accounts [--no-signup]`, data in `<data>/clipcrow.db`): **sign-in by an emailed one-time code only, no passwords**
+  (a 6-digit code, valid 10 minutes, single use, 5 tries, stored only as a keyed hash; signing up and signing in are one step; rate limited per address
+  and per IP). Email goes through Resend (default) or SMTP (`docs/email-task.md`, `docs/deploy.md`). Session cookie (HttpOnly, SameSite=Strict, only its hash
+  is stored), per-user jobs (someone else's job is a 404 everywhere), account deletion (type your email to confirm; cancels a Razorpay subscription first
+  and stops if that fails), cost limits per person (active jobs, jobs a day, minutes a job, sign-ups a day), an operator page (`#/admin`, for the emails in
+  `CLIPCROW_ADMINS`), health and alert mails, a daily database backup, Terms and Privacy pages (a draft: `docs/legal-checklist.md`). Serve it behind TLS.
 - **Minutes and plans**: a job reserves its source minutes (rounded up) from the month's allowance, then from purchased
   credits, atomically; a job that fails or is cancelled gives them back once. Plans live in a JSON file
   (`CLIPCROW_PLANS`; the built-in numbers are placeholders and there are **no prices in the code**: a plan's price is the
@@ -139,11 +140,11 @@ involvement).
   `docs/deploy.md`. If the bucket cannot be reached from the browser, a file under 90 MB falls back to the ordinary upload;
   if it is reachable but the rule does not expose `ETag`, the page says so. Tested with an S3-compatible server and a real
   browser; **not tried against live R2**.
-- **Not built yet**: email verification and password reset, per-user SocioBird keys, a job queue across several machines,
+- **Not built yet**: per-user SocioBird keys (`docs/sociobird-per-user-task.md`), a public API, teams, a job queue across several machines,
   a live preview and a timeline editor.
 - Browser tests: `node scripts/e2e_ui.js <video> <dir>` (Playwright, real render and re-render, ~8 min; `JOB_ID=<id>`
   re-tests the editor on a job that already exists) and `scripts/e2e_accounts.js` (sign-up, usage, billing section,
-  sign-in/out, deletion).
+  sign-in/out, deletion): it still drives the old password screens and needs updating for the email-code sign-in.
 
 ## From a video (`make`)
 ```
