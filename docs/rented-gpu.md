@@ -54,3 +54,10 @@ machine (the worker's `--parallel 2` render slots) share its hourly price. When 
 For a job that asked for the on-demand GPU: the preferred pod, then the next pod in `RACE_POD_IDS`, then any other connected worker (e.g. the home GPU), and only then the server. A job that asked for the
 home GPU tries the on-demand pod when no home worker is connected. A second pod needs the same setup as the first (`setup_pod.sh`, then `post_resume.sh` and `start_worker.sh`), with its own
 `/workspace/worker.env` holding the worker token and `WORKER_NAME` (e.g. `race-5090`); put that name in `CLIPCROW_GPU_RATES` so its time is priced.
+
+## Keeping the pod's code current
+A worker compiles and renders clips with its own copy of ClipCrow. The server hashes the render code (`clipcrow/buildid.py`) and the worker reports its hash when it
+polls: renders go only to a worker whose hash matches, and the config lists the others under `gpu_worker.stale` (the job log says "run an older version of the render code,
+so this clip is rendered on the server"). Speech recognition does not depend on it. After a server release that changes the render code, update each pod:
+upload a fresh tarball of the repo to `/workspace/clipcrow-src.tar.gz` and run `scripts/rented-gpu/update_pod.sh` on it (a paused pod: after its next resume). The home PC
+worker needs the new image (`docker pull`). Seen on 2026-11-19: a pod built from a tarball of the morning rendered with the old banner layout and failed the layout check.

@@ -44,6 +44,7 @@ from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Catalog, load_catalog
 from .publish import LIMITS, PublishError, SocioBird, caption_html, settings_for, validate_when
+from ..buildid import render_build
 from .gpu_cost import estimate_numbers, load_rates, rate_lookup, summarise as gpu_summary
 from .schedule import Chan, MAX_CHANNELS as BULK_CHANNELS, MAX_CLIPS as BULK_CLIPS, MAX_PER_DAY, SchedulePrefs, ScheduleError, clean_times, plan as plan_schedule, zone as schedule_zone
 from .retention import Sweeper, env_days, expires_at
@@ -256,7 +257,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     pictures = PictureStore(data_dir)
     runner.brands = brands
     styles = StyleStore(data_dir)
-    hub = WorkerHub(worker_token, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds, render_pin=HYPERFRAMES_VERSION,
+    hub = WorkerHub(worker_token, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds, render_pin=HYPERFRAMES_VERSION, render_build=render_build(),
                     max_upload_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_UPLOAD_MB", "300") or 300) * 1024 * 1024),
                     max_direct_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_DIRECT_MB", "2048") or 2048) * 1024 * 1024),
                     storage=storage if os.environ.get("CLIPCROW_WORKER_DIRECT", "1") != "0" else None,
@@ -385,6 +386,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
                 "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online()),
                                "render": bool(hub and hub.online("render")),
+                               **({"stale": hub.stale_workers()} if hub and hub.stale_workers() else {}),
                                "estimate": estimate_numbers(load_rates(), pod.hourly if pod is not None else None),
                                **({"pod": pod.status()} if pod is not None else {})}}
 
@@ -1344,7 +1346,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     @app.post("/api/worker/poll", dependencies=[Depends(worker_auth)])
     async def worker_poll(body: PollIn) -> dict:
-        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model, tuple(body.can), body.pin, body.direct, body.power, body.pool)
+        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model, tuple(body.can), body.pin, body.direct, body.power, body.pool, body.build)
         if task is None:
             return {"task": None}
         out = {"id": task.id, "kind": task.kind, "lease_seconds": hub.lease_seconds, "meta": task.meta}

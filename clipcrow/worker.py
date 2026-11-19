@@ -231,6 +231,11 @@ def evict_cache(root: Path, max_bytes: int, keep: Optional[Path] = None) -> None
         total -= sizes[d]
 
 
+def render_build() -> str:
+    from .buildid import render_build as b
+    return b()
+
+
 def capacity(label: str, slots: int = 1) -> int:
     """A rough number for "how much can this machine do", sent to the server only to decide who is offered a task first: a CUDA GPU outranks a CPU,
     and each extra render slot adds a little."""
@@ -256,7 +261,7 @@ def run_worker(transport: Transport, name: str, *, model: str = "large-v3", tran
     while not stop() and (max_tasks is None or done < max_tasks):
         try:
             reply = transport.post("/api/worker/poll", {"worker": name, "wait": poll_wait, "device": label[:60], "model": model[:40],
-                                                         "can": can, "pin": pin, "direct": True, "power": power, "pool": pool}, timeout=poll_wait + 20)
+                                                         "can": can, "pin": pin, "direct": True, "power": power, "pool": pool, "build": render_build()}, timeout=poll_wait + 20)
             failures = 0
         except WorkerHttpError as e:
             if e.status in (401, 404):

@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from clipcrow.buildid import render_build
+
 pytest.importorskip("fastapi")
 pytest.importorskip("multipart")
 from fastapi.testclient import TestClient
@@ -170,7 +172,7 @@ def app_with_worker(tmp_path, pipe=None, **kw):
 
 
 def poll_render(c, name="w", pin=PIN):
-    return c.post("/api/worker/poll", json={"worker": name, "wait": 0, "can": ["transcribe", "render"], "pin": pin}, headers=AUTH)
+    return c.post("/api/worker/poll", json={"worker": name, "wait": 0, "can": ["transcribe", "render"], "pin": pin, "build": render_build()}, headers=AUTH)
 
 
 def test_poll_validates_what_a_worker_claims_it_can_do(tmp_path):

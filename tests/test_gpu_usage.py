@@ -203,7 +203,7 @@ def test_when_the_pod_cannot_wake_a_connected_home_worker_gets_the_task_before_t
     th.start()
     import time
     time.sleep(0.5)
-    assert t.pool == "" and said and "any other connected" in said[0]
+    assert t.pool == "" and any("any other connected" in m and "not ready" in m for m in said) and any("wake up" in m for m in said)
     got = h.poll("home-pc", 1.0, pool="home", power=100)
     assert got is t
     h.finish(t.id, "home-pc", result={"ok": 1})
@@ -235,3 +235,41 @@ def test_a_home_only_job_may_use_the_pod_when_no_home_worker_is_connected(tmp_pa
     th.start()
     time.sleep(0.5)
     assert t.pool == "" and said
+
+
+def test_renders_go_only_to_a_worker_running_the_same_render_code_as_the_server(tmp_path):
+    from clipcrow.buildid import render_build
+    b = render_build()
+    assert len(b) == 12 and b == render_build()
+    h = WorkerHub(TOKEN, render_pin="hf1", render_build=b, online_seconds=30.0)
+    h.poll("old", 0.0, can=("transcribe", "render"), pin="hf1", build="")                 # a worker from before the check, or an older release
+    h.poll("other", 0.0, can=("transcribe", "render"), pin="hf1", build="0123456789ab")
+    assert not h.online("render") and h.stale_workers() == ["old", "other"]
+    assert h.online("transcribe")                                                          # speech recognition does not depend on the render code
+    h.poll("new", 0.0, can=("transcribe", "render"), pin="hf1", build=b)
+    assert h.online("render") and h.stale_workers() == ["old", "other"]
+    assert WorkerHub(TOKEN, render_pin="hf1").stale_workers() == []                         # no build on the server: nothing is checked
+
+
+def test_the_job_log_names_who_did_a_task_and_how_long_it_took(tmp_path):
+    now = [100.0]
+    h = WorkerHub(TOKEN, clock=lambda: now[0])
+    a = tmp_path / "a.m4a"
+    a.write_bytes(b"x")
+    t = h.submit("j", a, "mr")
+    h.poll("race-3090", 0.0, pool="rented")
+    now[0] = 190.0
+    h.finish(t.id, "race-3090", result={})
+    assert h.who(t) == "race-3090, on-demand GPU, 90 s"
+    t2 = h.submit("j", a, "mr")
+    h.poll("home-gpu", 0.0, pool="home")
+    now[0] = 195.0
+    h.finish(t2.id, "home-gpu", result={})
+    assert h.who(t2) == "home-gpu, home GPU, 5 s"
+
+
+def test_the_config_names_workers_that_run_older_render_code(tmp_path):
+    app = create_app(tmp_path / "data", FakePipeline(), worker_token=TOKEN)
+    c = TestClient(app)
+    c.post("/api/worker/poll", json={"worker": "old-pc", "wait": 0, "can": ["transcribe", "render"], "pin": "x"}, headers={"Authorization": f"Bearer {TOKEN}"})
+    assert c.get("/api/config").json()["gpu_worker"]["stale"] == ["old-pc"]

@@ -13,6 +13,8 @@ import clipcrow.service.workers as workers_mod
 from clipcrow.service.workers import RemoteRenderer
 from clipcrow.worker import WorkerHttpError, send_clip
 from tests.test_worker import AUTH, FakeTransport
+from clipcrow.buildid import render_build
+BUILD = render_build()
 from tests.test_worker_render import (PIN, app_with_worker, call_renderer, edl_for, fake_render, local_render, make_mp4, poll_render,
                                       start_render_worker, wait_render_online)
 
@@ -48,7 +50,7 @@ def leased_task(pipe, tmp_path, direct=True, name="w"):
     f = tmp_path / "f.bin"
     f.write_bytes(b"x")
     t = pipe.hub.submit_render(JOB, {"edl.json": f}, {"clip_id": "c1"}, tmp_path / "in", direct=direct)
-    got = pipe.hub.poll(name, 0.0, can=("render",), pin=PIN, direct=True)
+    got = pipe.hub.poll(name, 0.0, can=("render",), pin=PIN, direct=True, build=BUILD)
     assert got is t
     return t
 
@@ -145,15 +147,15 @@ def test_a_long_task_goes_only_to_a_worker_that_can_use_the_bucket(tmp_path, sto
     f = tmp_path / "f.bin"
     f.write_bytes(b"x")
     t = pipe.hub.submit_render(JOB, {"edl.json": f}, {}, tmp_path / "in", direct=True)
-    assert pipe.hub.poll("old", 0.0, can=("render",), pin=PIN, direct=False) is None and t.state == "pending"
+    assert pipe.hub.poll("old", 0.0, can=("render",), pin=PIN, direct=False, build=BUILD) is None and t.state == "pending"
     assert not pipe.hub.online("render", direct=True) and pipe.hub.online("render")
-    assert pipe.hub.poll("new", 0.0, can=("render",), pin=PIN, direct=True) is t
+    assert pipe.hub.poll("new", 0.0, can=("render",), pin=PIN, direct=True, build=BUILD) is t
     assert pipe.hub.online("render", direct=True)
 
 
 def test_without_a_bucket_no_worker_counts_as_direct(tmp_path):
     c, app, pipe = app_with_worker(tmp_path)
-    assert c.post("/api/worker/poll", json={"worker": "w", "wait": 0, "can": ["render"], "pin": PIN, "direct": True}, headers=AUTH).status_code == 200
+    assert c.post("/api/worker/poll", json={"worker": "w", "wait": 0, "can": ["render"], "pin": PIN, "direct": True, "build": BUILD}, headers=AUTH).status_code == 200
     assert pipe.hub.online("render") and not pipe.hub.online("render", direct=True)
 
 

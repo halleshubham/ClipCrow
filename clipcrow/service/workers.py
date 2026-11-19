@@ -68,6 +68,7 @@ class PollIn(_M):
     pin: str = Field(default="", max_length=40)                    # the HyperFrames version this worker renders with
     direct: bool = False                                           # can send a finished clip straight to the bucket (see DirectIn)
     pool: Literal["home", "rented"] = "home"                       # which kind of machine this is: jobs can ask for one kind
+    build: str = Field(default="", pattern=r"^[0-9a-f]{0,16}$")    # a hash of the render code this worker runs (``buildid.render_build``); renders go only to a match
     power: int = Field(default=0, ge=0, le=1000)                   # the worker's own estimate of its capacity; only orders who is offered a task first
 
 
@@ -157,6 +158,7 @@ class Task:
     worker: str = ""
     lease_until: float = 0.0
     leased_at: float = 0.0
+    finished_at: float = 0.0
     max_seconds: float = 7200.0             # a worker that heartbeats for ever on one task is not trusted for ever
     result: Optional[dict] = None
     error: str = ""
@@ -182,6 +184,7 @@ class _Seen:
     pin: str = ""
     direct: bool = False
     pool: str = "home"                      # "home" (a machine the person owns) or "rented" (the on-demand pod)
+    build: str = ""                         # the render code version this worker reported
     power: int = 0                          # how much this worker can do (a GPU box > a laptop); the stronger idle worker gets a task first
 
 
@@ -215,7 +218,7 @@ def _machine(name: str) -> str:
 
 class WorkerHub:
     def __init__(self, token: str, *, pickup_seconds: float = 120.0, lease_seconds: float = 90.0,
-                 online_seconds: float = 60.0, render_pin: str = "", max_upload_bytes: int = 300 * 1024 * 1024,
+                 online_seconds: float = 60.0, render_pin: str = "", render_build: str = "", max_upload_bytes: int = 300 * 1024 * 1024,
                  max_direct_bytes: int = 2 * 1024 ** 3, storage=None, clock: Callable[[], float] = time.monotonic,
                  on_task_end: Optional[Callable[[dict], None]] = None, rate_for: Optional[Callable[[str], float]] = None):
         if not token or len(token) < 16:
@@ -223,6 +226,7 @@ class WorkerHub:
         self._token = token.encode()
         self.pickup_seconds, self.lease_seconds, self.online_seconds = pickup_seconds, lease_seconds, online_seconds
         self.render_pin, self.max_upload_bytes = render_pin, max_upload_bytes
+        self.render_build = render_build                 # the render code version of this server; "" = do not check
         self.max_direct_bytes, self.storage = max_direct_bytes, storage      # a finished clip may go to the bucket (storage) instead of through this server
         self._clock = clock
         self.on_task_end = on_task_end                  # called with {"job", "kind", "worker", "seconds", "ok", "rate"} when a worker finishes a task (the GPU time of a job)
@@ -242,13 +246,14 @@ class WorkerHub:
 
     # who is out there ------------------------------------------------------------------------------------------------
     def _touch(self, name: str, device: str = "", model: str = "", can: Optional[tuple] = None, pin: Optional[str] = None,
-               direct: Optional[bool] = None, power: Optional[int] = None, pool: Optional[str] = None) -> None:
+               direct: Optional[bool] = None, power: Optional[int] = None, pool: Optional[str] = None, build: Optional[str] = None) -> None:
         old = self._seen.get(name)
         self._seen[name] = _Seen(self._clock(), device or (old.device if old else ""), model or (old.model if old else ""),
                                  can if can is not None else (old.can if old else ("transcribe",)),
                                  pin if pin is not None else (old.pin if old else ""),
                                  direct if direct is not None else (old.direct if old else False),
                                  pool if pool is not None else (old.pool if old else "home"),
+                                 build if build is not None else (old.build if old else ""),
                                  power if power is not None else (old.power if old else 0))
 
     def _eligible(self, s: _Seen, kind: Optional[str], direct: bool = False, pool: str = "") -> bool:
@@ -262,7 +267,7 @@ class WorkerHub:
             return False
         if direct and not (s.direct and self.storage is not None):
             return False
-        return kind != "render" or (bool(self.render_pin) and s.pin == self.render_pin)
+        return kind != "render" or (bool(self.render_pin) and s.pin == self.render_pin and (not self.render_build or s.build == self.render_build))
 
     def online(self, kind: Optional[str] = None, direct: bool = False, pool: str = "") -> bool:
         """Is a worker that can do this out there, or one asleep that the pod controller can wake (``standby``)?"""
@@ -300,6 +305,22 @@ class WorkerHub:
             return [{"name": n, "device": s.device, "model": s.model, "can": list(s.can), "pin": s.pin, "direct": s.direct,
                      "online": now - s.at <= self.online_seconds} for n, s in sorted(self._seen.items())]
 
+    def who(self, task: Task) -> str:
+        """``race-3090 (on-demand GPU)`` / ``home-gpu (home GPU)`` / ``w (GPU worker)``: who did a task, for the job's log, and how long it took."""
+        name = task.worker or "a worker"
+        pool = (self._seen.get(name).pool if self._seen.get(name) else "")
+        kind = {"rented": "on-demand GPU", "home": "home GPU"}.get(pool, "GPU worker")
+        took = f", {max(0.0, (task.finished_at or self._clock()) - task.leased_at):.0f} s" if task.leased_at else ""
+        return f"{name}, {kind}{took}"
+
+    def stale_workers(self) -> list[str]:
+        """Names of the online workers that can render but run older (or newer) render code than this server: they get no renders until they are updated."""
+        if not self.render_build:
+            return []
+        with self._cond:
+            now = self._clock()
+            return sorted(n for n, s in self._seen.items() if now - s.at <= self.online_seconds and "render" in s.can and s.build != self.render_build)
+
     # the job side ----------------------------------------------------------------------------------------------------
     def _add(self, task: Task) -> Task:
         with self._cond:
@@ -333,11 +354,16 @@ class WorkerHub:
         """Block until the worker finishes the task. ``check`` raises when the job was cancelled. Raises ``WorkerUnavailable`` when
         nobody takes the task within ``pickup_seconds`` (or nobody eligible is online any more), the worker stops sending heartbeats,
         or it keeps one task longer than ``task.max_seconds``."""
+        told = False
         try:
             while True:
                 check()
                 with self._cond:
                     now = self._clock()
+                    if task.state == "pending" and not told and task.pool != "home" and not self._online(task.kind, task.direct, task.pool) \
+                            and self._standby(task.kind, task.direct):
+                        told = True
+                        say("waiting for the on-demand GPU to wake up (about a minute and a half)")
                     if task.state == "done":
                         return task.result or {}
                     if task.state == "failed":
@@ -373,18 +399,20 @@ class WorkerHub:
             return
         if self._online(task.kind, task.direct, "") or (task.pool == "home" and wakeable):
             was = "the on-demand GPU" if task.pool == "rented" else "the home GPU"
+            why = ((self.why_unavailable() if self.why_unavailable else "") if task.pool == "rented" else "") or (
+                "its worker has not connected" if task.pool == "rented" else "no home GPU worker is connected")
             task.pool, task.created = "", now                  # a fresh pickup window on whichever worker is there
-            say(f"{was} is not available, so any other connected GPU worker may take this")
+            say(f"{was} is not ready ({str(why)[:100]}): any other connected GPU worker may take this")
             self._cond.notify_all()
 
     # the worker side -------------------------------------------------------------------------------------------------
     def poll(self, name: str, wait: float, device: str = "", model: str = "", can: tuple = ("transcribe",), pin: str = "",
-             direct: bool = False, power: int = 0, pool: str = "home") -> Optional[Task]:
+             direct: bool = False, power: int = 0, pool: str = "home", build: str = "") -> Optional[Task]:
         """Hand the worker a pending task it can do (leased to it), holding the request open up to ``wait`` seconds. When a stronger worker that
         could take the task is also waiting, this one leaves it for a moment (``YIELD_SECONDS``) so the more capable machine gets it."""
         end = self._clock() + wait
         with self._cond:
-            self._touch(name, device, model, tuple(can), pin, bool(direct), int(power), pool)
+            self._touch(name, device, model, tuple(can), pin, bool(direct), int(power), pool, build)
             self._waiting[name] = self._waiting.get(name, 0) + 1
             try:
                 while True:
@@ -567,6 +595,7 @@ class WorkerHub:
             busy = sum(1 for x in self._tasks.values() if x.state == "leased" and x.worker and _machine(x.worker) == base)
             if not error and t.kind == "render" and "clip.mp4" not in t.uploads:
                 error = "the worker reported success but sent no clip"
+            t.finished_at = self._clock()
             if error:
                 t.state, t.error = "failed", error[:300]
             else:
@@ -624,7 +653,7 @@ class RemoteTranscriber:
                 tr = parse_transcript({"language": result.get("language") or language or "en",
                                        "words": [{"w": w["w"], "s": w["s"], "e": w["e"]} for w in result.get("words", [])]})
                 tr.engine = str(result.get("engine") or "worker")
-                say(f"the GPU worker transcribed {len(tr.words)} words")
+                say(f"the GPU worker transcribed {len(tr.words)} words ({self.hub.who(task)}" + (f", {tr.engine}" if tr.engine not in ("", "worker") else "") + ")")
                 return tr
             except (WorkerError, TranscriptError, KeyError, TypeError, ValueError) as e:      # a cancelled job raises something else
                 say(f"the GPU worker did not deliver ({e}); transcribing on the server instead")
@@ -676,7 +705,7 @@ class RemoteSpeakers:
             task = self.hub.submit_speakers(self.job_id, {f"media/{video.name}": video}, {"job_id": self.job_id}, self.max_seconds)
             result = self.hub.wait(task, check, say=say)
             sm = speaker_map_from_result(SpeakersIn.model_validate(result["speakers"]), video)
-            say("the GPU worker matched the voices to the people")
+            say(f"the GPU worker matched the voices to the people ({self.hub.who(task)})")
             return seats.store_map(out_dir, video, sm, None)
         except (WorkerError, ValidationError, KeyError, TypeError, ValueError, OSError) as e:      # a cancelled job raises something else
             say(f"the GPU worker did not deliver ({str(e)[:120]}); working it out on the server instead")
@@ -741,6 +770,9 @@ class RemoteRenderer:
                                asset_root=asset_root, **kw)
         clip = next((c for c in edl.clips if c.id == clip_id), None)
         if clip is None or not self.hub.online("render"):
+            old = self.hub.stale_workers() if clip is not None else []
+            if old:
+                self.say(f"{clip_id}: the GPU worker(s) {', '.join(old[:3])} run an older version of the render code, so this clip is rendered on the server (update the worker)")
             return local()                                          # nothing out there (or a bad clip id: the real renderer says so)
         long = bool(self.max_clip_seconds) and clip.duration > self.max_clip_seconds
         if long and not self.hub.online("render", direct=True):            # the MP4 would have to come back through the proxy that caps a request near 100 MB
@@ -750,13 +782,13 @@ class RemoteRenderer:
         task = None
         try:
             files, meta = self._bundle(edl, clip, taskdir, media_root, asset_root)
-            self.say(f"{clip_id}: rendering on the GPU worker ({sum(p.stat().st_size for p in files.values() if p.is_file()) / 1e6:.0f} MB of files to send)")
+            self.say(f"{clip_id}: rendering on a GPU worker ({sum(p.stat().st_size for p in files.values() if p.is_file()) / 1e6:.0f} MB of project files; it fetches only what it does not have)")
             task = self.hub.submit_render(edl.job_id, files, meta, taskdir / "in", self.max_seconds, direct=long)
             result = self.hub.wait(task, self.check, say=self.say)
             produced = task.uploads["clip.mp4"]
             validate_clip(produced, edl, clip, max_bytes=self.hub.max_direct_bytes if task.direct_used else self.hub.max_upload_bytes)
             warnings = self._place(produced, Path(output), edl, clip, [str(w)[:300] for w in result.get("warnings", [])][:20])
-            self.say(f"{clip_id}: the GPU worker rendered it")
+            self.say(f"{clip_id}: the GPU worker rendered it ({self.hub.who(task)})")
             return Path(output), SimpleNamespace(warnings=warnings)
         except WorkerError as e:
             reason = str(e)
