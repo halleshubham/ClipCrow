@@ -32,7 +32,7 @@ Set these in the server's environment (Coolify), never in the repository:
 | Variable | Meaning |
 |---|---|
 | `RACE_GPU_API_KEY` | the provider API key (a key with the `deploy` scope; read-only keys cannot pause or resume) |
-| `RACE_POD_ID` | the pod's id (from `GET /v1/gpu/pod-list/`) |
+| `RACE_POD_ID` / `RACE_POD_IDS` | the pod's id (from `GET /v1/gpu/pod-list/`); `RACE_POD_IDS` lists several in order of preference, each `id` or `id:hourly-INR` (e.g. `7401:45,8123:91`): when a pod has no free GPU (or its worker will not start) the next is woken |
 | `CLIPCROW_POD_HOURLY` | the pod's price in INR an hour (default 45), used for the daily cap and for estimates |
 | `CLIPCROW_POD_IDLE_MINUTES` | pause after this long with nothing to do (default 10) |
 | `CLIPCROW_POD_MAX_DAILY_INR` | stop waking the pod once this much has been spent today (default 500; 0 = no cap) |
@@ -49,3 +49,8 @@ On the New job page a person chooses **Automatic**, **Home GPU only** or **On-de
 machine (the worker's `--parallel 2` render slots) share its hourly price. When several workers are idle the stronger one (`power`: a CUDA GPU over a CPU) is offered a task first.
 
 **The worker token on the pod** is a real secret of the production server: rotate `CLIPCROW_WORKER_TOKEN` after the trial or when the pod is given up.
+
+## Fallbacks when the chosen machine is not available
+For a job that asked for the on-demand GPU: the preferred pod, then the next pod in `RACE_POD_IDS`, then any other connected worker (e.g. the home GPU), and only then the server. A job that asked for the
+home GPU tries the on-demand pod when no home worker is connected. A second pod needs the same setup as the first (`setup_pod.sh`, then `post_resume.sh` and `start_worker.sh`), with its own
+`/workspace/worker.env` holding the worker token and `WORKER_NAME` (e.g. `race-5090`); put that name in `CLIPCROW_GPU_RATES` so its time is priced.

@@ -162,3 +162,79 @@ def test_after_the_last_attempt_the_controller_gives_up_for_now(tmp_path):
         ctl.tick()
         now[0] += ctl.RETRY_SECONDS + 1
     assert ctl.state in ("unknown", "asleep") and "503" in ctl.status()["error"]
+
+
+class TwoPods(FakeClient):
+    def __init__(self, down=("pod1",), **kw):
+        super().__init__(**kw)
+        self.down, self.running = set(down), set()
+
+    def status(self, pod_id):
+        return "running" if pod_id in self.running else "stopped"
+
+    def resume(self, pod_id):
+        self.calls.append(f"resume {pod_id}")
+        if pod_id in self.down:
+            raise PodError("the GPU provider answered 503 to resume-pod/")
+        self.running.add(pod_id)
+        return f"https://{pod_id}.invalid/lab?token=SECRET"
+
+    def pause(self, pod_id):
+        self.calls.append(f"pause {pod_id}")
+        self.running.discard(pod_id)
+
+
+def two_pod_setup(tmp_path, client, boot=None):
+    now = [1000.0]
+    hub = WorkerHub(TOKEN, clock=lambda: now[0], online_seconds=30.0)
+    booted = []
+    ctl = PodController(client, hub, "pod1", hourly=45.0, fallbacks=(("pod2", 91.0),), boot=boot or booted.append, clock=lambda: now[0], threaded=False)
+    a = tmp_path / "a.m4a"
+    a.write_bytes(b"x")
+    return now, hub, ctl, booted, a
+
+
+def test_the_next_pod_is_woken_when_the_first_has_no_free_gpu(tmp_path):
+    now, hub, ctl, booted, a = two_pod_setup(tmp_path, TwoPods())
+    ctl.tick()
+    hub.submit("j", a, "mr", pool="rented")
+    ctl.tick()
+    assert ctl.client.calls == ["resume pod1", "resume pod2"] and ctl.state == "awake"
+    assert ctl.pod_id == "pod2" and ctl.hourly == 91.0 and booted == ["https://pod2.invalid/lab?token=SECRET"]
+    hub._tasks.clear()
+    now[0] += 700
+    ctl.tick()
+    assert ctl.client.calls[-1] == "pause pod2" and ctl.state == "asleep"        # the pod that was woken is the one paused
+
+
+def test_a_pod_that_wakes_but_cannot_start_its_worker_is_paused_and_the_next_is_tried(tmp_path):
+    def boot(url):
+        if "pod1" in url:
+            raise RuntimeError("not set up")
+    now, hub, ctl, booted, a = two_pod_setup(tmp_path, TwoPods(down=()), boot=boot)
+    ctl.tick()
+    hub.submit("j", a, "mr", pool="rented")
+    ctl.tick()
+    assert ctl.client.calls == ["resume pod1", "pause pod1", "resume pod2"] and ctl.pod_id == "pod2" and ctl.state == "awake"
+
+
+def test_a_running_fallback_pod_is_adopted_and_all_pods_down_is_reported(tmp_path):
+    c = TwoPods()
+    c.running.add("pod2")
+    now, hub, ctl, booted, a = two_pod_setup(tmp_path, c)
+    ctl.tick()
+    assert ctl.state == "awake" and ctl.pod_id == "pod2"
+    c2 = TwoPods(down=("pod1", "pod2"))
+    now, hub, ctl, booted, a = two_pod_setup(tmp_path, c2)
+    ctl.tick()
+    hub.submit("j", a, "mr", pool="rented")
+    ctl.tick()
+    assert ctl.state == "asleep" and "503" in ctl.status()["error"] and ctl.pod_id == "pod1"       # retried later, the preferred pod first
+
+
+def test_the_pods_come_from_one_list_in_the_environment():
+    hub = WorkerHub(TOKEN)
+    c = from_env(hub, {"RACE_GPU_API_KEY": "k" * 20, "RACE_POD_IDS": "7401:45, 8123:91 ,bad id", "CLIPCROW_POD_HOURLY": "50"})
+    assert c.pods == [("7401", 45.0), ("8123", 91.0)] and c.hourly == 45.0
+    c = from_env(hub, {"RACE_GPU_API_KEY": "k" * 20, "RACE_POD_ID": "7401"})
+    assert c.pods == [("7401", 45.0)]

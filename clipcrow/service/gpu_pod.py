@@ -108,10 +108,11 @@ class PodController:
     MAX_ATTEMPTS = 6                                # then the job goes on without it (the server does the work)
 
     def __init__(self, client, hub, pod_id: str, *, hourly: float = 0.0, idle_seconds: float = 600.0, max_daily: float = 500.0,
-                 boot: Optional[Callable[[str], None]] = None, can: tuple = CAN, clock: Callable[[], float] = time.monotonic,
+                 fallbacks: tuple = (), boot: Optional[Callable[[str], None]] = None, can: tuple = CAN, clock: Callable[[], float] = time.monotonic,
                  today: Callable[[], str] = lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"), threaded: bool = True):
         self.client, self.hub, self.pod_id = client, hub, pod_id
         self.hourly, self.idle_seconds, self.max_daily = max(0.0, hourly), idle_seconds, max_daily
+        self.pods = [(pod_id, self.hourly)] + [(str(i), max(0.0, float(h))) for i, h in fallbacks]      # in order of preference: the next is tried when one will not wake
         self.boot, self.can, self._clock, self._today, self.threaded = boot, tuple(can), clock, today, threaded
         self.state = "unknown"                      # unknown | asleep | waking | awake
         self.error = ""
@@ -169,13 +170,14 @@ class PodController:
             self._roll_day()
             if self.state == "unknown":
                 try:
-                    st = self.client.status(self.pod_id)
+                    states = {pid: self.client.status(pid) for pid, _ in self.pods}
                 except PodError as e:
                     self.error = str(e)
                     return
-                if st == "running":
-                    self.state, self._awake_since = "awake", self._clock()
-                elif st == "missing":
+                running = next(((pid, hr) for pid, hr in self.pods if states.get(pid) == "running"), None)
+                if running is not None:                                # a pod that is already up (adopted, whichever it is)
+                    (self.pod_id, self.hourly), self.state, self._awake_since = running, "awake", self._clock()
+                elif all(s == "missing" for s in states.values()):
                     self.error = "the pod is not on this account"
                     return
                 else:
@@ -205,12 +207,34 @@ class PodController:
 
     def _wake_work(self) -> None:
         try:
-            url = self.client.resume(self.pod_id)
-            if self.boot is not None:
-                self.boot(url)
+            last: Optional[Exception] = None
+            for pid, hr in list(self.pods):                            # the preferred pod first; the next one when it has no free GPU or will not start
+                with self._lock:
+                    self.pod_id, self.hourly, self._awake_since = pid, hr, self._clock()
+                try:
+                    url = self.client.resume(pid)
+                except Exception as e:                                 # noqa: BLE001
+                    last = e
+                    log.warning("pod %s would not wake: %s", pid, e)
+                    continue
+                try:
+                    if self.boot is not None:
+                        self.boot(url)
+                except Exception as e:                                 # noqa: BLE001
+                    last = e
+                    log.warning("pod %s woke but its worker did not start: %s", pid, type(e).__name__)
+                    try:
+                        self.client.pause(pid)                         # do not leave a pod running that serves nothing
+                    except Exception:                                  # noqa: BLE001
+                        pass
+                    continue
+                with self._lock:
+                    self.state, self._last_busy, self.error = "awake", self._clock(), ""
+                log.info("the GPU pod is awake")
+                return
             with self._lock:
-                self.state, self._last_busy, self.error = "awake", self._clock(), ""
-            log.info("the GPU pod is awake")
+                self.pod_id, self.hourly = self.pods[0]
+            raise last if last is not None else PodError("no pod is configured")
         except Exception as e:                                         # noqa: BLE001
             with self._lock:
                 self.error = str(e) if isinstance(e, PodError) else f"waking the pod failed ({type(e).__name__}: {str(e)[:80]})"
@@ -236,10 +260,25 @@ class PodController:
 
 
 def from_env(hub, env=os.environ) -> Optional[PodController]:
-    """A controller when ``RACE_GPU_API_KEY`` and ``RACE_POD_ID`` are set, else None (no pod, nothing changes)."""
-    key, pod = (env.get("RACE_GPU_API_KEY") or "").strip(), (env.get("RACE_POD_ID") or "").strip()
-    if not key or not pod:
+    """A controller when ``RACE_GPU_API_KEY`` and ``RACE_POD_ID`` (or ``RACE_POD_IDS``) are set, else None (no pod, nothing changes).
+    ``RACE_POD_IDS`` lists pods in order of preference, each ``id`` or ``id:hourly-INR`` (e.g. ``7401:45,8123:91``): the next is tried when one has no free GPU."""
+    key = (env.get("RACE_GPU_API_KEY") or "").strip()
+    default_rate = 45.0
+    try:
+        default_rate = max(0.0, float(env.get("CLIPCROW_POD_HOURLY") or 45.0))
+    except ValueError:
+        pass
+    pods: list[tuple[str, float]] = []
+    for part in (env.get("RACE_POD_IDS") or env.get("RACE_POD_ID") or "").split(","):
+        pid, _, rate = part.strip().partition(":")
+        if pid.isdigit() or (pid and pid.isalnum()):
+            try:
+                pods.append((pid, max(0.0, float(rate)) if rate else default_rate))
+            except ValueError:
+                pods.append((pid, default_rate))
+    if not key or not pods:
         return None
+    pod = pods[0][0]
     command = env.get("CLIPCROW_POD_BOOT") or DEFAULT_BOOT
 
     def boot(url: str) -> None:
@@ -250,6 +289,6 @@ def from_env(hub, env=os.environ) -> Optional[PodController]:
             return max(0.0, float(env.get(name) or default))
         except ValueError:
             return default
-    ctl = PodController(RaceClient(key), hub, pod, hourly=num("CLIPCROW_POD_HOURLY", 45.0), idle_seconds=num("CLIPCROW_POD_IDLE_MINUTES", 10.0) * 60,
+    ctl = PodController(RaceClient(key), hub, pod, hourly=pods[0][1], fallbacks=tuple(pods[1:]), idle_seconds=num("CLIPCROW_POD_IDLE_MINUTES", 10.0) * 60,
                         max_daily=num("CLIPCROW_POD_MAX_DAILY_INR", 500.0), boot=boot)
     return ctl

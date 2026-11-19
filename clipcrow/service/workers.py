@@ -329,7 +329,7 @@ class WorkerHub:
         return self._add(Task(uuid.uuid4().hex, job_id, "render", dict(files), dict(meta), self._clock(),
                               max_seconds=max_seconds, upload_dir=upload_dir, direct=direct, pool=pool))
 
-    def wait(self, task: Task, check: Callable[[], None], tick: float = 0.25) -> dict:
+    def wait(self, task: Task, check: Callable[[], None], tick: float = 0.25, say: Callable[[str], None] = lambda _m: None) -> dict:
         """Block until the worker finishes the task. ``check`` raises when the job was cancelled. Raises ``WorkerUnavailable`` when
         nobody takes the task within ``pickup_seconds`` (or nobody eligible is online any more), the worker stops sending heartbeats,
         or it keeps one task longer than ``task.max_seconds``."""
@@ -343,6 +343,7 @@ class WorkerHub:
                     if task.state == "failed":
                         raise WorkerError(task.error or "the worker could not do this")
                     if task.state == "pending":
+                        self._reroute(task, now, say)
                         if now - task.created > self.pickup_seconds:
                             raise WorkerUnavailable("no GPU worker picked the task up in time")
                         if not self._online(task.kind, task.direct, task.pool) and not (task.pool != "home" and self._standby(task.kind, task.direct)):
@@ -358,6 +359,23 @@ class WorkerHub:
                 if task.state in ("pending", "leased"):
                     task.state = "abandoned"                # a late result from the worker is refused
                 self._tasks.pop(task.id, None)
+
+    def _reroute(self, task: Task, now: float, say: Callable[[str], None]) -> None:
+        """The kind of machine the job asked for cannot take the task (the on-demand pod will not wake, no home worker is connected): let any other
+        connected worker have it before the job falls back to the server. Called with the lock held."""
+        if not task.pool:
+            return
+        mine = self._online(task.kind, task.direct, task.pool)
+        failing = task.pool == "rented" and bool(self.why_unavailable and self.why_unavailable())
+        wakeable = self._standby(task.kind, task.direct)
+        waking = task.pool != "home" and wakeable
+        if mine or (waking and not failing):
+            return
+        if self._online(task.kind, task.direct, "") or (task.pool == "home" and wakeable):
+            was = "the on-demand GPU" if task.pool == "rented" else "the home GPU"
+            task.pool, task.created = "", now                  # a fresh pickup window on whichever worker is there
+            say(f"{was} is not available, so any other connected GPU worker may take this")
+            self._cond.notify_all()
 
     # the worker side -------------------------------------------------------------------------------------------------
     def poll(self, name: str, wait: float, device: str = "", model: str = "", can: tuple = ("transcribe",), pin: str = "",
@@ -602,7 +620,7 @@ class RemoteTranscriber:
                 extract_audio(media, audio)
                 say("sending the audio to the GPU worker")
                 task = self.hub.submit(self.workdir.name, audio, language)
-                result = self.hub.wait(task, self.check)
+                result = self.hub.wait(task, self.check, say=say)
                 tr = parse_transcript({"language": result.get("language") or language or "en",
                                        "words": [{"w": w["w"], "s": w["s"], "e": w["e"]} for w in result.get("words", [])]})
                 tr.engine = str(result.get("engine") or "worker")
@@ -656,7 +674,7 @@ class RemoteSpeakers:
         try:
             say("asking the GPU worker who is who in the video")
             task = self.hub.submit_speakers(self.job_id, {f"media/{video.name}": video}, {"job_id": self.job_id}, self.max_seconds)
-            result = self.hub.wait(task, check)
+            result = self.hub.wait(task, check, say=say)
             sm = speaker_map_from_result(SpeakersIn.model_validate(result["speakers"]), video)
             say("the GPU worker matched the voices to the people")
             return seats.store_map(out_dir, video, sm, None)
@@ -734,7 +752,7 @@ class RemoteRenderer:
             files, meta = self._bundle(edl, clip, taskdir, media_root, asset_root)
             self.say(f"{clip_id}: rendering on the GPU worker ({sum(p.stat().st_size for p in files.values() if p.is_file()) / 1e6:.0f} MB of files to send)")
             task = self.hub.submit_render(edl.job_id, files, meta, taskdir / "in", self.max_seconds, direct=long)
-            result = self.hub.wait(task, self.check)
+            result = self.hub.wait(task, self.check, say=self.say)
             produced = task.uploads["clip.mp4"]
             validate_clip(produced, edl, clip, max_bytes=self.hub.max_direct_bytes if task.direct_used else self.hub.max_upload_bytes)
             warnings = self._place(produced, Path(output), edl, clip, [str(w)[:300] for w in result.get("warnings", [])][:20])

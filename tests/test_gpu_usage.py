@@ -185,3 +185,53 @@ def test_the_margin_is_set_in_the_environment_and_falls_back_to_fifty_percent(mo
     assert estimate_numbers({})["markup"] == 1.5
     monkeypatch.setenv("CLIPCROW_MARGIN_PERCENT", "-20")
     assert estimate_numbers({})["markup"] == 1.0
+
+
+def test_when_the_pod_cannot_wake_a_connected_home_worker_gets_the_task_before_the_server(tmp_path):
+    import threading
+    from clipcrow.service.workers import WorkerUnavailable
+    h = _hub()
+    a = tmp_path / "a.m4a"
+    a.write_bytes(b"x")
+    h.standby = lambda kind, direct: True                           # the pod looks wakeable ...
+    h.why_unavailable = lambda: "the GPU provider answered 503 to resume-pod/"    # ... but its last wake failed
+    h.poll("home-pc", 0.0, pool="home", power=100)
+    t = h.submit("j", a, "mr", pool="rented")
+    said = []
+    done = {}
+    th = threading.Thread(target=lambda: done.__setitem__("r", h.wait(t, lambda: None, say=said.append)))
+    th.start()
+    import time
+    time.sleep(0.5)
+    assert t.pool == "" and said and "any other connected" in said[0]
+    got = h.poll("home-pc", 1.0, pool="home", power=100)
+    assert got is t
+    h.finish(t.id, "home-pc", result={"ok": 1})
+    th.join(5)
+    assert done["r"] == {"ok": 1}
+
+
+def test_with_no_other_worker_connected_the_job_goes_to_the_server(tmp_path):
+    import pytest as _pt
+    from clipcrow.service.workers import WorkerUnavailable
+    h = _hub()
+    a = tmp_path / "a.m4a"
+    a.write_bytes(b"x")
+    h.standby = lambda kind, direct: False
+    t = h.submit("j", a, "mr", pool="rented")
+    with _pt.raises(WorkerUnavailable):
+        h.wait(t, lambda: None)
+
+
+def test_a_home_only_job_may_use_the_pod_when_no_home_worker_is_connected(tmp_path):
+    h = _hub()
+    a = tmp_path / "a.m4a"
+    a.write_bytes(b"x")
+    h.standby = lambda kind, direct: True
+    t = h.submit("j", a, "mr", pool="home")
+    said = []
+    import threading, time
+    th = threading.Thread(target=lambda: h.wait(t, lambda: None, say=said.append), daemon=True)
+    th.start()
+    time.sleep(0.5)
+    assert t.pool == "" and said
