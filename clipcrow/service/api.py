@@ -419,7 +419,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         d = job.model_dump()
         d["queue_position"] = runner.queue_position(job.id) if job.status == "queued" else 0
         days = days_for(job)[0]
-        d["expires_at"] = expires_at(job, days)
+        d["expires_at"] = None if job.sample else expires_at(job, days)        # a sample is never expired by retention
         return d
 
     def charge_minutes(duration: float) -> int:

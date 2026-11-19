@@ -44,7 +44,7 @@ def test_a_new_account_gets_one_welcome_mail_and_a_finished_sample_job_that_cost
     sign_up(c, "new@example.com")
     jobs = c.get("/api/jobs").json()
     assert len(jobs) == 1 and jobs[0]["status"] == "done" and jobs[0]["name"].startswith("Sample: ") and jobs[0]["clips"]
-    assert jobs[0]["owner"] and jobs[0]["sample"] is True and jobs[0]["reserved_minutes"] == 0
+    assert jobs[0]["owner"] and jobs[0]["sample"] is True and jobs[0]["reserved_minutes"] == 0 and jobs[0]["expires_at"] is None        # "kept until" would be a lie
     assert c.get("/api/me").json()["used_minutes"] == 0                                           # no minutes were taken
     clip = jobs[0]["clips"][0]
     assert c.get(f"/api/jobs/{jobs[0]['id']}/clips/{clip['id']}/video").status_code in (200, 206)    # the clip really plays
