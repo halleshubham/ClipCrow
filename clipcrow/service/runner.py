@@ -15,6 +15,7 @@ from ..edl import EDL, EDLError, load_edl
 from ..make import Cancelled, Hooks, MakeResult
 from ..planner.llm import LLMError
 from ..planner.plan import PlanError
+from .workers import hub_view
 from ..planner.transcript import TranscriptError
 from ..render import RenderError
 from .storage import StorageError
@@ -426,7 +427,7 @@ class JobRunner:
             hub = getattr(self.pipeline, "hub", None)
             if hub is not None:
                 from .workers import RemoteSpeakers
-                build_speaker_map = RemoteSpeakers(hub, job_id, check=lambda: None)          # noqa: F811 (a worker with a GPU first, else here)
+                build_speaker_map = RemoteSpeakers(hub_view(hub, self.store.get(job_id)), job_id, check=lambda: None)          # noqa: F811 (a worker with a GPU first, else here)
             sm = build_speaker_map(video, flag.parent, say=say)
             if sm is None:
                 say("no people could be told apart in this video; the clips stay as they are")

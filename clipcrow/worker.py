@@ -231,22 +231,32 @@ def evict_cache(root: Path, max_bytes: int, keep: Optional[Path] = None) -> None
         total -= sizes[d]
 
 
+def capacity(label: str, slots: int = 1) -> int:
+    """A rough number for "how much can this machine do", sent to the server only to decide who is offered a task first: a CUDA GPU outranks a CPU,
+    and each extra render slot adds a little."""
+    base = 100 if "cuda" in (label or "").lower() else 10
+    return min(1000, base + 5 * max(0, slots - 1))
+
+
 def run_worker(transport: Transport, name: str, *, model: str = "large-v3", transcribe: Optional[Callable] = None,
                label: str = "", stop: Callable[[], bool] = lambda: False, log: Callable[[str], None] = print,
                max_tasks: Optional[int] = None, poll_wait: float = POLL_WAIT, can_render: bool = False,
                render_fn: Optional[Callable] = None, cache: Optional[Path] = None, cache_gb: float = 20.0,
-               pin: Optional[str] = None, can_speakers: bool = False, speakers_fn: Optional[Callable] = None) -> int:
+               pin: Optional[str] = None, can_speakers: bool = False, speakers_fn: Optional[Callable] = None, render_only: bool = False,
+               power: Optional[int] = None, pool: str = "home") -> int:
     """Poll, do the task, upload; until ``stop()`` or ``max_tasks`` tasks. Returns the number of tasks finished."""
-    if transcribe is None:
+    if transcribe is None and not render_only:
         transcribe, label = default_transcribe(model)
     if pin is None:
         from .render import HYPERFRAMES_VERSION as pin
-    can = ["transcribe"] + (["render"] if can_render else []) + (["speakers"] if can_speakers else [])
+    can = (["render"] if render_only else ["transcribe"] + (["render"] if can_render else []) + (["speakers"] if can_speakers else []))
+    if power is None:
+        power = capacity(label)
     done, failures = 0, 0
     while not stop() and (max_tasks is None or done < max_tasks):
         try:
             reply = transport.post("/api/worker/poll", {"worker": name, "wait": poll_wait, "device": label[:60], "model": model[:40],
-                                                         "can": can, "pin": pin, "direct": True}, timeout=poll_wait + 20)
+                                                         "can": can, "pin": pin, "direct": True, "power": power, "pool": pool}, timeout=poll_wait + 20)
             failures = 0
         except WorkerHttpError as e:
             if e.status in (401, 404):
@@ -470,7 +480,7 @@ def handle_speakers(transport: Transport, name: str, task: dict, log: Callable[[
     return bool(ok)
 
 
-def main(server: str, name: str, model: str, *, render: bool = True, cache_gb: float = 20.0) -> int:
+def main(server: str, name: str, model: str, *, render: bool = True, cache_gb: float = 20.0, parallel: int = 1, pool: str = "home") -> int:
     token = os.environ.get("CLIPCROW_WORKER_TOKEN", "")
     if len(token) < 16:
         print("set CLIPCROW_WORKER_TOKEN to the same secret the server has (at least 16 characters)", file=sys.stderr)
@@ -484,9 +494,17 @@ def main(server: str, name: str, model: str, *, render: bool = True, cache_gb: f
     can_speakers, why = speakers_ready()
     print("who is who: " + (f"ready, this worker will also tell the people in a video apart ({why})" if can_speakers else f"off ({why})"), file=sys.stderr)
     print(f"worker {name!r} serving {server} with model {model}; Ctrl-C to stop", file=sys.stderr)
+    parallel = max(1, min(8, int(parallel)))
+    log = lambda m: print(m, file=sys.stderr, flush=True)
+    if can_render and parallel > 1:
+        print(f"parallel: {parallel - 1} extra render slot(s); speech recognition stays one at a time", file=sys.stderr)
+        for i in range(2, parallel + 1):                         # extra slots only render; the GPU model is loaded once, by the first
+            threading.Thread(target=run_worker, args=(transport, f"{name}.r{i}"), daemon=True,
+                             kwargs=dict(model=model, stop=stop.is_set, log=log, can_render=True, cache_gb=cache_gb, render_only=True, pool=pool,
+                                         label="render slot", power=capacity("cuda", parallel))).start()
     try:
-        run_worker(transport, name, model=model, stop=stop.is_set, log=lambda m: print(m, file=sys.stderr, flush=True),
-                   can_render=can_render, cache_gb=cache_gb, can_speakers=can_speakers)
+        run_worker(transport, name, model=model, stop=stop.is_set, log=log, can_render=can_render, cache_gb=cache_gb,
+                   can_speakers=can_speakers, pool=pool)
     except KeyboardInterrupt:
         stop.set()
         print("stopped", file=sys.stderr)

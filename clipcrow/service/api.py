@@ -44,6 +44,7 @@ from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Catalog, load_catalog
 from .publish import LIMITS, PublishError, SocioBird, caption_html, settings_for, validate_when
+from .gpu_cost import estimate_numbers, load_rates, rate_lookup, summarise as gpu_summary
 from .schedule import Chan, MAX_CHANNELS as BULK_CHANNELS, MAX_CLIPS as BULK_CLIPS, MAX_PER_DAY, SchedulePrefs, ScheduleError, clean_times, plan as plan_schedule, zone as schedule_zone
 from .retention import Sweeper, env_days, expires_at
 from .storage import Mirror, S3Storage, StorageError, signature
@@ -258,7 +259,16 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     hub = WorkerHub(worker_token, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds, render_pin=HYPERFRAMES_VERSION,
                     max_upload_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_UPLOAD_MB", "300") or 300) * 1024 * 1024),
                     max_direct_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_DIRECT_MB", "2048") or 2048) * 1024 * 1024),
-                    storage=storage if os.environ.get("CLIPCROW_WORKER_DIRECT", "1") != "0" else None) if worker_token else None
+                    storage=storage if os.environ.get("CLIPCROW_WORKER_DIRECT", "1") != "0" else None,
+                    rate_for=rate_lookup(load_rates()),
+                    on_task_end=lambda r: store.add_gpu_usage(r["job"], {k: r[k] for k in ("kind", "worker", "seconds", "ok", "rate")} | {"at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+                    if (store.dir(r["job"]) / "job.json").is_file() else None) if worker_token else None
+    pod = None
+    if hub is not None:
+        from .gpu_pod import from_env as pod_from_env
+        pod = pod_from_env(hub)                             # a rented pod that sleeps when idle and wakes for a waiting job (RACE_GPU_API_KEY + RACE_POD_ID)
+        if pod is not None:
+            pod.start()
     if hub is not None:
         pipeline.hub = hub                                  # RealPipeline sends speech recognition to a worker when one is online
     pipeline.store = store                                  # ... and reuses the transcript of a file this account already made a job from
@@ -280,6 +290,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     app = FastAPI(title="ClipCrow", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.store, app.state.runner, app.state.accounts, app.state.catalog = store, runner, accounts, catalog
     app.state.mirror, app.state.mirror_source = mirror, backup_source
+    app.state.pod = pod
     limit = max_upload_mb * 1024 * 1024
 
     @app.middleware("http")
@@ -373,7 +384,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready(),
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
                 "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online()),
-                               "render": bool(hub and hub.online("render"))}}
+                               "render": bool(hub and hub.online("render")),
+                               "estimate": estimate_numbers(load_rates(), pod.hourly if pod is not None else None),
+                               **({"pod": pod.status()} if pod is not None else {})}}
 
     @app.post("/api/login")
     def login(body: Login, request: Request) -> JSONResponse:
@@ -778,7 +791,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                             speaker_title=str(o.get("speaker_title") or "").strip(), cutout=truthy(o.get("cutout")),
                             immersive=truthy(o.get("immersive")), explainer=truthy(o.get("explainer")), pictures=picture_ids,
                             ai_images=want_images, multi=o.get("multi") or "switch", graphics=truthy(o.get("graphics")),
-                            clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", clean_take=o.get("clean_take") or "last", fresh_transcript=truthy(o.get("fresh_transcript")), whole=truthy(o.get("whole")) or no_length,           # no length asked for: the whole video is one reel
+                            clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", gpu=o.get("gpu") if o.get("gpu") in ("auto", "home", "pod") else "auto", clean_take=o.get("clean_take") or "last", fresh_transcript=truthy(o.get("fresh_transcript")), whole=truthy(o.get("whole")) or no_length,           # no length asked for: the whole video is one reel
                            
                             cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), banner=truthy(o.get("banner")), outro=truthy(o.get("outro")), sounds=truthy(o.get("sounds")), music=truthy(o.get("music")), transition=o.get("transition") or "none")
         except (ValidationError, ValueError, TypeError) as e:
@@ -983,7 +996,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                          spread: Optional[str] = Form(None), speaker_name: Optional[str] = Form(None),
                          speaker_title: Optional[str] = Form(""), cutout: Optional[str] = Form(None),
                          multi: Optional[str] = Form(None), graphics: Optional[str] = Form(None),
-                         clean: Optional[str] = Form(None), clean_pace: Optional[str] = Form(None), clean_take: Optional[str] = Form(None), fresh_transcript: Optional[str] = Form(None), whole: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
+                         clean: Optional[str] = Form(None), clean_pace: Optional[str] = Form(None), gpu: Optional[str] = Form(None), clean_take: Optional[str] = Form(None), fresh_transcript: Optional[str] = Form(None), whole: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
                          explainer: Optional[str] = Form(None), links: Optional[str] = Form(None), pictures_ids: Optional[str] = Form(None, alias="pictures"),
                          ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
                          logo: Optional[str] = Form(None), banner: Optional[str] = Form(None), outro: Optional[str] = Form(None), sounds: Optional[str] = Form(None), music: Optional[str] = Form(None), transition: Optional[str] = Form(None),
@@ -994,7 +1007,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if declared > limit + 1_000_000:
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
-                                   speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, clean_take=clean_take, fresh_transcript=fresh_transcript, whole=whole,
+                                   speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, gpu=gpu, clean_take=clean_take, fresh_transcript=fresh_transcript, whole=whole,
                                    immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, banner=banner, outro=outro, sounds=sounds, music=music, transition=transition,
                                    style=style, brand=brand),
                               brand_owner(request))
@@ -1331,7 +1344,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     @app.post("/api/worker/poll", dependencies=[Depends(worker_auth)])
     async def worker_poll(body: PollIn) -> dict:
-        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model, tuple(body.can), body.pin, body.direct)
+        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model, tuple(body.can), body.pin, body.direct, body.power, body.pool)
         if task is None:
             return {"task": None}
         out = {"id": task.id, "kind": task.kind, "lease_seconds": hub.lease_seconds, "meta": task.meta}
@@ -1757,6 +1770,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             "assets": [{"id": a.id, "origin": a.origin, "ai": a.ai, "tool": a.tool} for a in edl.assets],
             "disclosure_recommended": any(a.ai == "generated" for a in edl.assets),
             "clips": [{"id": c.id, "title": c.title, "decided": c.ai.decided if c.ai else []} for c in edl.clips],
+            "gpu": gpu_summary(store.gpu_usage(job_id)),
         }
 
     app.mount("/", StaticFiles(directory=STATIC, html=True), name="ui")

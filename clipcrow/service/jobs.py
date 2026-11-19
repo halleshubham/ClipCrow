@@ -53,6 +53,7 @@ class Params(_M):
     graphics: bool = False                  # the source cuts to slides, cards or b-roll: show those whole instead of cropping them
     clean: bool = False                     # cut fumbles, fillers, retakes and dead air out of a raw recording first
     clean_pace: Literal["natural", "fast", "tight"] = "natural"
+    gpu: Literal["auto", "home", "pod"] = "auto"     # which GPU worker may do this job: any available, only the home one, or only the on-demand pod
     fresh_transcript: bool = False          # listen to the recording again even when an earlier job of this account already transcribed the same file
     clean_take: Literal["last", "best"] = "last"     # which take of a repeated passage stays: the last one, or the one the AI judges best
     cover: bool = False                     # a bold title for the first ~250 ms (and a cover PNG)
@@ -197,6 +198,20 @@ class JobStore:
                 if r["id"] == post_id:
                     r["status"], r["detail"] = status, detail[:300]
             (self.dir(job_id) / "out" / "posts.json").write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+
+    # GPU time of a job: <job>/out/gpu_usage.json, a list of {kind, worker, seconds, ok, rate (INR an hour), at}
+    def gpu_usage(self, job_id: str) -> list[dict]:
+        try:
+            rows = json.loads((self.dir(job_id) / "out" / "gpu_usage.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        return rows if isinstance(rows, list) else []
+
+    def add_gpu_usage(self, job_id: str, row: dict) -> None:
+        with self._lock:
+            path = self.dir(job_id) / "out" / "gpu_usage.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self.gpu_usage(job_id) + [row], ensure_ascii=False), encoding="utf-8")
 
     def edl_path(self, job_id: str) -> Path:
         return self.dir(job_id) / "out" / "edl.json"

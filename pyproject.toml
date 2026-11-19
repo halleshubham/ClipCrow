@@ -14,7 +14,7 @@ examples = ["pillow", "numpy"]
 # fails with "open() got an unexpected keyword argument 'metadata_errors'". Lift the bound when faster-whisper stops passing it.
 asr = ["faster-whisper>=1.1", "av>=12.3,<19"]
 vision = ["opencv-python-headless>=4.8,<5", "numpy"]
-service = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
+service = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9", "websocket-client>=1.7"]   # websocket-client: the pod controller boots a resumed pod through its Jupyter terminal
 sravaani = ["torch==2.15.0", "transformers==5.23.0", "sentencepiece", "soundfile"]   # SraVaani (CLIPCROW_ASR=sravaani); torch from the CPU index: pip install --extra-index-url https://download.pytorch.org/whl/cpu
 storage = ["boto3>=1.36"]              # Cloudflare R2 / S3 (boto3 >= 1.36 so the checksum setting R2 needs exists)
 assets = ["playwright>=1.40"]          # page screenshots for explainer mode (then: playwright install chromium)

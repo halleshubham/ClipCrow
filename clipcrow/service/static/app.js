@@ -485,12 +485,33 @@ async function newJobView() {
     fileTitle.textContent = f ? f.name : 'Drop a video here, or choose a file';
     fileName.textContent = f ? `${(f.size / 1048576).toFixed(0)} MB` : `MP4, MOV, MKV or WebM, up to ${c.max_upload_mb} MB`;
   };
+  // a planning estimate of the GPU cost for this video, from its length (read in the browser) and how many reels were asked for
+  const estimateGpu = async () => {
+    const out = $('gpu-est'), n = c.gpu_worker && c.gpu_worker.estimate;
+    if (!out || !file || !n) return;
+    const seconds = await new Promise((resolve) => {
+      const v = document.createElement('video'), url = URL.createObjectURL(file);
+      v.preload = 'metadata';
+      v.onloadedmetadata = () => { URL.revokeObjectURL(url); resolve(v.duration || 0); };
+      v.onerror = () => { URL.revokeObjectURL(url); resolve(0); };
+      v.src = url;
+    });
+    if (!seconds) { out.textContent = 'The video length could not be read, so no estimate.'; return; }
+    const reels = Math.max(1, Number($('clips').value) || 3);
+    const base = seconds * n.listen + ($('multi').value !== 'off' ? seconds * n.who : 0) + reels * n.render;
+    const line = (name, rate, extra, note) => {
+      const secs = base + extra, cost = (secs / 3600) * rate * n.markup;
+      return `${name}: ${rate > 0 ? `about ₹${Math.max(1, Math.round(cost))}` : 'no cost counted'}, about ${Math.max(1, Math.round(secs / 60))} min of GPU time${note}`;
+    };
+    out.textContent = `${line('Home GPU', n.home_rate, 0, '')}. ${line('On-demand GPU', n.pod_rate, n.wake, ' (including waking it)')}. A rough guide worked out here, with a 50% margin, not a quote.`;
+  };
   fileInput.addEventListener('change', () => setFile(fileInput.files[0] || null));
+  fileInput.addEventListener('change', () => estimateGpu());
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
   drop.addEventListener('drop', (e) => {
     e.preventDefault(); drop.classList.remove('over');
-    if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files[0]) { setFile(e.dataTransfer.files[0]); estimateGpu(); }
   });
 
   const pics = pictureField();
@@ -531,7 +552,7 @@ async function newJobView() {
     const options = {
       style: $('style').value,
       language: $('language').value, clips: $('clips').value, min_clip: minClip, max_clip: maxClip, spread: $('spread').value,
-      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', clean_pace: $('clean_pace').value, clean_take: $('clean_take').value, fresh_transcript: $('fresh_transcript').checked ? 'true' : '', brand: $('brand') ? $('brand').value : '', speaker_name: $('speaker').value, speaker_title: $('role').value,
+      multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', gpu: $('gpu') ? $('gpu').value : '', clean_pace: $('clean_pace').value, clean_take: $('clean_take').value, fresh_transcript: $('fresh_transcript').checked ? 'true' : '', brand: $('brand') ? $('brand').value : '', speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', pictures: pics.ids(), ai_images: $('ai_images').checked ? 'true' : '',
       cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', banner: $('show_banner').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '', music: $('music').checked ? 'true' : '', transition: $('transition').value,
@@ -631,6 +652,9 @@ async function newJobView() {
       el('label', { class: brand.music ? 'check' : 'check muted', for: 'music' }, el('input', { type: 'checkbox', id: 'music', disabled: !brand.music, checked: brand.music && !!brand.settings.default_music }),
         el('span', {}, el('strong', { text: 'Background music (ducks under the speech)' }), el('br'),
           el('span', { class: 'muted', id: 'music-hint', 'data-keep': '1' }, brand.music ? `${brand.music_name} (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music chosen. ', el('a', { href: '#/brand', text: 'Pick a track or add your own on the Brand page' }), '.']))),
+      c.gpu_worker && c.gpu_worker.enabled && el('div', {},
+        select('gpu', 'Which GPU does the heavy work', [['auto', 'Automatic: whichever is available (the home GPU first)'], ['home', 'Home GPU only'], ['pod', 'On-demand GPU only (wakes when needed, billed by time)']]),
+        el('p', { class: 'small muted', id: 'gpu-est', 'aria-live': 'polite', text: 'Choose a video to see a cost estimate.' })),
       el('label', { class: 'check', for: 'clean' }, el('input', { type: 'checkbox', id: 'clean' }),
         el('span', {}, el('strong', { text: 'Raw recording: cut fumbles and dead air' }), el('br'),
           el('span', { class: 'muted', text: 'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.' }))),
@@ -1015,6 +1039,7 @@ async function jobView(jobId) {
       const u = await api(`/jobs/${jobId}/usage`);
       usageLoaded = true;
       const cost = (n) => (n == null ? '—' : `$${n.toFixed(4)}`);
+      const dur = (sec) => (sec >= 60 ? `${Math.floor(sec / 60)} min ${Math.round(sec % 60)} s` : `${Math.round(sec)} s`);
       usage.hidden = false;
       usageBody.className = '';
       usageBody.replaceChildren(
@@ -1025,6 +1050,13 @@ async function jobView(jobId) {
             el('td', { class: 'num', text: cost(c.est_cost_usd) }))),
             el('tr', {}, el('td', { text: 'Total' }), el('td'), el('td', { class: 'num', text: u.input_tokens.toLocaleString() }),
               el('td', { class: 'num', text: u.output_tokens.toLocaleString() }), el('td', { class: 'num', text: cost(u.est_cost_usd) })))),
+        ...(u.gpu && u.gpu.tasks.length ? [
+          el('h2', { style: { marginTop: '20px' }, text: 'GPU time' }),
+          el('p', { class: 'small muted', text: u.gpu.rented ? 'GPU time is costed by the second at each worker’s hourly rate (the same way for a rented GPU and one at home). Time a machine waits between jobs is not charged to a job.' : 'No hourly rate is set for this worker, so no cost is counted.' }),
+          el('table', {}, el('thead', {}, el('tr', {}, ['Step', 'Worker', 'Time', '₹ per hour', 'Est. cost'].map((h, i) => el('th', { class: i > 1 ? 'num' : '', text: h })))),
+            el('tbody', {}, u.gpu.tasks.map((t) => el('tr', {}, el('td', { text: t.ok ? t.step : `${t.step} (failed)` }), el('td', { translate: 'no', text: t.worker }),
+              el('td', { class: 'num', text: dur(t.seconds) }), el('td', { class: 'num', text: t.rate_per_hour ? t.rate_per_hour.toFixed(2) : 'no rate' }), el('td', { class: 'num', text: t.rate_per_hour ? `₹${t.est_cost.toFixed(2)}` : '—' }))),
+              el('tr', {}, el('td', { text: 'Total' }), el('td'), el('td', { class: 'num', text: dur(u.gpu.seconds) }), el('td'), el('td', { class: 'num', text: u.gpu.rented ? `₹${u.gpu.est_cost.toFixed(2)}` : '—' }))))] : []),
         el('h2', { style: { marginTop: '20px' }, text: 'Assets and AI involvement' }),
         el('div', { class: 'chips' }, u.assets.map((a) => el('span', { class: 'chip plain', text: `${a.id}: AI ${a.ai}` }))),
         el('p', { class: 'small', style: { marginTop: '12px' } },

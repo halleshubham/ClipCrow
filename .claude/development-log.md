@@ -196,6 +196,11 @@ The rules that came out of these are in `development-rules.md`; this file is the
   survives pause/resume with `post_resume.sh`, and a production worker ("race-3090") ran against the server. Learned: only the built-in templates deploy via the API; a resume is a new container; the Ubuntu mirror is too slow (use a nearby one for Chrome's libraries);
   Whisper large-v3 on Marathi is poor and SraVaani is right; WavLM merged two speakers into one voice again.
 
+- **GPU cost, capacity and the on-demand pod**: every worker task is timed on the server (`gpu_usage.json`), costed in INR from `CLIPCROW_GPU_RATES` (a `"*"` price also covers the home GPU) and listed in the job's AI usage and disclosure;
+  overlapping tasks on one machine share its hourly price. The stronger idle worker (`power`) is offered a task first (a weaker one yields for 4 s); `clipcrow worker --parallel N` adds render-only slots; `--pool home|rented` marks the machine.
+  A job picks `gpu`: auto, home or pod (New job page, with a per-GPU cost estimate); `gpu_pod.PodController` wakes a paused pod for a waiting job, boots the worker through Jupyter, pauses after idle, keeps a daily INR cap, never terminates.
+  The estimate numbers are assumptions, to be replaced with measured per-task times from `gpu_usage.json`.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

@@ -1,7 +1,7 @@
 # A worker on a rented GPU pod (Race Engineering, tried 2026-11-19)
 
 ClipCrow's worker only makes outgoing HTTPS calls, so any rented GPU machine with internet can run it. This records what worked on a Race Engineering RTX 3090 pod and the scripts
-in `scripts/rented-gpu/`. Nothing here is automated yet (no code starts or pauses pods).
+in `scripts/rented-gpu/`. The server can now pause and wake the pod by itself (see "Pause and resume per job" below).
 
 ## What was found
 - **API** (`https://api.raceengineering.ai`, Bearer key with `read`/`deploy` scopes): `GET /v1/gpu/gpu-list/`, `GET /v1/gpu/templates/`, `POST /v1/gpu/start-pod/` (`slice_id`, `template_id`, `disk_size`, `enable_ssh`),
@@ -25,3 +25,27 @@ The SraVaani model is NOT in the repo: download `ARTPARK-IISc/SraVaani-1.0` at t
 - The worker token lets its holder fetch job media and return results. On rented third-party hardware, give the pod its own token if the server ever supports it, and rotate the token after a trial.
 - docs/deploy.md: only run a worker you control when other people's media may reach it.
 - An idle running pod bills by the minute. Pause it when no GPU work is expected.
+
+## Pause and resume per job (automatic)
+Set these in the server's environment (Coolify), never in the repository:
+
+| Variable | Meaning |
+|---|---|
+| `RACE_GPU_API_KEY` | the provider API key (a key with the `deploy` scope; read-only keys cannot pause or resume) |
+| `RACE_POD_ID` | the pod's id (from `GET /v1/gpu/pod-list/`) |
+| `CLIPCROW_POD_HOURLY` | the pod's price in INR an hour (default 45), used for the daily cap and for estimates |
+| `CLIPCROW_POD_IDLE_MINUTES` | pause after this long with nothing to do (default 10) |
+| `CLIPCROW_POD_MAX_DAILY_INR` | stop waking the pod once this much has been spent today (default 500; 0 = no cap) |
+| `CLIPCROW_POD_BOOT` | what to run on the pod after a resume (default `bash /workspace/post_resume.sh; bash /workspace/start_worker.sh`) |
+| `CLIPCROW_GPU_RATES` | JSON of INR an hour per worker name, e.g. `{"race-3090": 45, "home": 20}`; `"*"` is a price for every other machine, so the home GPU is costed the same way |
+| `CLIPCROW_WORKER_PICKUP_SECONDS` | raise to 300 or more: a job waits for the pod to wake (about a minute and a half) |
+
+How it works: a job that needs a GPU while the pod sleeps is queued for it; the controller resumes the pod, runs the boot command in the pod's Jupyter terminal (a resume
+is a new container), and the worker there starts polling. With nothing pending or running for the idle time the pod is paused again; a paused pod is not billed for compute.
+The controller never terminates a pod. The pod's worker is started with `--pool rented`; the home worker uses the default `--pool home`.
+
+On the New job page a person chooses **Automatic**, **Home GPU only** or **On-demand GPU only**, and sees a rough cost estimate for each from the video's length
+(worked out in the browser from `gpu_cost` planning numbers sent with the config, plus a 50% margin (`CLIPCROW_GPU_MARKUP`); not a quote). Each job's "AI usage and disclosure" lists the GPU time of every task and its cost in INR; tasks that overlap on one
+machine (the worker's `--parallel 2` render slots) share its hourly price. When several workers are idle the stronger one (`power`: a CUDA GPU over a CPU) is offered a task first.
+
+**The worker token on the pod** is a real secret of the production server: rotate `CLIPCROW_WORKER_TOKEN` after the trial or when the pod is given up.

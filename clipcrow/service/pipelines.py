@@ -9,6 +9,7 @@ from pathlib import Path
 from ..make import Hooks, MakeResult, make
 from ..planner import PlannerOptions
 from .jobs import Job
+from .workers import hub_view
 
 
 def _worker_clip_limit() -> float:
@@ -84,7 +85,7 @@ class RealPipeline:
         renderer = None
         if self.hub is not None:                              # a re-render after an edit can use the GPU worker too
             from .workers import RemoteRenderer
-            renderer = RemoteRenderer(self.hub, max_clip_seconds=_worker_clip_limit())
+            renderer = RemoteRenderer(hub_view(self.hub, job), max_clip_seconds=_worker_clip_limit())
         return render_one(job, edl, clip_id, out, workdir, media_root, os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"), renderer)
 
     @staticmethod
@@ -102,13 +103,14 @@ class RealPipeline:
         from ..planner import AnthropicLLM
         from ..planner.llm import Interruptible
         transcribe_fn = None
-        if self.hub is not None and self.hub.online():           # a GPU worker is out there: let it listen, fall back if it cannot
+        hub = hub_view(self.hub, job)
+        if hub is not None and hub.online():           # a GPU worker is out there: let it listen, fall back if it cannot
             from .workers import RemoteTranscriber
-            transcribe_fn = RemoteTranscriber(self.hub, video.parent, check=hooks.check)
+            transcribe_fn = RemoteTranscriber(hub, video.parent, check=hooks.check)
         render_fn = None
         if self.hub is not None:                                 # each clip goes to a matching render worker when one is online
             from .workers import RemoteRenderer
-            render_fn = RemoteRenderer(self.hub, check=hooks.check, say=say, max_clip_seconds=_worker_clip_limit())
+            render_fn = RemoteRenderer(hub, check=hooks.check, say=say, max_clip_seconds=_worker_clip_limit())
         review = out / "cleanup.review.json"                      # a person went through "What was cut": rebuild from the saved words with exactly their choices
         recut: dict = {}
         if review.is_file():
@@ -126,7 +128,7 @@ class RealPipeline:
             transcribe_fn = CachedTranscriber(transcribe_fn or _local_transcribe, self.store, job, out, fresh=job.params.fresh_transcript)
         if self.hub is not None:                                              # a worker with a GPU does the voice work; else it is done here
             from .workers import RemoteSpeakers
-            recut.setdefault("speakers_fn", RemoteSpeakers(self.hub, job.id, check=hooks.check))
+            recut.setdefault("speakers_fn", RemoteSpeakers(hub, job.id, check=hooks.check))
         return make(video, out, language=job.params.language, clean_take=job.params.clean_take, **recut, llm=Interruptible(AnthropicLLM(), hooks.check), opts=planner_options(job, out.parent / "pictures"),
                     hooks=hooks, say=say, multi=job.params.multi, graphics=job.params.graphics, clean=job.params.clean, clean_pace=job.params.clean_pace, transcribe_fn=transcribe_fn, render_fn=render_fn,
                     images=self._images() if job.params.ai_images else None,

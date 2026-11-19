@@ -71,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
     wk.add_argument("--model", default="large-v3", help="faster-whisper model (large-v3 needs about 4-5 GB of GPU memory)")
     wk.add_argument("--no-render", action="store_true", help="do speech recognition only, even if this machine could also render clips")
     wk.add_argument("--cache-gb", type=float, default=20.0, help="disk the worker may use to keep source videos between a job's clips")
+    wk.add_argument("--pool", choices=("home", "rented"), default=os.environ.get("CLIPCROW_WORKER_POOL", "home"), help="home: a machine you own; rented: the on-demand GPU (a job can ask for one kind)")
+    wk.add_argument("--parallel", type=int, default=1, help="how many clips this machine renders at once (extra slots only render); speech recognition stays one at a time")
     st = sub.add_parser("selftest", help="can this machine render? checks the tools and renders a tiny Devanagari clip")
     st.add_argument("--no-render", action="store_true", help="check the tools only")
     u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
@@ -149,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if a.cmd == "worker":
             from .worker import main as worker_main
-            return worker_main(a.server, a.name, a.model, render=not a.no_render, cache_gb=a.cache_gb)
+            return worker_main(a.server, a.name, a.model, render=not a.no_render, cache_gb=a.cache_gb, parallel=a.parallel, pool=a.pool)
         if a.cmd == "selftest":
             from .selftest import run as selftest
             return 0 if selftest(skip_render=a.no_render) else 1
