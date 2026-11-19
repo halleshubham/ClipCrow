@@ -301,3 +301,19 @@ def test_strict_fallback_keeps_a_job_on_the_kind_of_gpu_it_asked_for(tmp_path):
         with h._cond:
             h._reroute(t, 0.0, lambda m: None)
         assert t.pool == pool_after
+
+
+def test_automatic_tries_the_pods_first_and_the_home_gpu_only_as_a_fallback(tmp_path):
+    from types import SimpleNamespace
+    from clipcrow.service.workers import hub_view
+    h = _hub()
+    h.standby = lambda kind, direct: True                              # a pod is configured and asleep
+    a = tmp_path / "a.m4a"
+    a.write_bytes(b"x")
+    h.poll("home-pc", 0.0, pool="home", power=100)
+    t = hub_view(h, SimpleNamespace(params=SimpleNamespace(gpu="auto"))).submit("j", a, "mr")
+    assert t.pool == "rented" and h.poll("home-pc", 0.0, pool="home") is None      # the home worker waits while a pod can still wake
+    h.why_unavailable = lambda: "no GPU of this type is available"     # the pods could not wake
+    with h._cond:
+        h._reroute(t, h._clock(), lambda m: None)
+    assert t.pool == "" and h.poll("home-pc", 0.0, pool="home") is t

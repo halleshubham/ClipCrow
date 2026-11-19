@@ -855,4 +855,6 @@ def hub_view(hub, job) -> "Optional[HubView]":
     if hub is None:
         return None
     choice = getattr(getattr(job, "params", None), "gpu", "auto")
+    if choice not in ("home", "pod") and hub.standby is not None:
+        choice = "pod"          # on-demand pods are configured: "automatic" tries them first; ``_reroute`` hands the task to the home GPU only once they cannot take it
     return HubView(hub, {"home": "home", "pod": "rented"}.get(choice, ""))

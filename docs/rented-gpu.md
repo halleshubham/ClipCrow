@@ -63,3 +63,5 @@ polls: renders go only to a worker whose hash matches, and the config lists the 
 so this clip is rendered on the server"). Speech recognition does not depend on it. After a server release that changes the render code, update each pod:
 upload a fresh tarball of the repo to `/workspace/clipcrow-src.tar.gz` and run `scripts/rented-gpu/update_pod.sh` on it (a paused pod: after its next resume). The home PC
 worker needs the new image (`docker pull`). Seen on 2026-11-19: a pod built from a tarball of the morning rendered with the old banner layout and failed the layout check.
+
+**Order of workers.** With on-demand pods configured, a job set to *Automatic* behaves like *On-demand GPU* first: the pod is woken (and the next pod tried). Only when the pods cannot take the task (the provider has no GPU, the wake keeps failing, the daily limit is reached) does it go to any other connected worker, the home GPU, and only after that to the server. Set `CLIPCROW_GPU_FALLBACK=strict` to stop that hand-over, `CLIPCROW_WORKER_DISABLED=home-gpu` to switch the home GPU off.

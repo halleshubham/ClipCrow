@@ -222,3 +222,6 @@ it, above the captions) when the picture there is at least `NEON_MIN_RATIO` (0.7
 drifting cyan/magenta neon grid (GSAP `y` tween on a oversized layer, no CSS transform) and the picture, glowing, fitted large above the captions.
 AI images stay `full`; explicit `full`/`panel` are unchanged. Render code changed, so `render_build()` changed: update the pods
 (`scripts/rented-gpu/update_pod.sh`) and the home worker image or they get no renders.
+
+## 2026-11-19: home GPU only after the pods
+`hub_view`: when a pod controller is configured, "Automatic" jobs start with the on-demand pool (`rented`); `_reroute` widens to any connected worker (the home GPU) only when the pods are not available, then the server. The two env restrictions on the production service (`CLIPCROW_WORKER_DISABLED`, `CLIPCROW_GPU_FALLBACK`) were removed. The home worker image still has to carry the current render build to render.
