@@ -88,20 +88,28 @@ def beats_prompt(sentences: list[Sentence], links: list[str], *, allow_images: b
              + ('"screenshot" (show a page from the link list), ' if links else "")
              + ('"image" (a generated picture), ' if allow_images else "") + '"none"')
     picture_rule = ("- picture: for kind picture only: the number of the picture (as in [P1]) that matches what the sentence talks about. "
-                    "LOOK at each picture first. Use a picture only where it really shows what is being said, at most once each, and leave "
-                    "a picture unused rather than force it. Use only the pictures given.\n" if pictures else "")
+                    "LOOK at each picture first (read the text in it). The person gave you these pictures to be shown: use EVERY picture, each at most once, "
+                    "at the sentence where the speaker talks about what it shows; leave one unused only if it plainly shows nothing the speaker talks about. "
+                    "Use only the pictures given.\n"
+                    "- cue: for kind picture only: ONE word copied exactly from that sentence, the word at which the picture should appear (the one naming what it shows).\n"
+                    "- crop: for kind picture only: the part of the picture that matters, as [x0, y0, x1, y1], fractions from 0 to 1 of its width and height "
+                    "(0,0 is the top left). A screenshot of a page or phone usually has menus, ads and other articles: crop to the headline, paragraph, table or figure "
+                    "being discussed, big enough to read on a phone (not more than about a third of a tall page). null when the whole picture matters (a photo, a chart).\n"
+                    "- read_words: for kind picture only: how many words a viewer has to read in that part (0 for a photo with no text).\n" if pictures else "")
     image_rule = ("- prompt: for kind image only: one plain sentence describing the picture (a scene, object or diagram "
                   "idea). No real people, no brands, no text in the picture, at most 200 characters.\n" if allow_images else "")
     link_rule = ("- link: for kind screenshot only: the number of the link (as in [L1]) that matches what the sentence talks about. "
                  "Use only the links listed; never invent an address.\n" if links else "")
     links_block = f"\n<links>\n{shown}\n</links>\n" if links else ""
+    pic_pos = ("Any sentence may carry a picture, the first and the last too; several pictures may follow each other in one sentence. " if pictures else
+               "Skip the first and last sentence. ")
     return f"""This clip is an explainer. Choose up to {max_beats} moments where a picture would help the viewer \
 understand what is being said, and say what to show.
 
 Each beat is one sentence id (as in [S12]) plus:
 - kind: {kinds}. Use "none" when nothing should be shown.
 {picture_rule}{link_rule}{image_rule}- caption: at most 6 words naming what is shown, or empty.
-Prefer sentences that name a thing, a number or a place. Skip the first and last sentence. Fewer, better beats.
+Prefer sentences that name a thing, a number or a place. {pic_pos}Fewer, better beats.
 {language_instruction(language)}
 {links_block}
 <transcript>

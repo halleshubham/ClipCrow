@@ -20,6 +20,9 @@ from .transcript import Sentence
 MAX_BEATS = 3
 MIN_SHOW, MAX_SHOW = 2.0, 5.0
 GAP = 1.0
+READ_BASE, READ_WPS = 3.0, 3.0               # a picture of the person's own: seconds to take it in, plus one second per three words to read
+READ_MIN, READ_MAX = 4.5, 9.0
+LEAD_IN = 0.3                                # it appears a moment before the word it is about
 PROMPT_MIN, PROMPT_MAX = 8, 300
 
 
@@ -32,9 +35,40 @@ class BeatPlan:
     prompt: str
     caption: str
     picture: Optional[int] = None    # kind "upload": the index of the person's picture
+    crop: Optional[tuple] = None     # kind "upload": the part to show, (x0, y0, x1, y1) as fractions of the picture
 
 
-def thumbnail(path: str | Path, side: int = 1024) -> bytes:
+def clean_crop(raw) -> Optional[tuple]:
+    """The model's crop, or None when it is not a sane box (four numbers inside 0..1, not tiny); the code decides, never the model's say-so."""
+    try:
+        x0, y0, x1, y1 = (float(v) for v in raw)
+    except (TypeError, ValueError):
+        return None
+    if not all(0.0 <= v <= 1.0 for v in (x0, y0, x1, y1)) or x1 - x0 < 0.1 or y1 - y0 < 0.05 or (x1 - x0) * (y1 - y0) > 0.97:
+        return None
+    return (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3))
+
+
+def hold_seconds(read_words: int, to_sentence_end: float = 0.0) -> float:
+    """How long a picture of the person's own stays: time to read it, and at least until the sentence it is about has been said."""
+    words = max(0, min(int(read_words or 0), 120))
+    base = READ_BASE + words / READ_WPS if words else 5.0
+    return round(min(READ_MAX, max(READ_MIN, base, to_sentence_end + 0.8)), 2)
+
+
+def _cue_time(cue: str, sentence: Sentence, words) -> Optional[float]:
+    """The start of the word the model named, inside the sentence it chose (exact text, punctuation ignored); None when it is not there."""
+    c = (cue or "").strip().strip(".,;:!?\"'()[]।॥-–—")
+    if not c or not words:
+        return None
+    for i in range(max(0, sentence.first), min(len(words), sentence.last + 1)):
+        w = getattr(words[i], "w", "") or ""
+        if w.strip().strip(".,;:!?\"'()[]।॥-–—") == c:
+            return float(words[i].s)
+    return None
+
+
+def thumbnail(path: str | Path, side: int = 1568) -> bytes:
     """A JPEG of at most ``side`` pixels for the model to look at (the stored picture is what gets rendered)."""
     with tempfile.TemporaryDirectory() as tmp:
         dest = Path(tmp) / "t.jpg"
@@ -60,7 +94,7 @@ def _content(text: str, pictures: list[bytes]):
 
 def plan_beats(llm: LLM, sentences: list[Sentence], clip_start: float, clip_duration: float, links: list[str], *,
                allow_images: bool, language: str, hook_end: float, purpose: str,
-               max_beats: int = MAX_BEATS, pictures: Optional[list[bytes]] = None) -> tuple[list[BeatPlan], list[str]]:
+               max_beats: int = MAX_BEATS, pictures: Optional[list[bytes]] = None, words=None) -> tuple[list[BeatPlan], list[str]]:
     """``(beats, warnings)``. Never raises for a bad or refused answer: no beats is a fine result. ``pictures`` are JPEGs of the person's own
     pictures; the model looks at them and picks one by number for a sentence."""
     pictures = pictures or []
@@ -76,12 +110,19 @@ def plan_beats(llm: LLM, sentences: list[Sentence], clip_start: float, clip_dura
     except LLMError as e:
         return [], [f"picture choices skipped: {e}"]
     by_id = {s.id: s for s in sentences}
-    inner = {s.id for s in sentences[1:-1]}                 # the first and last sentence are left alone
+    inner = {s.id for s in sentences[1:-1]}                 # the first and last sentence are left alone (but not for a picture the person supplied)
+    every = {s.id for s in sentences}
     out: list[BeatPlan] = []
     used_links: set[int] = set()
     used_pictures: set[int] = set()
     busy_until = max(hook_end, 0.0) - GAP
-    for b in sorted((b for b in res.beats if b.sentence in inner), key=lambda b: by_id[b.sentence].start):
+    def anchor(b):
+        s = by_id[b.sentence]
+        t = _cue_time(b.cue, s, words) if b.kind == "picture" else None
+        return t if t is not None else s.start
+
+    allowed = lambda b: b.sentence in (every if b.kind == "picture" else inner)       # noqa: E731
+    for b in sorted((b for b in res.beats if allowed(b)), key=anchor):
         if len(out) >= max_beats:
             break
         s = by_id[b.sentence]
@@ -95,16 +136,28 @@ def plan_beats(llm: LLM, sentences: list[Sentence], clip_start: float, clip_dura
             kind = "ai_image" if len(prompt) >= PROMPT_MIN else None
         if kind is None:
             continue
-        t0 = max(s.start - clip_start, 0.0)
-        if t0 < busy_until + GAP:
-            continue
-        d = min(MAX_SHOW, max(MIN_SHOW, s.end - s.start), clip_duration - t0 - 0.3)
-        if d < 1.5:
-            continue
+        crop = None
+        if kind == "upload":                                    # the person's own: shown at the word it is about, for as long as it takes to read
+            at = anchor(b)
+            t0 = max(at - LEAD_IN - clip_start, 0.0)
+            t0 = max(t0, hook_end) if hook_end > 0 else t0
+            if t0 < busy_until + GAP:
+                t0 = busy_until + GAP                           # a picture still up: the next one follows it rather than being lost
+            d = min(hold_seconds(b.read_words, s.end - clip_start - t0), clip_duration - t0 - 0.3)
+            if d < 3.0:
+                continue
+            crop = clean_crop(b.crop)
+        else:
+            t0 = max(s.start - clip_start, 0.0)
+            if t0 < busy_until + GAP:
+                continue
+            d = min(MAX_SHOW, max(MIN_SHOW, s.end - s.start), clip_duration - t0 - 0.3)
+            if d < 1.5:
+                continue
         caption = clean_text(b.caption, 80)
         if caption and wrong_script(caption, language):
             caption = ""
-        out.append(BeatPlan(round(t0, 2), round(d, 2), kind, link, prompt, caption, picture))
+        out.append(BeatPlan(round(t0, 2), round(d, 2), kind, link, prompt, caption, picture, crop))
         if link is not None:
             used_links.add(link)
         if picture is not None:

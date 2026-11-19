@@ -204,6 +204,8 @@ The rules that came out of these are in `development-rules.md`; this file is the
 
 - **Banner vs speaker name** (job 8b13efc5b2c1 failed at clip 1 with HyperFrames' "two text blocks overlap"): the "watch the full video" banner and the speaker's lower-third both sit at 1440 px. The banner now starts after the name card has gone; and if the layout check still finds overlapping text, the clip is rendered without the banner and the name card (a note says so) instead of failing the job.
 
+- **Pictures of the person's own** (job 1f8793be3074 audit: a tall screenshot shown whole with black bars, 5 s, one of three used): the model now also gives a `crop` (the part that matters), a `cue` word (where it appears) and `read_words`; code validates them (`clean_crop`, `_cue_time`), holds the picture for reading time (3 s + 1 s per 3 words, 4.5-9 s, until its sentence is said), lets it start in the first or last sentence and follows a picture still up with the next, and warns when a picture was not placed. The render crops the file with ffmpeg and sizes the panel to the picture's shape (no black bars, centred in its zone); the panel's own caption is left out when the spoken captions are on. The thumbnail the model sees is 1568 px (was 1024) so a screenshot's text is readable to it.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.

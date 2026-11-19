@@ -323,9 +323,10 @@ def _add_pictures(clips: list[dict], picked: list[PlannedClip], tr: Transcript, 
         sents = [s for s in tr.sentences if s.start >= c.start - 0.01 and s.end <= c.end + 0.01]
         hook_end = 2.8 if any(o["kind"] == "hook" for o in d["overlays"]) else 0.5
         return plan_beats(llm, sents, c.start, c.duration, links, allow_images=opts.ai_images, language=lang,
-                          hook_end=hook_end, purpose=f"beats:{d['id']}", pictures=seen)
+                          hook_end=hook_end, purpose=f"beats:{d['id']}", pictures=seen, words=tr.words)
 
     assets: list[dict] = []
+    placed: set[int] = set()
     for (d, c), (plans, warnings) in zip(zip(clips, picked), _map(beats, list(zip(clips, picked)), opts.workers)):
         report["warnings"].extend(f"{d['id']}: {w}" for w in warnings)
         for k, b in enumerate(plans):
@@ -343,8 +344,17 @@ def _add_pictures(clips: list[dict], picked: list[PlannedClip], tr: Transcript, 
                 assets.append(Asset(id=aid, kind="image", origin="ai_image", ai="generated", prompt=b.prompt,
                                     alt=b.caption).model_dump())
                 placement = {"placement": "full", "motion": "zoom_in"}
+            if b.kind == "upload":
+                placed.add(b.picture)
+                if b.crop:
+                    placement = {**placement, "crop": list(b.crop)}
             d["overlays"].append({"kind": "media", "id": f"pic{k + 1}", "t_in": b.t, "duration": b.duration,
                                   "asset": aid, "caption": b.caption, **placement})
         if plans:
             d["ai"]["decided"] = [*d["ai"]["decided"], "picture choices"]
+    if seen:
+        left = [n + 1 for n in range(len(seen)) if n not in placed]
+        if left:                                                # say so: the person gave these to be used
+            report["warnings"].append(f"{len(left)} of your {len(seen)} pictures were not placed (picture {', '.join(map(str, left))}): "
+                                      "the model found no sentence where it fits, or there was no room between the others")
     return assets

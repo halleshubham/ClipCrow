@@ -55,6 +55,9 @@ class Beat(BaseModel):
     picture: Optional[int] = None   # for "picture": the number of the person's picture (as in P1)
     prompt: str = ""         # for "image": what to draw, plain description
     caption: str = ""        # at most a few words shown under the picture
+    cue: str = ""            # for "picture": one word copied from the sentence, where the picture should appear
+    crop: Optional[list[float]] = None   # for "picture": the part that matters, [x0, y0, x1, y1] as fractions (0 to 1) of the picture; None = all of it
+    read_words: int = 0      # for "picture": how many words a viewer has to read in that part (0 for a photo)
 
 
 class BeatsResult(BaseModel):

@@ -298,6 +298,17 @@ class MediaCard(_OverlayBase):
     height_px: int = Field(default=900, ge=200, le=1800)
     motion: Literal["none", "zoom_in", "pan_left", "pan_right"] = "zoom_in"
     caption: str = Field(default="", max_length=80)
+    crop: Optional[tuple[float, float, float, float]] = None     # the part of the picture shown, (x0, y0, x1, y1) as fractions of its width and height; None = all of it
+
+    @field_validator("crop")
+    @classmethod
+    def _crop(cls, v):
+        if v is None:
+            return v
+        x0, y0, x1, y1 = v
+        if not (0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0) or (x1 - x0) < 0.1 or (y1 - y0) < 0.05:
+            raise ValueError("a crop is (x0, y0, x1, y1) inside 0..1, at least 10% wide and 5% tall")
+        return v
 
 
 Overlay = Annotated[Union[TextBehind, LowerThird, StatPill, Hook, MediaCard], Field(discriminator="kind")]

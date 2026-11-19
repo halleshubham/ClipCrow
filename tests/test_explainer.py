@@ -150,7 +150,8 @@ def test_the_picture_is_shipped_in_the_project_and_shown_with_a_move_and_a_capti
     assert "media" in res.scenes
     assert (tmp_path / "p" / "assets" / "media" / "a1.png").read_bytes() == PNG
     html = (tmp_path / "p" / "compositions" / "media.html").read_text()
-    assert 'src="assets/media/a1.png"' in html and "तुमचे पैसे" in html and "scale: 1.12" in html and 'class="mc panel clip"' in html
+    assert 'src="assets/media/a1.png"' in html and "scale: 1.12" in html and 'class="mc panel clip"' in html
+    assert "तुमचे पैसे" not in html                                    # the spoken captions are on: the panel does not add a second line of text
     index = (tmp_path / "p" / "index.html").read_text()
     assert index.index('data-composition-id="media"') < index.index('data-composition-id="captions"')
 
@@ -492,3 +493,110 @@ def test_the_editor_can_remove_a_picture_and_an_unused_ai_image_stops_counting(t
     assert new.clips[0].ai.notes == ["edited by a person: pictures"]
     with pytest.raises(ValueError):
         apply_edit(edl, "c1", ClipEdit(drop_pictures=["../x"]), source_duration=600)
+
+
+# --- where a picture goes, how much of it, and for how long -------------------------------------------------------------
+
+from clipcrow.compile import panel_box
+from clipcrow.edl import MediaCard
+from clipcrow.planner.explainer import clean_crop, hold_seconds
+
+
+def card(**kw):
+    return MediaCard.model_validate({"kind": "media", "id": "p", "t_in": 1.0, "asset": "a", "placement": "panel", "top_px": 240, "height_px": 1000, **kw})
+
+
+def test_a_crop_must_be_a_real_box_inside_the_picture():
+    assert card(crop=[0.1, 0.2, 0.9, 0.5]).crop == (0.1, 0.2, 0.9, 0.5) and card().crop is None
+    for bad in ([0.5, 0.5, 0.4, 0.9], [-0.1, 0, 1, 1], [0, 0, 1.2, 1], [0, 0, 0.05, 1], [0, 0, 1, 0.02], [0, 0, 1]):
+        with pytest.raises(ValidationError):
+            card(crop=bad)
+    assert clean_crop([0, 0, 1, 1]) is None and clean_crop("nonsense") is None and clean_crop([0.1, 0.1, 0.9, 0.4]) == (0.1, 0.1, 0.9, 0.4)
+    assert clean_crop([0.2, 0.2, 0.1, 0.9]) is None and clean_crop([0, 0, float("nan"), 1]) is None
+
+
+def test_the_panel_takes_the_shape_of_the_picture_so_there_are_no_black_bars():
+    tall = panel_box(card(), (1170, 2532), 1080)                     # a phone screenshot: as tall as the zone allows, centred, narrow
+    assert tall[3] == 1000 and tall[2] < 960 and tall[0] == 60 + (960 - tall[2]) // 2
+    wide = panel_box(card(), (1920, 1080), 1080)                     # a landscape picture: the full width, shorter, centred in the zone
+    assert wide[2] == 960 and wide[3] < 1000 and wide[1] > 240
+    part = panel_box(card(crop=[0.0, 0.3, 1.0, 0.4]), (1170, 2532), 1080)     # a strip of the screenshot: wide and flat, so it is shown big
+    assert part[2] == 960 and part[3] < 300 and part[2] > tall[2]
+    assert panel_box(card(), None, 1080) == (60, 240, 960, 1000)     # a picture ffprobe cannot read keeps the old box
+    tiny = panel_box(card(), (100, 100), 1080)
+    assert tiny[2] <= 300 + 1                                        # never blown up more than three times
+
+
+def test_a_picture_stays_long_enough_to_read_and_until_its_sentence_is_said():
+    assert hold_seconds(0) == 5.0 and hold_seconds(30) == 9.0 > hold_seconds(9) >= 4.5
+    assert hold_seconds(6, to_sentence_end=8.0) == 8.8 and hold_seconds(500) == 9.0 and hold_seconds(-4) == 5.0
+
+
+class W:
+    def __init__(self, w, s, e):
+        self.w, self.s, self.e = w, s, e
+
+
+def pic_beat(sentence, picture, cue="", crop=None, read_words=0, caption=""):
+    return dict(sentence=sentence, kind="picture", link=None, prompt="", caption=caption, picture=picture, cue=cue, crop=crop, read_words=read_words)
+
+
+def test_pictures_appear_at_the_word_they_are_about_for_the_time_it_takes_to_read_and_use_every_sentence():
+    sents = sentences(n=4, length=10.0)                              # four long sentences, like the real clip
+    words = [W(f"w{i}", 100.0 + i * 2.0, 100.0 + i * 2.0 + 1.5) for i in range(20)]    # words 0-4 are sentence 0, 5-9 sentence 1, ...
+    sents = [Sentence(id=i, text=f"वाक्य {i}", start=100.0 + i * 10, end=110.0 + i * 10, first=i * 5, last=i * 5 + 4) for i in range(4)]
+    raw = [pic_beat(0, 0, cue="w2", crop=[0.1, 0.2, 0.9, 0.4], read_words=20), pic_beat(1, 1, cue="w7", read_words=0),
+           pic_beat(3, 2, cue="nonsense", read_words=60)]
+    llm = beats_llm(raw)
+    plans, warns = plan_beats(llm, sents, 100.0, 40.0, [], allow_images=False, language="mr", hook_end=2.8, purpose="b", pictures=[b"a", b"b", b"c"], words=words)
+    assert [p.picture for p in plans] == [0, 1, 2]                   # all three, the first sentence and the last included
+    first, second, third = plans
+    assert abs(first.t - (4.0 - 0.3)) < 0.01 and first.crop == (0.1, 0.2, 0.9, 0.4)      # at the word "w2" (clip time 4.0), a moment early
+    assert first.duration == hold_seconds(20, 10.0 - first.t)       # time to read 20 words, and until its sentence is said
+    assert abs(second.t - (14.0 - 0.3)) < 0.01 and second.duration >= 4.5
+    assert third.t == 30.0 and third.duration == 9.0 or third.duration <= 9.0     # an unknown cue word: the start of its sentence
+    for a, b in zip(plans, plans[1:]):
+        assert b.t >= a.t + a.duration + 1.0 - 1e-9                  # never two at once
+    prompt = llm.calls[0][1][-1]["text"]                             # the instructions come after the labelled pictures
+    assert "EVERY picture" in prompt and "crop:" in prompt and "cue:" in prompt and "read_words:" in prompt and "first and the last too" in prompt
+
+
+def test_a_bad_crop_from_the_model_is_ignored_not_trusted():
+    sents = [Sentence(id=i, text=f"वाक्य {i}", start=100.0 + i * 10, end=110.0 + i * 10, first=i * 5, last=i * 5 + 4) for i in range(4)]
+    plans, _ = plan_beats(beats_llm([pic_beat(1, 0, crop=[0.9, 0.9, 0.1, 0.1])]), sents, 100.0, 40.0, [], allow_images=False, language="mr",
+                          hook_end=2.8, purpose="b", pictures=[b"a"], words=[])
+    assert len(plans) == 1 and plans[0].crop is None
+
+
+def _png(path: Path, size="400x800"):
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc=s={size}:d=1", "-frames:v", "1", str(path)], check=True)
+
+
+def test_a_crop_is_cut_out_of_the_picture_with_ffmpeg_and_a_broken_file_is_not_a_crash(tmp_path):
+    from clipcrow.compile import _crop_picture, _image_size
+    src = tmp_path / "s.png"
+    _png(src)
+    assert _image_size(src) == (400, 800) and _image_size(tmp_path / "missing.png") is None
+    bad = tmp_path / "bad.png"
+    bad.write_bytes(b"not a picture")
+    assert _image_size(bad) is None
+    _crop_picture(src, tmp_path / "c.png", (0.0, 0.25, 1.0, 0.5), (400, 800))
+    assert _image_size(tmp_path / "c.png") == (400, 200)
+    _crop_picture(src, tmp_path / "e.png", (0.9, 0.9, 1.0, 1.0), (400, 800))          # at the very edge: still inside the picture
+    assert _image_size(tmp_path / "e.png") is not None
+    with pytest.raises(EDLError):
+        _crop_picture(bad, tmp_path / "x.png", (0.0, 0.0, 0.5, 0.5), (400, 800))
+
+
+def test_a_cropped_picture_is_shipped_cropped_and_its_panel_fits_it(tmp_path, gsap, fonts_available):
+    from clipcrow.compile import _image_size
+    lavfi(tmp_path / "src.mp4")
+    (tmp_path / "out" / "assets").mkdir(parents=True)
+    _png(tmp_path / "out" / "assets" / "p1.png")
+    edl = explainer_edl(placement="panel", motion="none", crop=[0.0, 0.25, 1.0, 0.5])
+    edl = edl.model_copy(update={"source": edl.source.model_copy(update={"duration": 3, "width": 1280, "height": 720}),
+                                 "clips": [edl.clips[0].model_copy(update={"source_out": 2.0})]})
+    compile_clip(edl, edl.clips[0], tmp_path / "p", media_root=tmp_path, gsap_js=gsap, asset_root=tmp_path / "out")
+    assert _image_size(tmp_path / "p" / "assets" / "media" / "a1.png") == (400, 200)
+    html = (tmp_path / "p" / "compositions" / "media.html").read_text()
+    assert "left:60px;top:410px;width:960px;height:480px" in html

@@ -330,8 +330,47 @@ def _cards_scene(items, family: str, face: str, w: int, h: int) -> str:
 MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
-def _media_scene(items, files: dict[str, str], stack: str, face: str, w: int, h: int) -> str:
-    """Pictures shown over the footage: a full-frame cutaway or a rounded panel, with a slow move and a fade."""
+def _image_size(path: Path) -> Optional[tuple[int, int]]:
+    """(width, height) of a picture from ffprobe; None when it cannot be read (the file is never trusted)."""
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", str(path)],
+                           capture_output=True, text=True, timeout=30)
+        a, b = r.stdout.strip().split(",")[:2]
+        return (int(a), int(b)) if int(a) > 0 and int(b) > 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def panel_box(o: MediaCard, size: Optional[tuple[int, int]], w: int) -> tuple[int, int, int, int]:
+    """(left, top, width, height) of a picture's panel: the picture's own shape (its crop, when it has one) fitted into the zone the card gives it and
+    centred there, so there are no black bars and a tall screenshot shows as large as the zone allows."""
+    zone_w, zone_h = w - 120, o.height_px
+    if size is None:
+        return 60, o.top_px, zone_w, zone_h
+    iw, ih = size
+    if o.crop:
+        x0, y0, x1, y1 = o.crop
+        iw, ih = max(1, round(iw * (x1 - x0))), max(1, round(ih * (y1 - y0)))
+    scale = min(zone_w / iw, zone_h / ih, 3.0)                  # not blown up beyond 3x: it would only be blur
+    pw, ph = round(iw * scale), round(ih * scale)
+    return 60 + (zone_w - pw) // 2, o.top_px + (zone_h - ph) // 2, pw, ph
+
+
+def _crop_picture(src: Path, dest: Path, crop: tuple[float, float, float, float], size: tuple[int, int]) -> None:
+    """The cropped part of a picture as its own PNG (ffmpeg; the numbers were validated, never taken as text)."""
+    x0, y0, x1, y1 = crop
+    iw, ih = size
+    cw, ch = max(1, round(iw * (x1 - x0))), max(1, round(ih * (y1 - y0)))
+    cx, cy = min(iw - cw, round(iw * x0)), min(ih - ch, round(ih * y0))
+    r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vf", f"crop={cw}:{ch}:{cx}:{cy}", "-frames:v", "1", str(dest)],
+                       capture_output=True, text=True, timeout=60)
+    if r.returncode != 0 or not dest.is_file():
+        raise EDLError("a picture could not be cropped")
+
+
+def _media_scene(items, files: dict[str, str], stack: str, face: str, w: int, h: int, boxes: Optional[dict] = None, captions_on: bool = False) -> str:
+    """Pictures shown over the footage: a full-frame cutaway or a rounded panel, with a slow move and a fade. The panel's own caption is left out when the
+    spoken captions are on (two lines of text one above the other)."""
     css = f"""    {face}
     .mc {{ position: absolute; overflow: hidden; opacity: 0; background: #000; }}
     .mc.full {{ left: 0; top: 0; width: {w}px; height: {h}px; }}
@@ -343,8 +382,9 @@ def _media_scene(items, files: dict[str, str], stack: str, face: str, w: int, h:
       background: linear-gradient(transparent, rgba(0,0,0,.72)); }}"""
     body, script = [], []
     for o, t0, d in items:
-        geom = f"top:{o.top_px}px;height:{o.height_px}px" if o.placement == "panel" else ""
-        cap = f'<div class="cap">{_esc(o.caption)}</div>' if o.caption else ""
+        box = (boxes or {}).get(o.id)
+        geom = (f"left:{box[0]}px;top:{box[1]}px;width:{box[2]}px;height:{box[3]}px" if box else f"top:{o.top_px}px;height:{o.height_px}px") if o.placement == "panel" else ""
+        cap = f'<div class="cap">{_esc(o.caption)}</div>' if o.caption and not captions_on else ""
         body.append(f'    <div id="m-{o.id}" class="mc {o.placement} clip" data-start="{_num(t0)}" '
                     f'data-duration="{_num(d)}" style="{geom}"><img id="mi-{o.id}" src="{files[o.asset]}" alt="">{cap}</div>')
         move = {"zoom_in": '{ scale: 1.12 }', "pan_left": '{ x: -70, scale: 1.1 }', "pan_right": '{ x: 70, scale: 1.1 }'}.get(o.motion)
@@ -577,6 +617,7 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
     behind = [x for x in overlays if isinstance(x[0], TextBehind)]
     cards = [x for x in overlays if isinstance(x[0], (LowerThird, StatPill, Hook))]
     files: dict[str, str] = {}
+    boxes: dict = {}
     if media:
         by_id = {x.id: x for x in edl.assets}
         (project / "assets" / "media").mkdir(parents=True, exist_ok=True)
@@ -590,11 +631,17 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
             if suffix not in MEDIA_SUFFIXES:
                 raise EDLError(f"asset {o.asset!r}: {suffix or 'no extension'} is not a supported picture type")
             files[o.asset] = f"assets/media/{o.asset}{suffix}"
+            src = _inside(Path(asset_root) if asset_root else media_root, asset.uri)
+            size = _image_size(src) if o.placement == "panel" else None
+            boxes[o.id] = panel_box(o, size, w) if o.placement == "panel" else None
             if prepare:
-                shutil.copyfile(_inside(Path(asset_root) if asset_root else media_root, asset.uri), project / files[o.asset])
+                if o.crop and size and o.placement == "panel":
+                    _crop_picture(src, project / files[o.asset], o.crop, size)
+                else:
+                    shutil.copyfile(src, project / files[o.asset])
     scenes: list[str] = []
     if media:
-        (project / "compositions" / "media.html").write_text(_media_scene(media, files, stack, face, w, h), "utf-8")
+        (project / "compositions" / "media.html").write_text(_media_scene(media, files, stack, face, w, h, boxes, bool(clip.captions.enabled)), "utf-8")
         scenes.append("media")
     if behind:
         (project / "compositions" / "behind.html").write_text(_behind_scene(behind, stack, face, w, h), "utf-8")
