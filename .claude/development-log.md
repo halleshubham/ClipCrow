@@ -228,3 +228,6 @@ AI images stay `full`; explicit `full`/`panel` are unchanged. Render code change
 
 ## 2026-11-19: New job form reorganised
 The options used every time (language, clips, reel length min and max, people in the video, brand toggles for logo, cover title, full-video banner and ending video, raw-recording clean-up) are always visible; **More options** keeps the rare ones. New parts in `app.js`: `fieldLabel`, `segmented` (hidden input, radiogroup, arrow keys), `chip` (toggle pill with its "i"). Selects now show a chevron on a raised face (the old `select` rule lost to the `:is(input, select)` rule on specificity and had never drawn its chevron). The GPU choice and the rough cost sit beside Generate clips. Icons added (`wallet cpu timer megaphone user-round columns-2 hash indian-rupee`). `.layout` uses `minmax(0, 1fr)` on phones so a wide child cannot push the page sideways.
+
+## 2026-11-19: per-user SocioBird scoped
+`docs/sociobird-per-user-task.md`: each account connects its own SocioBird workspace (OAuth authorisation code against a static app owned by the operator's workspace, or a pasted API key), the token stored encrypted, a per-user client in `need_publishing()`. Read from the SocioBird source (no refresh token, no expiry, the approver's own workspace is what a token acts for); step 0 is one real round trip with a second account. Nothing built.
