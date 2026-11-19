@@ -55,6 +55,9 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
    - *Landing page:* the marketing page is served by the app at `/landing/` (`clipcrow/service/static/landing/`, one HTML file and one stylesheet, no script, no third-party request).
      To make it the front door, point the public domain's `/` at `/landing/` in your proxy (Cloudflare redirect or Coolify), or host the folder on Cloudflare Pages: copy
      `landing/`, `icons.css`, `logo.png`, `logo-mark.png`, `icon-512.png` and the favicons beside it and change the "Start free" links from `/#/` to the app's address.
+   - *Operator settings (no redeploy):* about 35 settings can be changed on the Operator page (`#/admin/settings`) and apply at once: pricing (price, minimum charge, free minutes, recharge limits, two bonus tiers, plan name), the margin target and cost rates,
+     sign-up (open or closed, a daily cap, blocked mail domains, extra operators), per-person limits and the upload size, how long files are kept, GPU behaviour (fallback, workers switched off, pickup wait, the pod's idle time and daily spend), the alert address, the planning model and framing threads.
+     They are saved in `<data>/settings.json` (mode 600) and beat the environment and `plans.json`; Reset puts one back to what the server started with. Secrets are never settings: the page lists which outside services are connected, yes or no, never a value.
    - *Operating:* `CLIPCROW_ADMINS` (comma-separated emails that see the Operator page), `CLIPCROW_ALERT_EMAIL` (who gets alert mails: disk nearly full, jobs stuck,
      failures, GPU tasks nobody can take, mail failing), per-person cost limits `CLIPCROW_MAX_ACTIVE_JOBS` (3), `CLIPCROW_MAX_JOBS_PER_DAY` (30),
      `CLIPCROW_MAX_JOB_MINUTES` (240), `CLIPCROW_MAX_SIGNUPS_PER_DAY` (200; 0 turns a limit off), `CLIPCROW_BLOCKED_EMAIL_DOMAINS` (added to the built-in

@@ -294,6 +294,74 @@ function moneyCard(m) {
     rows.length ? el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['Job', 'Person', 'Video min → charged', 'Charged', 'Cost', 'Markup'].map((h) => el('th', { text: h })))), el('tbody', {}, rows))) : null);
 }
 
+const SETTING_ICONS = { pricing: 'wallet', economics: 'gauge', access: 'users', limits: 'timer', retention: 'clock', gpu: 'cpu', alerts: 'send', ai: 'sparkles' };
+
+async function adminSettingsView() {
+  const d = await api('/admin/settings');
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const saved = el('span', { class: 'small muted', role: 'status' });
+  const fields = new Map();                                              // key -> { read(), original, input }
+  const same = (a, b) => String(a) === String(b);
+  const mark = () => {
+    const n = [...fields.values()].filter((f) => !same(f.read(), f.original)).length;
+    save.disabled = n === 0;
+    save.textContent = n ? `Save ${n} change${n > 1 ? 's' : ''}` : 'Save changes';
+  };
+  const field = (s) => {
+    const id = `set-${s.key}`;
+    let input, read;
+    if (s.kind === 'bool') {
+      input = el('input', { type: 'checkbox', id, checked: !!s.value });
+      read = () => input.checked;
+    } else if (s.kind === 'enum') {
+      input = el('select', { id }, s.choices.map((c) => el('option', { value: c, text: c, selected: c === s.value })));
+      read = () => input.value;
+    } else if (s.kind === 'json') {
+      input = el('textarea', { id, rows: '3', spellcheck: 'false' });
+      input.value = s.value;
+      read = () => input.value;
+    } else if (s.kind === 'text') {
+      input = el('input', { id, type: 'text', value: s.value, autocomplete: 'off', spellcheck: 'false' });
+      read = () => input.value;
+    } else {
+      input = el('input', { id, type: 'number', value: String(s.value), inputmode: 'decimal', step: s.kind === 'int' ? '1' : 'any', min: s.min == null ? null : String(s.min), max: s.max == null ? null : String(s.max) });
+      read = () => input.value;
+    }
+    fields.set(s.key, { read, original: s.kind === 'bool' ? !!s.value : s.value, input });
+    input.addEventListener('input', mark); input.addEventListener('change', mark);
+    const meta = el('div', { class: 'hint', 'data-keep': '1' },
+      `Default ${s.kind === 'bool' ? (s.default ? 'on' : 'off') : (s.default === '' ? 'empty' : s.default)}${s.unit ? ' ' + s.unit : ''}`,
+      s.source === 'operator' ? [' · set here · ', el('button', { class: 'linkbtn', type: 'button', text: 'Reset', onclick: async () => {
+        try { await api(`/admin/settings/${s.key}`, { method: 'DELETE' }); await adminSettingsView(); } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+      } })] : '');
+    if (s.kind === 'bool') return el('div', {}, el('label', { class: 'check', for: id }, input, el('span', {}, el('strong', { text: s.label }), el('br'), el('span', { class: 'muted', text: s.help }))), meta);
+    return el('div', {}, fieldLabel(SETTING_ICONS[s.group] || 'sliders-horizontal', s.unit ? `${s.label} (${s.unit})` : s.label, id, s.help), input, meta);
+  };
+  const save = el('button', { class: 'btn primary', type: 'button', text: 'Save changes', disabled: true });
+  save.addEventListener('click', async () => {
+    err.hidden = true; saved.textContent = '';
+    const values = {};
+    for (const [key, f] of fields) if (!same(f.read(), f.original)) values[key] = f.read();
+    save.disabled = true;
+    try {
+      await api('/admin/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) });
+      await adminSettingsView();
+    } catch (ex) { err.textContent = ex.message; err.hidden = false; mark(); }
+  });
+  const groups = d.groups.map((g) => el('section', { class: 'card stack' }, el('h2', { text: g.title }), el('p', { class: 'small muted', style: { margin: 0 }, text: g.about }),
+    el('div', { class: 'grid2', style: { marginTop: 0 } }, d.settings.filter((x) => x.group === g.id).map(field))));
+  const services = el('section', { class: 'card stack' }, el('h2', { text: 'Connected services' }),
+    el('p', { class: 'small muted', style: { margin: 0 }, text: 'Keys and tokens stay in the environment and are never shown here: only whether each is set.' }),
+    el('ul', { class: 'plain' }, d.services.map((x) => el('li', {}, el('strong', { text: x.set ? '✓ ' : '✗ ' }), x.name, x.detail ? el('span', { class: 'muted', text: ` (${x.detail})` }) : null))));
+  const history = el('section', { class: 'card stack' }, el('h2', { text: 'Recent changes' }),
+    d.history.length ? el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['When (UTC)', 'By', 'Setting', 'From', 'To'].map((h) => el('th', { text: h })))),
+      el('tbody', {}, d.history.map((h) => el('tr', {}, el('td', { text: h.at }), el('td', { translate: 'no', text: h.by }), el('td', { text: h.key }), el('td', { text: String(h.old) }), el('td', { text: String(h.new) })))))) : el('p', { class: 'small muted', text: 'No changes yet.' }));
+  app.replaceChildren(el('div', { class: 'stack' }, el('h1', { text: 'Operator settings' }),
+    el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin', text: 'Back to the overview' })),
+    err, services, ...groups, history,
+    el('div', { class: 'actionbar' }, el('div', { class: 'abar' }, el('span', { class: 'small muted', text: 'Changes apply at once. Reset puts a setting back to what the server started with.' }), el('div', { class: 'grp' }, saved, save)))));
+}
+
 async function adminView() {
   const ov = await api('/admin/overview');
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
@@ -314,7 +382,7 @@ async function adminView() {
       el('td', {}, mins, el('button', { class: 'btn', type: 'button', text: 'Add', onclick: () => { const n = Number(mins.value); if (n) act(`/admin/users/${u.id}/credits`, { minutes: n }); } })),
       el('td', {}, el('button', { class: 'btn', type: 'button', text: u.disabled ? 'Enable' : 'Disable', onclick: () => { if (confirm(u.disabled ? 'Enable this account?' : 'Disable this account and sign it out?')) act(`/admin/users/${u.id}/disabled`, { disabled: !u.disabled }); } })));
   });
-  app.replaceChildren(el('div', { class: 'stack' }, el('h1', { text: 'Operator' }),
+  app.replaceChildren(el('div', { class: 'stack' }, el('h1', { text: 'Operator' }), el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin/settings', text: 'Settings' })),
     el('section', { class: 'card stack' }, el('h2', { text: 'Now' }),
       el('div', { class: 'statrow' },
         stat('jobs running', ov.jobs.running), stat('waiting', ov.jobs.queued), stat('failed in the last hour', ov.failed_last_hour, ov.failed_last_hour >= 5),
@@ -2154,6 +2222,7 @@ async function route() {
     else if (hash === '#/jobs') await jobsView();
     else if (hash === '#/account') await accountView();
     else if (hash === '#/admin' && state.config.admin) await adminView();
+    else if (hash === '#/admin/settings' && state.config.admin) await adminSettingsView();
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})\/share$/))) { const v = await shareView(m[1], m[2]); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/schedule(?:\?clips=((?:c\d{1,3},?){1,30}))?$/))) { const v = await scheduleView(m[1], m[2] || ''); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})$/))) { const v = await clipEditorView(m[1], m[2]); cleanup = v.cleanup; }

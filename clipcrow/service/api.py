@@ -9,6 +9,7 @@ to the browser never contain server internals; responses carry a strict Content-
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import os
 import hmac
@@ -40,13 +41,14 @@ from ..planner.source import probe_source
 from .accounts import AccountError, Accounts, CODE_MINUTES, CODE_WAIT_S, User
 from .sample import import_sample
 from .economics import economics as job_economics, suggest_min_minutes, suggest_price, target_markup
+from . import settings as opsettings
 from .ops import Limits, Snapshot, Watchdog, admin_emails, disk_snapshot, is_throwaway, job_refusal, jobs_since
 from .mailer import MailQueue, Mailer, Message, Outbox, billing_mail, job_done_mail, plain_mail, sign_in_code_mail, welcome_mail
 from .billing import BillingError, Razorpay, apply_event
 from .brand import MAX_LOGO_BYTES, MAX_MUSIC_BYTES, MAX_OUTRO_BYTES, TRACK_ID, BrandStore, track_path
 from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
-from .plans import Catalog, load_catalog
+from .plans import Payg, Catalog, load_catalog
 from .publish import LIMITS, PublishError, SocioBird, caption_html, settings_for, validate_when
 from ..buildid import render_build
 from .gpu_cost import estimate_numbers, load_rates, rate_lookup, summarise as gpu_summary
@@ -128,6 +130,10 @@ class CodeVerify(BaseModel):
 
 class ConfirmEmail(BaseModel):
     email: str                      # typed again to confirm deleting the account
+
+
+class SettingsBody(BaseModel):
+    values: dict
 
 
 class AdminCredits(BaseModel):
@@ -305,7 +311,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                     max_upload_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_UPLOAD_MB", "300") or 300) * 1024 * 1024),
                     max_direct_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_DIRECT_MB", "2048") or 2048) * 1024 * 1024),
                     storage=storage if os.environ.get("CLIPCROW_WORKER_DIRECT", "1") != "0" else None,
-                    rate_for=rate_lookup(load_rates()),
+                    rate_for=lambda name: rate_lookup(load_rates())(name),                    # read again each time, so a rate changed on the Operator page applies at once
                     on_task_end=lambda r: store.add_gpu_usage(r["job"], {k: r[k] for k in ("kind", "worker", "seconds", "ok", "rate")} | {"at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
                     if (store.dir(r["job"]) / "job.json").is_file() else None) if worker_token else None
     pod = None
@@ -604,8 +610,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                         mail_failures_hour=mailq.failures_last_hour() if mailq else 0)
 
     alert_to = (alert_email or os.environ.get("CLIPCROW_ALERT_EMAIL", "")).strip()
-    if start_runner and mailq and alert_to:
-        app.state.watchdog = Watchdog(snapshot, lambda subject, body: mailq.send(plain_mail(alert_to, subject, [body], "alert")))
+    if start_runner and mailq:                                         # runs always; it sends only while an alert address is set (it can be set on the Operator page)
+        app.state.watchdog = Watchdog(snapshot, lambda subject, body: mailq.send(plain_mail(alert_to, subject, [body], "alert")) if alert_to else None)
         app.state.watchdog.start()
 
     def job_cost(job_id: str) -> Optional[dict]:
@@ -624,6 +630,90 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     def price_per_minute() -> float:
         return catalog.payg.price_paise_per_minute / 100 if catalog.payg else 0.0
+
+    # --- operator settings: change them without a redeploy ------------------------------------------------------
+    env_admins = frozenset(admins)
+    ENV_BACKED = {"target_markup_percent": "CLIPCROW_MARGIN_PERCENT", "usd_inr": "CLIPCROW_USD_INR", "gpu_rates": "CLIPCROW_GPU_RATES",
+                  "blocked_email_domains": "CLIPCROW_BLOCKED_EMAIL_DOMAINS", "model": "CLIPCROW_MODEL", "framing_threads": "CLIPCROW_FRAMING_THREADS",
+                  "retention_days": "CLIPCROW_RETENTION_DAYS", "source_days": "CLIPCROW_SOURCE_DAYS"}
+    env_start = {name: os.environ.get(name) for name in ENV_BACKED.values()}                 # what the environment said at start, to go back to
+    g0, free0 = catalog.payg, catalog.plan("free")
+    tiers0 = sorted(g0.bonus_tiers) if g0 else []
+    from ..planner.llm import DEFAULT_MODEL
+
+    def envnum(name: str, fallback: float) -> float:
+        try:
+            return float(env_start.get(name) or fallback)
+        except ValueError:
+            return fallback
+    base_values = {
+        "price_per_minute": g0.price_paise_per_minute / 100 if g0 else 8.0, "min_job_minutes": g0.min_job_minutes if g0 else 3,
+        "signup_bonus_minutes": g0.signup_bonus_minutes if g0 else 0.0, "min_recharge": (g0.min_recharge_paise // 100) if g0 else 100,
+        "max_recharge": (g0.max_recharge_paise // 100) if g0 else 20000,
+        "tier1_from": tiers0[0][0] // 100 if len(tiers0) > 0 else 0, "tier1_percent": tiers0[0][1] if len(tiers0) > 0 else 0,
+        "tier2_from": tiers0[1][0] // 100 if len(tiers0) > 1 else 0, "tier2_percent": tiers0[1][1] if len(tiers0) > 1 else 0,
+        "plan_name": free0.name, "target_markup_percent": int(target_markup()), "usd_inr": envnum("CLIPCROW_USD_INR", 88.0),
+        "gpu_rates": env_start.get("CLIPCROW_GPU_RATES") or "", "signup_open": allow_signup, "signups_per_day": limits.signups_per_day,
+        "blocked_email_domains": env_start.get("CLIPCROW_BLOCKED_EMAIL_DOMAINS") or "", "extra_admins": "",
+        "max_active_jobs": limits.active_jobs, "max_jobs_per_day": limits.jobs_per_day, "max_job_minutes": limits.job_minutes, "max_upload_mb": max_upload_mb,
+        "retention_days": free0.retention_days if accounts else int(envnum("CLIPCROW_RETENTION_DAYS", 0)),
+        "source_days": free0.source_days if accounts else int(envnum("CLIPCROW_SOURCE_DAYS", 0)),
+        "gpu_fallback": "any" if (hub is None or hub.widen) else "strict", "disabled_workers": ", ".join(sorted(hub.disabled)) if hub is not None else "",
+        "worker_pickup_seconds": int(hub.pickup_seconds) if hub is not None else 120, "pod_idle_minutes": int(pod.idle_seconds / 60) if pod is not None else 10,
+        "pod_max_daily_inr": float(pod.max_daily) if pod is not None else 0.0, "alert_email": alert_to,
+        "model": env_start.get("CLIPCROW_MODEL") or DEFAULT_MODEL, "framing_threads": int(envnum("CLIPCROW_FRAMING_THREADS", min(4, os.cpu_count() or 2))),
+    }
+    opsettings.cross_check(base_values)
+    opset = opsettings.SettingsStore(Path(data_dir) / "settings.json", base_values)
+
+    def apply_settings() -> None:
+        """Put the current settings to work: the live objects change, so no restart is needed."""
+        nonlocal limits, allow_signup, admins, max_upload_mb, limit, alert_to
+        v, over = opset.values(), opset.overridden()
+        if catalog.payg is not None:
+            tiers = tuple(sorted((int(v[f"tier{n}_from"]) * 100, int(v[f"tier{n}_percent"])) for n in (1, 2) if v[f"tier{n}_from"] and v[f"tier{n}_percent"]))
+            catalog.payg = Payg(price_paise_per_minute=max(1, round(v["price_per_minute"] * 100)), min_job_minutes=int(v["min_job_minutes"]),
+                                min_recharge_paise=int(v["min_recharge"]) * 100, max_recharge_paise=int(v["max_recharge"]) * 100,
+                                signup_bonus_minutes=float(v["signup_bonus_minutes"]), bonus_tiers=tiers)
+        free = catalog.plan("free")
+        catalog.plans["free"] = dataclasses.replace(free, name=v["plan_name"] or free.name, retention_days=int(v["retention_days"]), source_days=int(v["source_days"]))
+        limits = Limits(active_jobs=int(v["max_active_jobs"]), jobs_per_day=int(v["max_jobs_per_day"]), job_minutes=int(v["max_job_minutes"]),
+                        signups_per_day=int(v["signups_per_day"]))
+        allow_signup = bool(v["signup_open"])
+        admins = env_admins | frozenset(x.strip().lower() for x in v["extra_admins"].split(",") if x.strip())
+        max_upload_mb = int(v["max_upload_mb"])
+        limit = max_upload_mb * 1024 * 1024
+        alert_to = v["alert_email"]
+        if hub is not None:
+            hub.widen = v["gpu_fallback"] != "strict"
+            hub.disabled = frozenset(x.strip() for x in v["disabled_workers"].split(",") if x.strip())
+            hub.pickup_seconds = float(v["worker_pickup_seconds"])
+        if pod is not None:
+            pod.idle_seconds = float(v["pod_idle_minutes"]) * 60
+            pod.max_daily = float(v["pod_max_daily_inr"])
+        for key, name in ENV_BACKED.items():                           # settings that other code reads from the environment each time it needs them
+            if key in over:
+                os.environ[name] = str(v[key])
+            elif env_start[name] is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = env_start[name]
+    apply_settings()
+
+    def services() -> list[dict]:
+        """Which outside services are connected: yes or no, never a value."""
+        env = os.environ
+        flag = lambda *names: all(bool(env.get(n)) for n in names)
+        return [{"name": "Email", "set": bool(mailer), "detail": mailer.name if mailer else "off"},
+                {"name": "AI planner (Anthropic)", "set": flag("ANTHROPIC_API_KEY")}, {"name": "Object storage (R2)", "set": storage is not None},
+                {"name": "Payments (Razorpay)", "set": bool(razorpay)}, {"name": "Posting (SocioBird)", "set": bool(sociobird)},
+                {"name": "GPU worker token", "set": bool(worker_token)}, {"name": "On-demand GPU (pod controller)", "set": pod is not None},
+                {"name": "Public address for links in mail", "set": bool(base_url), "detail": base_url},
+                {"name": "Plans file", "set": flag("CLIPCROW_PLANS")}, {"name": "Operators from the environment", "set": bool(env_admins), "detail": f"{len(env_admins)}"}]
+
+    def settings_view() -> dict:
+        return {"groups": [{"id": g, "title": t, "about": a} for g, t, a in opsettings.GROUPS], "settings": opset.view(), "services": services(),
+                "history": opset.history(), "accounts": bool(accounts), "billing": bool(razorpay)}
 
     def admin_only(request: Request) -> User:
         user = authed(request)
@@ -676,6 +766,30 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             return accounts.get(user_id)
         except KeyError:
             raise HTTPException(404, "No such account.")
+
+    @app.get("/api/admin/settings", dependencies=[Depends(admin_only)])
+    def admin_settings() -> dict:
+        return settings_view()
+
+    @app.put("/api/admin/settings")
+    def admin_settings_put(body: SettingsBody, admin: User = Depends(admin_only)) -> dict:
+        try:
+            opset.update(body.values, admin.id)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        apply_settings()
+        log.info("admin %s changed settings: %s", admin.id[:8], ", ".join(sorted(body.values))[:200])
+        return settings_view()
+
+    @app.delete("/api/admin/settings/{key}")
+    def admin_settings_reset(key: str, admin: User = Depends(admin_only)) -> dict:
+        try:
+            opset.reset(key, admin.id)
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+        apply_settings()
+        log.info("admin %s reset setting %s", admin.id[:8], key[:40])
+        return settings_view()
 
     @app.post("/api/admin/users/{user_id}/credits")
     def admin_credits(user_id: str, body: AdminCredits, request: Request, admin: User = Depends(admin_only)) -> dict:
