@@ -280,3 +280,21 @@ def test_a_jupyter_that_never_comes_up_is_reported_without_the_address():
     with pytest.raises(PodError) as e:
         jupyter_run("https://pod.invalid/lab?token=SECRET", "x", opener=opener, connect=None, sleep=lambda s: t.__setitem__(0, t[0] + s), clock=lambda: t[0], wait_ready=20)
     assert "did not come up" in str(e.value) and "SECRET" not in str(e.value) and "pod.invalid" not in str(e.value)
+
+
+def test_a_job_keeps_waiting_for_the_pods_worker_for_a_while_after_the_boot_command(tmp_path):
+    now, hub, ctl, booted, a = setup(tmp_path)
+    ctl.tick()
+    task = hub.submit("j", a, "mr", pool="rented")
+    ctl.tick()
+    assert ctl.state == "awake" and ctl.can_wake("transcribe")           # the worker is starting: do not send the job elsewhere yet
+    with hub._cond:
+        hub._reroute(task, now[0], lambda m: None)
+    assert task.pool == "rented"
+    now[0] += ctl.WORKER_GRACE + 1
+    assert not ctl.can_wake("transcribe")                                 # it never came: let another worker have it
+    seen = []
+    hub.poll("home-pc", 0.0, pool="home")
+    with hub._cond:
+        hub._reroute(task, now[0], seen.append)
+    assert task.pool == "" and seen

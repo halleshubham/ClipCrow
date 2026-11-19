@@ -128,6 +128,7 @@ def jupyter_run(web_url: str, command: str, timeout: float = 180.0, *, wait_read
 class PodController:
     RETRY_SECONDS = 40.0                            # wait this long before asking a provider with no free GPU again
     MAX_ATTEMPTS = 6                                # then the job goes on without it (the server does the work)
+    WORKER_GRACE = 150.0                            # after the boot command the worker needs a little while to connect: a job keeps waiting for it
 
     def __init__(self, client, hub, pod_id: str, *, hourly: float = 0.0, idle_seconds: float = 600.0, max_daily: float = 500.0,
                  fallbacks: tuple = (), boot: Optional[Callable[[str], None]] = None, can: tuple = CAN, clock: Callable[[], float] = time.monotonic,
@@ -139,6 +140,7 @@ class PodController:
         self.state = "unknown"                      # unknown | asleep | waking | awake
         self.error = ""
         self._awake_since = 0.0
+        self._booted_at = -1e9                          # when the pod's worker was last started
         self._retry_at, self._attempts = 0.0, 0         # a provider with no free GPU right now is asked again, a few times
         self._last_busy = clock()
         self._spent_day, self._spent = today(), 0.0
@@ -149,9 +151,10 @@ class PodController:
 
     # what the hub asks ------------------------------------------------------------------------------------------------
     def can_wake(self, kind: Optional[str], direct: bool = False) -> bool:
-        """A job may be queued for the pod while it sleeps (or is waking) as long as the day's budget is not spent."""
+        """A job may be queued for the pod while it sleeps, is waking, or has just woken and its worker has not connected yet (``WORKER_GRACE``)."""
         with self._lock:
-            return self.state in ("asleep", "waking") and (kind is None or kind in self.can) and not self._over_budget()
+            up = self.state in ("asleep", "waking") or (self.state == "awake" and self._clock() - self._booted_at < self.WORKER_GRACE)
+            return up and (kind is None or kind in self.can) and not self._over_budget()
 
     def _over_budget(self) -> bool:
         return self.max_daily > 0 and self.hourly > 0 and self._spent_total() >= self.max_daily
@@ -251,7 +254,7 @@ class PodController:
                         pass
                     continue
                 with self._lock:
-                    self.state, self._last_busy, self.error = "awake", self._clock(), ""
+                    self.state, self._last_busy, self.error, self._booted_at = "awake", self._clock(), "", self._clock()
                 log.info("the GPU pod is awake")
                 return
             with self._lock:
