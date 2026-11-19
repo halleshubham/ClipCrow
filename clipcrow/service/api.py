@@ -61,7 +61,7 @@ COOKIE = "clipcrow_token"
 SESSION_COOKIE = "clipcrow_session"
 LANGUAGES = [{"code": "", "name": "Auto-detect"}, {"code": "mr", "name": "Marathi"}, {"code": "hi", "name": "Hindi"},
              {"code": "en", "name": "English"}]
-CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; "
+CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; "
        "connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 
 
@@ -246,7 +246,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     if mirror:
         runner.on_change = mirror.submit
     # presigned downloads and playback come from the bucket's address: allow exactly that origin for media, nothing else
-    csp = CSP.replace("media-src 'self'", f"media-src 'self' {storage.origin}") if storage else CSP
+    csp = CSP.replace("media-src 'self' blob:", f"media-src 'self' blob: {storage.origin}") if storage else CSP
     direct = bool(storage) and os.environ.get("CLIPCROW_DIRECT_UPLOAD", "1") != "0"
     if direct:                                              # the browser PUTs file parts straight to the bucket
         csp = csp.replace("connect-src 'self'", f"connect-src 'self' {storage.origin}")

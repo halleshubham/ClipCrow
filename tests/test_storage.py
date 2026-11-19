@@ -216,9 +216,9 @@ def test_redirect_mode_sends_everyone_to_the_bucket_while_the_copy_is_identical_
 def test_the_content_security_policy_allows_the_bucket_origin_for_media_only_when_storage_is_on(tmp_path, storage):
     c, _ = make_app(tmp_path, storage)
     csp = c.get("/api/config").headers["content-security-policy"]
-    assert f"media-src 'self' {storage.origin};" in csp and "default-src 'none'" in csp and "script-src 'self';" in csp
+    assert f"media-src 'self' blob: {storage.origin};" in csp and "default-src 'none'" in csp and "script-src 'self';" in csp
     plain = TestClient(create_app(tmp_path / "plain", FakePipeline()))
-    assert "media-src 'self';" in plain.get("/api/config").headers["content-security-policy"]
+    assert "media-src 'self' blob:;" in plain.get("/api/config").headers["content-security-policy"]
 
 
 def test_other_people_never_get_a_link_to_my_clip(tmp_path, storage, video_bytes):

@@ -514,8 +514,6 @@ async function newJobView() {
   };
   fileInput.addEventListener('change', () => setFile(fileInput.files[0] || null));
   fileInput.addEventListener('change', readLength);
-  for (const id of ['clips', 'multi', 'gpu']) if ($(id)) $(id).addEventListener('change', estimateCost);
-  if ($('clips')) $('clips').addEventListener('input', estimateCost);
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
   drop.addEventListener('drop', (e) => {
@@ -680,6 +678,8 @@ async function newJobView() {
         el('span', { text: 'I own this video or have the rights to process it.' })),
       el('div', { class: 'row' }, status, cancelBtn, submit))));
   const $ = (id) => form.querySelector('#' + id);
+  for (const id of ['clips', 'multi', 'gpu']) if ($(id)) $(id).addEventListener('change', estimateCost);
+  if ($('clips')) $('clips').addEventListener('input', estimateCost);
   const lengthChanged = () => {
     const whole = !$('min_clip').value.trim() && !$('max_clip').value.trim() && !$('style').value;
     const styled = !!$('style').value;

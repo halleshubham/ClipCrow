@@ -87,7 +87,7 @@ def test_the_operator_can_turn_it_off(tmp_path, storage, monkeypatch):
     assert c.get("/api/config").json()["direct_upload"] is False
     assert start(c, b"x" * 10).status_code == 404
     csp = c.get("/api/config").headers["content-security-policy"]
-    assert "connect-src 'self';" in csp and f"media-src 'self' {storage.origin};" in csp      # playback from the bucket stays, uploads to it do not
+    assert "connect-src 'self';" in csp and f"media-src 'self' blob: {storage.origin};" in csp      # playback from the bucket stays, uploads to it do not
 
 
 def test_each_part_url_signs_its_exact_length_so_nobody_can_store_more_than_they_announced(tmp_path, storage, monkeypatch):
