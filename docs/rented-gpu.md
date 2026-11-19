@@ -38,6 +38,8 @@ Set these in the server's environment (Coolify), never in the repository:
 | `CLIPCROW_POD_MAX_DAILY_INR` | stop waking the pod once this much has been spent today (default 500; 0 = no cap) |
 | `CLIPCROW_POD_BOOT` | what to run on the pod after a resume (default `bash /workspace/post_resume.sh; bash /workspace/start_worker.sh`) |
 | `CLIPCROW_GPU_RATES` | JSON of INR an hour per worker name, e.g. `{"race-3090": 45, "home": 20}`; `"*"` is a price for every other machine, so the home GPU is costed the same way |
+| `CLIPCROW_WORKER_DISABLED` | comma-separated worker names the server refuses to give work to (e.g. `home-gpu`; its extra render slots too): it is not counted as online and takes no task, without touching the machine |
+| `CLIPCROW_GPU_FALLBACK` | `any` (default): a job whose chosen GPU cannot take a task lets any other connected worker have it before the server does it; `strict`: it never leaves the kind it chose (then the server) |
 | `CLIPCROW_WORKER_PICKUP_SECONDS` | raise to 300 or more: a job waits for the pod to wake (about a minute and a half) |
 
 How it works: a job that needs a GPU while the pod sleeps is queued for it; the controller resumes the pod, runs the boot command in the pod's Jupyter terminal (a resume

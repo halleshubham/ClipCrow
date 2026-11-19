@@ -258,6 +258,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     runner.brands = brands
     styles = StyleStore(data_dir)
     hub = WorkerHub(worker_token, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds, render_pin=HYPERFRAMES_VERSION, render_build=render_build(),
+                    disabled=frozenset(x.strip() for x in (os.environ.get("CLIPCROW_WORKER_DISABLED") or "").split(",") if x.strip()),
+                    widen=(os.environ.get("CLIPCROW_GPU_FALLBACK") or "any").strip().lower() != "strict",
                     max_upload_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_UPLOAD_MB", "300") or 300) * 1024 * 1024),
                     max_direct_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_DIRECT_MB", "2048") or 2048) * 1024 * 1024),
                     storage=storage if os.environ.get("CLIPCROW_WORKER_DIRECT", "1") != "0" else None,

@@ -1,4 +1,6 @@
 """The GPU time of a job: what each task kept a worker busy, and what that costs on a rented machine (INR)."""
+import time
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -273,3 +275,29 @@ def test_the_config_names_workers_that_run_older_render_code(tmp_path):
     c = TestClient(app)
     c.post("/api/worker/poll", json={"worker": "old-pc", "wait": 0, "can": ["transcribe", "render"], "pin": "x"}, headers={"Authorization": f"Bearer {TOKEN}"})
     assert c.get("/api/config").json()["gpu_worker"]["stale"] == ["old-pc"]
+
+
+def test_a_worker_can_be_switched_off_on_the_server_by_name(tmp_path):
+    h = WorkerHub(TOKEN, disabled=frozenset({"home-gpu"}), online_seconds=30.0, clock=time.monotonic)
+    a = tmp_path / "a.m4a"
+    a.write_bytes(b"x")
+    t = h.submit("j", a, "mr")
+    t0 = time.monotonic()
+    assert h.poll("home-gpu", 0.3, pool="home") is None and time.monotonic() - t0 >= 0.25      # it waits like any poll that found nothing
+    assert h.poll("home-gpu.r2", 0.0, pool="home") is None                                      # its extra render slots too
+    assert not h.online("transcribe") and t.state == "pending"                                    # not counted as online either
+    assert h.poll("race-3090", 0.0, pool="rented") is t
+
+
+def test_strict_fallback_keeps_a_job_on_the_kind_of_gpu_it_asked_for(tmp_path):
+    for widen, pool_after in ((True, ""), (False, "rented")):
+        h = WorkerHub(TOKEN, widen=widen, online_seconds=30.0)
+        h.standby = lambda kind, direct: True
+        h.why_unavailable = lambda: "the GPU provider answered 503 to resume-pod/"
+        h.poll("home-pc", 0.0, pool="home")
+        a = tmp_path / "a.m4a"
+        a.write_bytes(b"x")
+        t = h.submit("j", a, "mr", pool="rented")
+        with h._cond:
+            h._reroute(t, 0.0, lambda m: None)
+        assert t.pool == pool_after

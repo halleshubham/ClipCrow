@@ -218,7 +218,7 @@ def _machine(name: str) -> str:
 
 class WorkerHub:
     def __init__(self, token: str, *, pickup_seconds: float = 120.0, lease_seconds: float = 90.0,
-                 online_seconds: float = 60.0, render_pin: str = "", render_build: str = "", max_upload_bytes: int = 300 * 1024 * 1024,
+                 online_seconds: float = 60.0, render_pin: str = "", render_build: str = "", disabled: frozenset = frozenset(), widen: bool = True, max_upload_bytes: int = 300 * 1024 * 1024,
                  max_direct_bytes: int = 2 * 1024 ** 3, storage=None, clock: Callable[[], float] = time.monotonic,
                  on_task_end: Optional[Callable[[dict], None]] = None, rate_for: Optional[Callable[[str], float]] = None):
         if not token or len(token) < 16:
@@ -227,6 +227,8 @@ class WorkerHub:
         self.pickup_seconds, self.lease_seconds, self.online_seconds = pickup_seconds, lease_seconds, online_seconds
         self.render_pin, self.max_upload_bytes = render_pin, max_upload_bytes
         self.render_build = render_build                 # the render code version of this server; "" = do not check
+        self.disabled = frozenset(disabled)              # worker machine names this server refuses to give work to (CLIPCROW_WORKER_DISABLED)
+        self.widen = widen                               # False: a job that asked for one kind of GPU never goes to the other (CLIPCROW_GPU_FALLBACK=strict)
         self.max_direct_bytes, self.storage = max_direct_bytes, storage      # a finished clip may go to the bucket (storage) instead of through this server
         self._clock = clock
         self.on_task_end = on_task_end                  # called with {"job", "kind", "worker", "seconds", "ok", "rate"} when a worker finishes a task (the GPU time of a job)
@@ -389,7 +391,7 @@ class WorkerHub:
     def _reroute(self, task: Task, now: float, say: Callable[[str], None]) -> None:
         """The kind of machine the job asked for cannot take the task (the on-demand pod will not wake, no home worker is connected): let any other
         connected worker have it before the job falls back to the server. Called with the lock held."""
-        if not task.pool:
+        if not task.pool or not self.widen:
             return
         mine = self._online(task.kind, task.direct, task.pool)
         failing = task.pool == "rented" and bool(self.why_unavailable and self.why_unavailable())
@@ -411,6 +413,10 @@ class WorkerHub:
         """Hand the worker a pending task it can do (leased to it), holding the request open up to ``wait`` seconds. When a stronger worker that
         could take the task is also waiting, this one leaves it for a moment (``YIELD_SECONDS``) so the more capable machine gets it."""
         end = self._clock() + wait
+        if _machine(name) in self.disabled:               # switched off on the server: it gets nothing, is not counted as online, and is made to wait like a poll that found no work
+            with self._cond:
+                self._cond.wait(max(0.0, min(wait, end - self._clock())))
+            return None
         with self._cond:
             self._touch(name, device, model, tuple(can), pin, bool(direct), int(power), pool, build)
             self._waiting[name] = self._waiting.get(name, 0) + 1
