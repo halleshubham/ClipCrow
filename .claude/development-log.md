@@ -214,3 +214,11 @@ The rules that came out of these are in `development-rules.md`; this file is the
 - Per-stage timings in the job log; an audio-similarity repeat detector; the SraVaani/Whisper choice in the job log; SraVaani in the container image.
 - The live effect of the read-first judge on a new real recording (offline replays only so far).
 - Sound cues are not yet placed or mixed into renders.
+
+## 2026-11-19: pictures sit outside the face, or go full screen over a neon grid
+Uploaded pictures and page captures now carry `placement: "auto"` (the `MediaCard` closed shape gained that value). `compile.picture_layout` decides per
+picture from `layout.face_zone` (default zone when unknown) and the picture's own shape (crop applied): the free band above or below the face (never over
+it, above the captions) when the picture there is at least `NEON_MIN_RATIO` (0.7) of its full-screen size, else full screen: a dark navy frame with a
+drifting cyan/magenta neon grid (GSAP `y` tween on a oversized layer, no CSS transform) and the picture, glowing, fitted large above the captions.
+AI images stay `full`; explicit `full`/`panel` are unchanged. Render code changed, so `render_build()` changed: update the pods
+(`scripts/rented-gpu/update_pod.sh`) and the home worker image or they get no renders.

@@ -293,7 +293,7 @@ class MediaCard(_OverlayBase):
     file is an ``Asset`` of this EDL, so what is shown, and whether the AI made it, is on the record."""
     kind: Literal["media"] = "media"
     asset: SafeId
-    placement: Literal["full", "panel"] = "full"
+    placement: Literal["full", "panel", "auto"] = "full"          # auto: outside the face when that is big enough, else full screen over a neon grid (compile decides)
     top_px: int = Field(default=200, ge=0)
     height_px: int = Field(default=900, ge=200, le=1800)
     motion: Literal["none", "zoom_in", "pan_left", "pan_right"] = "zoom_in"

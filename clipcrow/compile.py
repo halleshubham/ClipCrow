@@ -356,6 +356,48 @@ def panel_box(o: MediaCard, size: Optional[tuple[int, int]], w: int) -> tuple[in
     return 60 + (zone_w - pw) // 2, o.top_px + (zone_h - ph) // 2, pw, ph
 
 
+DEFAULT_FACE = (0.25, 0.10, 0.75, 0.52)       # where the speaker usually is when the framing found no face zone
+NEON_MIN_RATIO = 0.7                           # a free band is used when the picture there is at least this share of its full-screen size
+
+
+def _fit(zone: tuple[int, int, int, int], size: Optional[tuple[int, int]], crop) -> tuple[float, tuple[int, int, int, int]]:
+    """The scale and the (left, top, width, height) of a picture fitted and centred in ``zone`` = (left, top, width, height)."""
+    zx, zy, zw, zh = zone
+    if size is None:
+        return 1.0, zone
+    iw, ih = size
+    if crop:
+        iw, ih = max(1, round(iw * (crop[2] - crop[0]))), max(1, round(ih * (crop[3] - crop[1])))
+    scale = min(zw / iw, zh / ih, 3.0)
+    pw, ph = round(iw * scale), round(ih * scale)
+    return scale, (zx + (zw - pw) // 2, zy + (zh - ph) // 2, pw, ph)
+
+
+def picture_layout(o: MediaCard, size: Optional[tuple[int, int]], w: int, h: int, face_zone, captions_on: bool) -> tuple[str, Optional[tuple[int, int, int, int]]]:
+    """How one picture is shown: ``("full", None)`` (cover the frame), ``("panel", box)`` (a card in the old fixed zone) or, for ``auto``, either
+    ``("band", box)`` in the free space above or below the face, or ``("neon", box)`` full screen over a neon grid when that space would show it much
+    smaller than the whole frame can. Pure numbers from the face zone and the picture's shape."""
+    if o.placement == "full":
+        return "full", None
+    if o.placement == "panel":
+        return "panel", panel_box(o, size, w)
+    fx0, fy0, fx1, fy1 = face_zone or DEFAULT_FACE
+    caps_top = 1380 if captions_on else 1700
+    zw = w - 120
+    whole = (60, 170, zw, caps_top - 30 - 170)
+    full_scale, full_box = _fit(whole, size, o.crop)
+    best = None
+    for top, bottom in ((230, round(fy0 * h) - 40), (round(fy1 * h) + 40, caps_top - 30)):
+        if bottom - top < 300:
+            continue
+        sc, box = _fit((60, top, zw, bottom - top), size, o.crop)
+        if best is None or sc > best[0]:
+            best = (sc, box)
+    if best and best[0] >= NEON_MIN_RATIO * full_scale:
+        return "band", best[1]
+    return "neon", full_box
+
+
 def _crop_picture(src: Path, dest: Path, crop: tuple[float, float, float, float], size: tuple[int, int]) -> None:
     """The cropped part of a picture as its own PNG (ffmpeg; the numbers were validated, never taken as text)."""
     x0, y0, x1, y1 = crop
@@ -375,18 +417,32 @@ def _media_scene(items, files: dict[str, str], stack: str, face: str, w: int, h:
     .mc {{ position: absolute; overflow: hidden; opacity: 0; background: #000; }}
     .mc.full {{ left: 0; top: 0; width: {w}px; height: {h}px; }}
     .mc.panel {{ left: 60px; width: {w - 120}px; border-radius: 36px; box-shadow: 0 18px 60px rgba(0,0,0,.55); }}
+    .mc.band {{ border-radius: 36px; box-shadow: 0 18px 60px rgba(0,0,0,.55); }}
+    .mc.neon {{ left: 0; top: 0; width: {w}px; height: {h}px; background: #070518; }}
+    .mc .grid {{ position: absolute; left: 0; top: -90px; width: {w}px; height: {h + 180}px; background-size: 90px 90px;
+      background-image: linear-gradient(rgba(0,240,255,.5) 2px, transparent 2px), linear-gradient(90deg, rgba(255,0,200,.42) 2px, transparent 2px); }}
+    .mc .glow {{ position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, rgba(7,5,24,0) 30%, rgba(7,5,24,.85) 100%); }}
+    .mc.neon img.pic {{ inset: auto; object-fit: contain; border-radius: 12px;
+      box-shadow: 0 0 0 3px #00f0ff, 0 0 36px 6px rgba(0,240,255,.55), 0 0 90px 14px rgba(255,0,200,.35); }}
     .mc img {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
-    .mc.full img {{ object-fit: cover; }} .mc.panel img {{ object-fit: contain; }}
+    .mc.full img {{ object-fit: cover; }} .mc.panel img, .mc.band img {{ object-fit: contain; }}
     .mc .cap {{ position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 36px; text-align: center;
       font-family: {stack}, sans-serif; font-weight: 700; font-size: 42px; line-height: 1.3; color: #fff;
       background: linear-gradient(transparent, rgba(0,0,0,.72)); }}"""
     body, script = [], []
     for o, t0, d in items:
-        box = (boxes or {}).get(o.id)
-        geom = (f"left:{box[0]}px;top:{box[1]}px;width:{box[2]}px;height:{box[3]}px" if box else f"top:{o.top_px}px;height:{o.height_px}px") if o.placement == "panel" else ""
-        cap = f'<div class="cap">{_esc(o.caption)}</div>' if o.caption and not captions_on else ""
-        body.append(f'    <div id="m-{o.id}" class="mc {o.placement} clip" data-start="{_num(t0)}" '
-                    f'data-duration="{_num(d)}" style="{geom}"><img id="mi-{o.id}" src="{files[o.asset]}" alt="">{cap}</div>')
+        mode, box = (boxes or {}).get(o.id) or (o.placement if o.placement != "auto" else "band", None)
+        g = f"left:{box[0]}px;top:{box[1]}px;width:{box[2]}px;height:{box[3]}px" if box else ""
+        geom = (g or f"top:{o.top_px}px;height:{o.height_px}px") if mode in ("panel", "band") else ""
+        cap = f'<div class="cap">{_esc(o.caption)}</div>' if o.caption and not captions_on and mode != "neon" else ""
+        if mode == "neon":
+            body.append(f'    <div id="m-{o.id}" class="mc neon clip" data-start="{_num(t0)}" data-duration="{_num(d)}">'
+                        f'<div id="mg-{o.id}" class="grid"></div><div class="glow"></div>'
+                        f'<img id="mi-{o.id}" class="pic" src="{files[o.asset]}" alt="" style="{g}"></div>')
+            script.append(f'    tl.fromTo("#mg-{o.id}", {{ y: 0 }}, {{ y: 90, duration: {_num(d)}, ease: "none" }}, {_num(t0)});')
+        else:
+            body.append(f'    <div id="m-{o.id}" class="mc {mode} clip" data-start="{_num(t0)}" '
+                        f'data-duration="{_num(d)}" style="{geom}"><img id="mi-{o.id}" src="{files[o.asset]}" alt="">{cap}</div>')
         move = {"zoom_in": '{ scale: 1.12 }', "pan_left": '{ x: -70, scale: 1.1 }', "pan_right": '{ x: 70, scale: 1.1 }'}.get(o.motion)
         script.append(f'    tl.fromTo("#m-{o.id}", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.25, ease: "power1.out" }}, {_num(t0)});')
         if move:
@@ -632,10 +688,10 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
                 raise EDLError(f"asset {o.asset!r}: {suffix or 'no extension'} is not a supported picture type")
             files[o.asset] = f"assets/media/{o.asset}{suffix}"
             src = _inside(Path(asset_root) if asset_root else media_root, asset.uri)
-            size = _image_size(src) if o.placement == "panel" else None
-            boxes[o.id] = panel_box(o, size, w) if o.placement == "panel" else None
+            size = _image_size(src) if o.placement != "full" else None
+            boxes[o.id] = picture_layout(o, size, w, h, clip.layout.face_zone, bool(clip.captions.enabled))
             if prepare:
-                if o.crop and size and o.placement == "panel":
+                if o.crop and size and o.placement != "full":
                     _crop_picture(src, project / files[o.asset], o.crop, size)
                 else:
                     shutil.copyfile(src, project / files[o.asset])

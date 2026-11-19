@@ -335,11 +335,11 @@ def _add_pictures(clips: list[dict], picked: list[PlannedClip], tr: Transcript, 
                 pid = opts.pictures[ok[b.picture]][0]
                 assets.append(Asset(id=aid, kind="image", origin="upload", ai="none", tool="user-picture", ref=pid,
                                     alt=b.caption).model_dump())
-                placement = {"placement": "panel", "top_px": 240, "height_px": 1000, "motion": "none"}
+                placement = {"placement": "auto", "motion": "none"}
             elif b.kind == "capture":
                 assets.append(Asset(id=aid, kind="image", origin="capture", ai="none",
                                     source_url=links[b.link], alt=b.caption).model_dump())
-                placement = {"placement": "panel", "top_px": 240, "height_px": 1000, "motion": "none"}
+                placement = {"placement": "auto", "motion": "none"}
             else:
                 assets.append(Asset(id=aid, kind="image", origin="ai_image", ai="generated", prompt=b.prompt,
                                     alt=b.caption).model_dump())

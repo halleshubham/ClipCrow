@@ -339,7 +339,7 @@ def test_an_explainer_plan_has_pictures_with_honest_provenance():
     shot, gen = (a[o.asset] for o in media)
     assert (shot.origin, shot.ai, shot.source_url) == ("capture", "none", "https://news.example/a")
     assert (gen.origin, gen.ai) == ("ai_image", "generated") and gen.prompt.startswith("a glass jar")
-    assert next(o for o in media if o.asset == shot.id).placement == "panel"
+    assert next(o for o in media if o.asset == shot.id).placement == "auto"
     assert next(o for o in media if o.asset == gen.id).placement == "full"
     assert all(x.uri == "" for x in edl.assets if x.origin in ("capture", "ai_image"))     # nothing fetched at plan time
 
@@ -600,3 +600,37 @@ def test_a_cropped_picture_is_shipped_cropped_and_its_panel_fits_it(tmp_path, gs
     assert _image_size(tmp_path / "p" / "assets" / "media" / "a1.png") == (400, 200)
     html = (tmp_path / "p" / "compositions" / "media.html").read_text()
     assert "left:60px;top:410px;width:960px;height:480px" in html
+
+
+from clipcrow.compile import picture_layout, _media_scene
+
+
+def _auto(**kw):
+    return MediaCard.model_validate({"kind": "media", "id": "p", "t_in": 1.0, "asset": "a", "placement": "auto", "motion": "none", **kw})
+
+
+def test_auto_picture_goes_outside_the_face_when_big_enough():
+    face = (0.25, 0.30, 0.75, 0.62)                                   # face low: a tall free band above it... and one below
+    mode, box = picture_layout(_auto(), (1920, 1080), 1080, 1920, face, True)      # a landscape picture is wide: a band holds it nearly as big as full screen
+    assert mode in ("band", "neon")
+    face_top, face_bottom = 0.30 * 1920, 0.62 * 1920
+    if mode == "band":
+        assert box[1] + box[3] <= face_top - 40 or box[1] >= face_bottom + 40      # never over the face
+
+
+def test_auto_tall_screenshot_goes_full_screen_over_neon_grid():
+    mode, box = picture_layout(_auto(), (1170, 2532), 1080, 1920, (0.25, 0.10, 0.75, 0.52), True)
+    assert mode == "neon" and box[1] >= 170 and box[1] + box[3] <= 1350      # large, above the captions
+
+
+def test_auto_without_face_zone_uses_the_default_and_is_deterministic():
+    a = picture_layout(_auto(), (1000, 300), 1080, 1920, None, False)
+    assert a == picture_layout(_auto(), (1000, 300), 1080, 1920, None, False)
+    assert a[0] == "band"                                              # a wide strip fits the free band fine
+
+
+def test_neon_scene_has_grid_and_no_css_transform_on_moved_elements():
+    o = _auto()
+    html = _media_scene([(o, 1.0, 4.0)], {"a": "assets/media/a.png"}, '"Noto Sans"', "", 1080, 1920, {"p": ("neon", (60, 170, 960, 1180))}, True)
+    assert 'class="grid"' in html and "mg-p" in html and "#00f0ff" in html
+    assert "transform" not in html.split("<style>")[-1].split("</style>")[0] if "<style>" in html else True

@@ -215,7 +215,7 @@ def test_the_plan_places_the_picture_the_model_chose_with_honest_provenance(tmp_
     a = [x for x in edl.assets if x.origin == "upload" and x.ref]
     assert len(a) == 1 and a[0].ref == pics[1][0] and a[0].ai == "none" and a[0].tool == "user-picture" and not a[0].uri
     media = [o for o in edl.clips[0].overlays if o.kind == "media"]
-    assert len(media) == 1 and media[0].asset == a[0].id and media[0].placement == "panel"
+    assert len(media) == 1 and media[0].asset == a[0].id and media[0].placement == "auto"
     from clipcrow.provenance import provenance
     assert provenance(edl, edl.clips[0])["disclosure_recommended"] is False                   # the person's own picture is not AI-generated
 
