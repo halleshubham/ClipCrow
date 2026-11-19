@@ -82,15 +82,20 @@ def test_the_daily_budget_stops_waking_and_pauses(tmp_path):
     assert ctl.client.calls.count("resume") == 1
 
 
-def test_a_failed_wake_is_reported_without_secrets_and_retried_after_a_look(tmp_path):
+def test_a_failed_wake_is_reported_to_the_job_without_secrets(tmp_path):
     now, hub, ctl, booted, a = setup(tmp_path)
-    ctl.client.resume = lambda pid: (_ for _ in ()).throw(PodError("the pod would not resume"))
+    ctl.client.resume = lambda pid: (_ for _ in ()).throw(PodError("the GPU provider answered 403 to resume-pod/"))
     ctl.tick()
-    hub.submit("j", a, "mr")
+    task = hub.submit("j", a, "mr", pool="rented")
     ctl.tick()
-    assert ctl.state == "unknown" and ctl.status()["error"] == "the pod would not resume"
-    ctl.tick()
-    assert ctl.state in ("asleep", "waking", "unknown")
+    assert ctl.state == "unknown" and "403" in ctl.status()["error"]
+    ctl.tick()                                                      # looks at the provider again; the reason stays until a wake works
+    assert "403" in ctl.status()["error"] and "403" in hub.why_unavailable()
+    now[0] += 1
+    import pytest as _pt
+    from clipcrow.service.workers import WorkerUnavailable
+    with _pt.raises(WorkerUnavailable, match="403"):
+        hub.wait(task, lambda: None)
 
 
 def test_a_pod_that_is_already_running_is_adopted(tmp_path):

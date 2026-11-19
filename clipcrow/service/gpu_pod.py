@@ -118,6 +118,7 @@ class PodController:
         self._lock = threading.RLock()
         self._stop = threading.Event()
         hub.standby = self.can_wake
+        hub.why_unavailable = lambda: self.error
 
     # what the hub asks ------------------------------------------------------------------------------------------------
     def can_wake(self, kind: Optional[str], direct: bool = False) -> bool:
@@ -168,7 +169,6 @@ class PodController:
                 except PodError as e:
                     self.error = str(e)
                     return
-                self.error = ""
                 if st == "running":
                     self.state, self._awake_since = "awake", self._clock()
                 elif st == "missing":
@@ -190,7 +190,7 @@ class PodController:
                 self._sleep()
 
     def _wake(self) -> None:
-        self.state, self._awake_since, self.error = "waking", self._clock(), ""
+        self.state, self._awake_since = "waking", self._clock()
         log.info("waking the GPU pod for a waiting job")
         if self.threaded:
             threading.Thread(target=self._wake_work, daemon=True).start()
@@ -203,11 +203,11 @@ class PodController:
             if self.boot is not None:
                 self.boot(url)
             with self._lock:
-                self.state, self._last_busy = "awake", self._clock()
+                self.state, self._last_busy, self.error = "awake", self._clock(), ""
             log.info("the GPU pod is awake")
         except Exception as e:                                         # noqa: BLE001
             with self._lock:
-                self.error = str(e) if isinstance(e, PodError) else f"waking the pod failed ({type(e).__name__})"
+                self.error = str(e) if isinstance(e, PodError) else f"waking the pod failed ({type(e).__name__}: {str(e)[:80]})"
                 self._spent += (self._clock() - self._awake_since) / 3600.0 * self.hourly
                 self.state, self._awake_since = "unknown", 0.0          # look at the provider again before trying anything else
             log.warning("waking the GPU pod failed: %s", self.error)

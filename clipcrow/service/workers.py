@@ -231,6 +231,7 @@ class WorkerHub:
         self._tasks: dict[str, Task] = {}
         self._seen: dict[str, _Seen] = {}
         self.standby: Optional[Callable[[Optional[str], bool], bool]] = None   # set by the pod controller: "a paused GPU can be woken for this kind"
+        self.why_unavailable: Optional[Callable[[], str]] = None               # set by the pod controller: why the last wake failed
         self._waiting: dict[str, int] = {}              # worker name -> how many of its polls are open right now (it is idle)
 
     YIELD_SECONDS = 4.0                                 # how long a weaker idle worker lets a stronger one have first pick
@@ -345,7 +346,7 @@ class WorkerHub:
                         if now - task.created > self.pickup_seconds:
                             raise WorkerUnavailable("no GPU worker picked the task up in time")
                         if not self._online(task.kind, task.direct, task.pool) and not (task.pool != "home" and self._standby(task.kind, task.direct)):
-                            raise WorkerUnavailable("the GPU worker went offline")
+                            raise WorkerUnavailable("the GPU worker went offline" + (f" ({self.why_unavailable()})" if self.why_unavailable and self.why_unavailable() else ""))
                     elif task.state == "leased":
                         if now > task.lease_until:
                             raise WorkerUnavailable("the GPU worker stopped answering")
