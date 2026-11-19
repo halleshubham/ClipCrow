@@ -192,6 +192,10 @@ The rules that came out of these are in `development-rules.md`; this file is the
   status (`scheduled`/`failed`) is kept in the job's `posts.json`. At most 30 reels x 6 channels, 60 days. The best times are NOT measured from anyone's audience. `tzdata` is a dependency (the slim image has no zone files).
 - `docs/roadmap.md`: the planning pass for the next months (first ten items, quick wins, what not to build, questions for the product owner).
 
+- **Rented GPU trial** (Race Engineering RTX 3090, see docs/rented-gpu.md and scripts/rented-gpu/): the worker stack (Node, ffmpeg, HyperFrames + Chrome, fonts, GSAP, venv, SraVaani) installs into `/workspace` in about 6 minutes,
+  survives pause/resume with `post_resume.sh`, and a production worker ("race-3090") ran against the server. Learned: only the built-in templates deploy via the API; a resume is a new container; the Ubuntu mirror is too slow (use a nearby one for Chrome's libraries);
+  Whisper large-v3 on Marathi is poor and SraVaani is right; WavLM merged two speakers into one voice again.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.
