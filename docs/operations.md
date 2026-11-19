@@ -10,6 +10,20 @@ Written 2026-11-19 with the first SaaS pass (email sign-in, limits, operator pag
 - **Money mails:** payment received, payment failed (the plan stays while Razorpay retries), subscription cancelled, subscription ended. Razorpay sends the tax receipt.
 - **Backups:** the database is copied once a day to `<data>/backups/` (seven kept). That protects against a damaged database, **not against losing the disk**: also snapshot the `/data` volume (Coolify or the host) and keep a copy off the machine. R2 holds finished clips when it is configured, not the database.
 
+## What a job costs to make (measured, 19 November 2026)
+From the production server's 37 finished jobs (`scripts/job_costs.py` re-runs this): the AI is almost all of it, at the model's price and Rs 88 to the dollar.
+| Recording | Reels | AI cost | Per minute of video |
+|---|---|---|---|
+| 20 min interview | 6 to 10 | Rs 66 to 79 | Rs 3.3 to 3.9 |
+| 30 min talk | 6 | Rs 95 | Rs 3.2 |
+| 53 min podcast (4 runs) | 10 | Rs 135 to 143 | Rs 2.6 |
+| 61 min | 10 | Rs 173 | Rs 2.9 |
+| 76 min (with the pod's GPU Rs 53) | 10 | Rs 194 + Rs 56 GPU | Rs 3.3 |
+| 87 min | 10 | Rs 210 | Rs 2.4 |
+| a 1 min raw take (23 runs, 0.3 to 1.7 min) | 1 | Rs 3 to 9 | about Rs 6 (a fixed Rs 4 to 6 per take, so short takes cost more a minute) |
+Long recordings cost about **Rs 2.4 to 3.9 a minute**; at Rs 10 a minute that is a 65 to 75% gross margin before Razorpay's fee (about 2.4%) and the server. A 1-minute raw take costs about Rs 5.5 to sell at Rs 10 (about 45%). A free 10-minute trial costs about Rs 17 to 35 in AI.
+Caveats: only 2 of the 37 jobs have metered GPU time (metering is recent; earlier jobs ran on the server's CPU or the home GPU, which costs electricity, not rupees on a bill); the server, storage and bandwidth are not counted; the raw takes tested were all under 2 minutes, so a 30-minute raw recording (the AI reads the whole transcript to judge retakes) will cost more than the table suggests: measure one before promising a price for long raw takes; my own test runs are in the data.
+
 ## Restore test (do it once before launch, then every quarter)
 1. Stop the service. 2. Copy `<data>/backups/clipcrow-YYYYMMDD.db` over `<data>/clipcrow.db` and delete `clipcrow.db-wal` and `clipcrow.db-shm`. 3. Start; sign in; confirm the people, plans and minutes are there. 4. Write the date and the result in the dev log. A restore loses accounts made, and minutes used, since the copy.
 
