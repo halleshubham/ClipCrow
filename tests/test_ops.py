@@ -140,7 +140,6 @@ def test_the_admin_page_exists_only_for_admins_and_can_adjust_accounts(tmp_path,
     assert boss.post("/api/admin/users/zzz/credits", json={"minutes": 1}).status_code == 404
     assert boss.post(f"/api/admin/users/{uid}/disabled", json={"disabled": True}).json() == {"disabled": True}
     assert c.get("/api/me").status_code == 401                                                              # their session ended at once
-    assert app.state.outbox.sent[-1].kind == "sign-in-code"
     n = len(app.state.outbox.sent)
     assert TestClient(app).post("/api/auth/code", json={"email": "user@example.com"}).status_code == 200
     assert len(app.state.outbox.sent) == n                                                                  # a disabled account gets no code

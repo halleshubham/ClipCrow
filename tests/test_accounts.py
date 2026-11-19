@@ -190,7 +190,8 @@ def test_the_plan_file_is_validated(tmp_path):
         ok.write_text(json.dumps(bad))
         with pytest.raises(ValueError):
             load_catalog(ok)
-    assert load_catalog().plans["free"].monthly_minutes == 30 and all(not p.price_label for p in load_catalog().plans.values())
+    default = load_catalog()                                                              # the built-in catalogue: one pay-as-you-go plan
+    assert list(default.plans) == ["free"] and default.plans["free"].monthly_minutes == 0 and default.payg is not None
 
 
 # --- the API ------------------------------------------------------------------------------------------------------
