@@ -90,3 +90,27 @@ def test_a_job_can_ask_for_the_banner_only_when_the_brand_has_a_name(tmp_path, v
     assert c.put("/api/brand", json={"banner_handle": "thet.marathi"}).status_code == 200
     job = wait(c, upload(c, video_bytes, banner="true").json()["id"])
     assert job["status"] == "done" and app.state.store.get(job["id"]).params.banner is True
+
+
+def test_the_banner_waits_for_the_speakers_name_which_sits_in_the_same_place(make_edl, tmp_path, gsap, fonts_available):
+    """A job with a speaker name AND the banner failed HyperFrames' layout check ("two text blocks overlap"): both sit at 1440 px."""
+    clip = {**CLIP, "banner": {"handle": "thet.marathi"},
+            "overlays": [{"kind": "lower_third", "id": "speaker", "t_in": 1.0, "duration": 3.0, "title": "प्रा. आशालता कांबळे", "subtitle": ""}]}
+    res = build(make_edl, tmp_path, gsap, clip)
+    html = (res.project_dir / "compositions" / "banner.html").read_text()
+    assert 'data-start="4.3"' in html
+    (tmp_path / "far").mkdir()
+    res = build(make_edl, tmp_path / "far", gsap, {**clip, "overlays": [{**clip["overlays"][0], "top_px": 700}]})   # a name elsewhere does not delay it
+    assert 'data-start="0' in (res.project_dir / "compositions" / "banner.html").read_text()
+
+
+def test_a_clip_whose_text_collides_can_be_rendered_without_the_banner_and_the_name_card(make_edl):
+    from clipcrow import pipeline
+    edl = make_edl(clips=[{**CLIP, "banner": {"handle": "thet.marathi"},
+                           "overlays": [{"kind": "lower_third", "id": "speaker", "t_in": 1.0, "duration": 3.0, "title": "प्रा. आशालता", "subtitle": ""},
+                                        {"kind": "stat_pill", "id": "s", "t_in": 5.0, "text": "₹1.25 कोटी"}]}])
+    clip = edl.clips[0]
+    assert pipeline._decor(clip)
+    new_edl, new = pipeline._without_decor(edl, clip, "note")
+    assert not new.banner.enabled and [o.kind for o in new.overlays] == ["stat_pill"]      # only the two that share the lower part of the frame go
+    assert new_edl.clips[0] is new and not pipeline._decor(new)

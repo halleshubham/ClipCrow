@@ -623,9 +623,13 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
     banner = clip.banner if clip.banner and clip.banner.enabled else None
     if banner:
         b0 = max(min(cover.duration_ms / 1000, duration) if cover else 0.0, duration - banner.seconds if banner.seconds else 0.0)
-        (project / "compositions" / "banner.html").write_text(
-            _banner_scene(banner, banner_words(banner, edl.language.primary), stack, face, b0, duration - b0, w, h), "utf-8")
-        scenes.append("banner")
+        for o, t0, d in cards:                                    # the speaker's name sits where the banner does: the banner waits until it has gone
+            if isinstance(o, LowerThird) and abs(o.top_px - banner.top_px) < 330:
+                b0 = max(b0, t0 + d + 0.3)
+        if duration - b0 >= 1.0:                                  # (else there is no room left for it)
+            (project / "compositions" / "banner.html").write_text(
+                _banner_scene(banner, banner_words(banner, edl.language.primary), stack, face, b0, duration - b0, w, h), "utf-8")
+            scenes.append("banner")
     tx = clip.transition if clip.transition and clip.transition.enabled else None
     tx_cuts = hard_cuts(clip) if tx else []
     if tx_cuts:

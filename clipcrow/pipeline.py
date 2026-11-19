@@ -26,6 +26,20 @@ def _without_matte(edl: EDL, clip, note: str):
     return edl.model_copy(update={"clips": clips, "assets": assets}), new
 
 
+DECOR_FALLBACK = "the banner and the speaker's name card were left out: the layout check found text overlapping ({why})"
+
+
+def _decor(clip) -> bool:
+    return bool((clip.banner and clip.banner.enabled) or any(o.kind == "lower_third" for o in clip.overlays))
+
+
+def _without_decor(edl: EDL, clip, note: str):
+    ai = clip.ai.model_copy(update={"notes": [*clip.ai.notes, note]}) if clip.ai else None
+    banner = clip.banner.model_copy(update={"enabled": False}) if clip.banner else None
+    new = clip.model_copy(update={"ai": ai, "banner": banner, "overlays": [o for o in clip.overlays if o.kind != "lower_third"]})
+    return edl.model_copy(update={"clips": [new if c.id == clip.id else c for c in edl.clips]}), new
+
+
 def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Path,
                 media_root: str | Path, gsap_js: str | Path | None = None,
                 workers: int | None = None, matte_device: str = "auto",
@@ -56,6 +70,13 @@ def render_clip(edl: EDL, clip_id: str, output: str | Path, *, workdir: str | Pa
     if run_check:
         report = render.check(project)
         problems = render.check_problems(report)
+        if problems and _decor(clip):                              # two pieces of text collide: a reel without the banner / name card beats no reel
+            note = DECOR_FALLBACK.format(why=problems[0][:90])
+            edl, clip = _without_decor(edl, clip, note)
+            compiled = compile_clip(edl, clip, project, media_root=media_root, gsap_js=gsap_js, matte_cache=cache, asset_root=asset_root)
+            compiled.warnings.append(note)
+            report = render.check(project)
+            problems = render.check_problems(report)
         if problems:
             raise EDLError("the compiled project failed HyperFrames check:\n  " + "\n  ".join(problems))
         compiled.warnings.extend(w for w in render.check_warnings(report) if w not in compiled.warnings)

@@ -202,6 +202,8 @@ The rules that came out of these are in `development-rules.md`; this file is the
   The New job page shows one rough cost (AI planning + the chosen GPU, + margin, `CLIPCROW_MARGIN_PERCENT`, default 50, USD→INR `CLIPCROW_USD_INR`) worked out in the browser from the video length and reel count.
   The numbers are assumptions, to be replaced with measured per-task times from `gpu_usage.json` and real token counts.
 
+- **Banner vs speaker name** (job 8b13efc5b2c1 failed at clip 1 with HyperFrames' "two text blocks overlap"): the "watch the full video" banner and the speaker's lower-third both sit at 1440 px. The banner now starts after the name card has gone; and if the layout check still finds overlapping text, the clip is rendered without the banner and the name card (a note says so) instead of failing the job.
+
 ## Open
 - `verify_cuts` problems are only reported; a fragment it names (an abandoned, restarted line) could be offered as a cut when the rules missed it.
 - Caption legibility over a white shirt (contrast 1.25-1.64:1); landscape outro letterboxed with black bars; ~2.8 s frozen/black seam before the outro; one clip at -22 LUFS vs another at -14.6.
