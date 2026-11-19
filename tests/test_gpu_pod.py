@@ -238,3 +238,45 @@ def test_the_pods_come_from_one_list_in_the_environment():
     assert c.pods == [("7401", 45.0), ("8123", 91.0)] and c.hourly == 45.0
     c = from_env(hub, {"RACE_GPU_API_KEY": "k" * 20, "RACE_POD_ID": "7401"})
     assert c.pods == [("7401", 45.0)]
+
+
+def test_a_just_resumed_pod_gets_time_for_its_jupyter_to_come_up():
+    import io, json as _json, urllib.error
+    from clipcrow.service.gpu_pod import jupyter_run
+    calls, naps = [], []
+
+    class Resp(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def opener(req, timeout=0):
+        calls.append(req.full_url)
+        if len(calls) < 3:
+            raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+        return Resp(_json.dumps({"name": "1"}).encode())
+
+    class WS:
+        def __init__(self): self.sent = []; self.q = []
+        def send(self, m):
+            self.sent.append(m)
+            import re as _re
+            tag = _re.search(r"D_([0-9a-f]{8})__", _json.loads(m)[1]).group(1)
+            self.q = [_json.dumps(["stdout", "hello\n__END_%s__ 0\n" % tag])]
+        def recv(self): return self.q.pop(0)
+        def close(self): pass
+    ws = WS()
+    out = jupyter_run("https://pod.invalid/lab?token=T", "echo hi", opener=opener, connect=lambda url, timeout: ws, sleep=naps.append)
+    assert len(calls) == 3 and naps == [5.0, 5.0] and out.strip() == "hello"
+    assert all(c == "https://pod.invalid/api/terminals" for c in calls)
+
+
+def test_a_jupyter_that_never_comes_up_is_reported_without_the_address():
+    import urllib.error
+    from clipcrow.service.gpu_pod import jupyter_run
+    t = [0.0]
+
+    def opener(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+    with pytest.raises(PodError) as e:
+        jupyter_run("https://pod.invalid/lab?token=SECRET", "x", opener=opener, connect=None, sleep=lambda s: t.__setitem__(0, t[0] + s), clock=lambda: t[0], wait_ready=20)
+    assert "did not come up" in str(e.value) and "SECRET" not in str(e.value) and "pod.invalid" not in str(e.value)

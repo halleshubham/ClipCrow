@@ -79,17 +79,39 @@ class RaceClient:
             raise PodError("the pod could not be paused")
 
 
-def jupyter_run(web_url: str, command: str, timeout: float = 180.0) -> str:
-    """Run ``command`` in a terminal of the pod's Jupyter and return its output. Needs ``websocket-client``."""
-    import websocket                                                  # noqa: PLC0415  (only needed when a pod is configured)
+def _open_terminal(base: str, token: str, wait: float, sleep: Callable[[float], None], opener, clock: Callable[[], float]) -> str:
+    """A new terminal on the pod's Jupyter. A freshly resumed pod answers 404/502/503 (or refuses the connection) for a while before Jupyter is up, so this asks again
+    every few seconds for up to ``wait`` seconds."""
+    hdr = {"Authorization": f"token {token}"}
+    end, last = clock() + wait, "no answer"
+    while True:
+        try:
+            r = urllib.request.Request(base + "/api/terminals", method="POST", headers=hdr)
+            with opener(r, timeout=20) as resp:
+                return json.loads(resp.read())["name"]
+        except urllib.error.HTTPError as e:
+            if e.code not in (404, 408, 425, 429, 500, 502, 503, 504):
+                raise PodError(f"the pod's Jupyter answered {e.code}") from None
+            last = f"HTTP {e.code}"
+        except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+            last = type(e).__name__
+        if clock() >= end:
+            raise PodError(f"the pod's Jupyter did not come up in time ({last})")
+        sleep(5.0)
+
+
+def jupyter_run(web_url: str, command: str, timeout: float = 180.0, *, wait_ready: float = 150.0, sleep: Callable[[float], None] = time.sleep,
+                opener=urllib.request.urlopen, connect=None, clock: Callable[[], float] = time.monotonic) -> str:
+    """Run ``command`` in a terminal of the pod's Jupyter and return its output (waiting up to ``wait_ready`` seconds for a just-resumed pod's Jupyter).
+    Needs ``websocket-client``."""
+    if connect is None:
+        import websocket                                              # noqa: PLC0415  (only needed when a pod is configured)
+        connect = websocket.create_connection
     u = urlparse(web_url)
     token = (parse_qs(u.query).get("token") or [""])[0]
     base = f"{u.scheme}://{u.netloc}"
-    hdr = {"Authorization": f"token {token}"}
-    r = urllib.request.Request(base + "/api/terminals", method="POST", headers=hdr)
-    with urllib.request.urlopen(r, timeout=30) as resp:
-        term = json.loads(resp.read())["name"]
-    ws = websocket.create_connection(base.replace("http", "ws", 1) + f"/terminals/websocket/{term}?token={token}", timeout=timeout)
+    term = _open_terminal(base, token, wait_ready, sleep, opener, clock)
+    ws = connect(base.replace("http", "ws", 1) + f"/terminals/websocket/{term}?token={token}", timeout=timeout)
     tag = uuid.uuid4().hex[:8]
     ws.send(json.dumps(["stdin", f"({command}) 2>&1; echo __EN''D_{tag}__ $?\n"]))
     out, end = "", time.time() + timeout
