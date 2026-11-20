@@ -311,10 +311,15 @@ class BrandStore:
             info = probe_media(probe)
             if not info["has_video"] or not 16 <= info["width"] <= MAX_LOGO_SIDE or not 16 <= info["height"] <= MAX_LOGO_SIDE:
                 raise BrandError(f"The logo must be between 16 and {MAX_LOGO_SIDE} pixels on each side.")
+            clean = Path(tmp) / "logo.png"                       # what is stored is what we made: decoded and re-encoded, without metadata (the server and Chrome never open the raw upload again)
+            r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-protocol_whitelist", "file,pipe", "-i", str(probe), "-frames:v", "1", "-map_metadata", "-1", str(clean)],
+                               capture_output=True, text=True, timeout=60)
+            if r.returncode != 0 or not clean.is_file() or clean.stat().st_size == 0:
+                raise BrandError("That logo could not be read.")
             with self._lock:
                 for old in d.glob("logo.*"):
                     old.unlink()
-                shutil.move(str(probe), d / f"logo{suffix}")
+                shutil.move(str(clean), d / "logo.png")
         return self.describe(owner, brand)
 
     def uploaded_music(self, owner: str, brand: str | None = None) -> Path | None:

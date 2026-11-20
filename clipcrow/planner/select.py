@@ -20,11 +20,12 @@ PAD_OUT = 0.30
 DEVANAGARI_LANGS = {"hi", "mr", "ne", "sa"}
 _PUNCT = re.compile(r"[\s\.,!?;:\"'“”‘’()\[\]{}…।॥\-–—]+")
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
+_BIDI = re.compile("[\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]")     # invisible direction marks (not ZWJ/ZWNJ: Indic scripts need those)
 
 
 def clean_text(text: str, limit: int) -> str:
     """Single line, no control characters, bounded length (it ends up on screen)."""
-    t = unicodedata.normalize("NFC", _CTRL.sub(" ", text or "")).strip()
+    t = unicodedata.normalize("NFC", _BIDI.sub("", _CTRL.sub(" ", text or ""))).strip()
     t = re.sub(r"\s+", " ", t)
     return t[:limit].rstrip()
 

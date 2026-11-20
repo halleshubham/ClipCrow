@@ -24,7 +24,18 @@ from clipcrow.planner.transcript import Sentence
 from tests.conftest import base_edl
 from tests.test_planner import SRC, make_transcript, scripted
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 2000
+def _real_png() -> bytes:
+    import io
+    import random
+    from PIL import Image
+    rnd = random.Random(1)
+    im = Image.frombytes("RGB", (64, 64), bytes(rnd.randrange(256) for _ in range(64 * 64 * 3)))
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+PNG = _real_png()                                    # a picture that really decodes: generated images are decoded and written again
 
 
 def resolver(ip):
@@ -80,7 +91,7 @@ def test_an_image_is_written_with_the_right_extension_and_the_key_never_goes_in_
         return gemini_reply()
     g = GeminiImages(api_key="sekret", model="m1", post=post)
     out = g.generate("a glass jar of coins\x00\x07 " + "x" * 900, tmp_path / "a.png")
-    assert out.suffix == ".png" and out.read_bytes() == PNG
+    assert out.suffix == ".png" and out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"          # decoded and written again by us
     assert "sekret" not in seen["url"] and seen["headers"]["x-goog-api-key"] == "sekret" and "m1" in seen["url"]
     text = seen["body"]["contents"][0]["parts"][0]["text"]
     assert "\x00" not in text and len(text) < 800                                 # control characters out, length bounded

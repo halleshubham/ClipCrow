@@ -55,7 +55,7 @@ def _dirs() -> list[Path]:
     env = os.environ.get("CLIPCROW_FONT_DIR")
     if env:
         dirs.append(Path(env))
-    dirs.append(Path("fonts"))
+    dirs.append(Path(__file__).resolve().parent.parent / "fonts")          # next to the code, never the current directory (a font file there would shadow the real ones)
     dirs.extend(Path(d) for d in SYSTEM_DIRS)
     return dirs
 

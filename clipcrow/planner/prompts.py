@@ -27,7 +27,8 @@ def language_instruction(code: str) -> str:
 
 
 def fmt_sentence(s: Sentence) -> str:
-    return f"[S{s.id} | {s.start:.1f}-{s.end:.1f}s] {s.text}"
+    safe = s.text.replace("<", "\u2039").replace(">", "\u203a")          # a transcript word like "</transcript>" must not close the fence around the transcript
+    return f"[S{s.id} | {s.start:.1f}-{s.end:.1f}s] {safe}"
 
 
 def score_prompt(windows_text: list[tuple[int, str]], min_s: int, max_s: int) -> str:

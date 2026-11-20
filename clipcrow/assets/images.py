@@ -38,6 +38,27 @@ class ImageProvider(Protocol):
         """Write an image for ``prompt`` to ``dest`` (extension chosen by the image type) and return the real path."""
 
 
+def _reencode(path: Path) -> Path:
+    """A generated picture is decoded and written again as a PNG of at most 2160 px, without metadata: a small file that expands to a huge image, or a crafted one,
+    is stopped here, not in the render browser."""
+    import subprocess
+    dest = path.with_name(path.stem + ".clean.png")
+    scale = "scale='min(2160,iw)':'min(2160,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
+    try:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-protocol_whitelist", "file,pipe", "-i", str(path), "-frames:v", "1", "-vf", scale, "-map_metadata", "-1", str(dest)],
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        r = None
+    if r is None or r.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
+        dest.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
+        raise ImageError("the image service returned something that is not a usable picture")
+    path.unlink(missing_ok=True)
+    final = path.with_suffix(".png")
+    dest.replace(final)
+    return final
+
+
 def sniff(data: bytes) -> str | None:
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return ".png"
@@ -93,4 +114,4 @@ class GeminiImages:
             raise ImageError("the image service returned something that is not a usable picture")
         out = Path(dest).with_suffix(suffix)
         out.write_bytes(data)
-        return out
+        return _reencode(out)

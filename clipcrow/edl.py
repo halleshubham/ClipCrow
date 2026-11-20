@@ -40,7 +40,7 @@ def _latinise(value):
 
 
 class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)       # no inf/nan: they would reach scripts and filter graphs as text
 
     @model_validator(mode="before")
     @classmethod
@@ -403,7 +403,7 @@ class Clip(_Model):
     title: str = ""
     layout: Layout = Field(default_factory=Layout)
     captions: CaptionStyle = Field(default_factory=CaptionStyle)
-    overlays: list[Overlay] = Field(default_factory=list)
+    overlays: list[Overlay] = Field(default_factory=list, max_length=60)
     cover: Optional[Cover] = None
     logo: Optional[Logo] = None
     banner: Optional[Banner] = None
@@ -439,9 +439,9 @@ class Clip(_Model):
 
 
 class RenderSettings(_Model):
-    width: int = 1080
-    height: int = 1920
-    fps: int = 30
+    width: int = Field(default=1080, ge=240, le=2160)               # bounded: these reach ffmpeg scale/crop filters and CSS, and a huge canvas exhausts memory
+    height: int = Field(default=1920, ge=240, le=3840)
+    fps: int = Field(default=30, ge=1, le=60)
     quality: Literal["draft", "standard", "high"] = "standard"
 
 
