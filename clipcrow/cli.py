@@ -65,6 +65,9 @@ def main(argv: list[str] | None = None) -> int:
     es.add_argument("job_id")
     es.add_argument("--data", default="data", help="the service's data folder")
     es.add_argument("--to", required=True, help="the folder to write (job.json and out/)")
+    md = sub.add_parser("migrate-db", help="copy the accounts from the old SQLite file into PostgreSQL (the address is DATABASE_URL)")
+    md.add_argument("--data", default="data", help="the service's data folder (holds clipcrow.db and clipcrow.secret)")
+    md.add_argument("--sqlite", default=None, help="the SQLite file to read (default: <data>/clipcrow.db)")
     rc = sub.add_parser("r2-cors", help="set (or show) the bucket's CORS rule that lets browsers upload straight to R2")
     rc.add_argument("--origin", action="append", default=[], help="the site's address, e.g. https://clips.example.com (repeat for several)")
     rc.add_argument("--show", action="store_true", help="print the current rule instead of changing it")
@@ -119,7 +122,9 @@ def main(argv: list[str] | None = None) -> int:
             accounts = None
             if a.accounts:
                 from .service.accounts import Accounts
-                accounts = Accounts(Path(a.data) / "clipcrow.db")
+                url = os.environ.get("DATABASE_URL", "").strip()
+                accounts = Accounts(url or Path(a.data) / "clipcrow.db", secret_file=Path(a.data) / "clipcrow.secret")
+                print(f"accounts database: {accounts.describe()}", file=sys.stderr)
                 if a.host not in ("127.0.0.1", "::1", "localhost"):
                     print("note: accounts use cookies: serve this behind TLS (a reverse proxy)", file=sys.stderr)
             if a.host not in ("127.0.0.1", "::1", "localhost") and not token and not accounts and not a.insecure:
@@ -147,6 +152,18 @@ def main(argv: list[str] | None = None) -> int:
                              worker_token=os.environ.get("CLIPCROW_WORKER_TOKEN") or None,
                              worker_pickup_seconds=float(os.environ.get("CLIPCROW_WORKER_PICKUP_SECONDS", "120") or 120))
             uvicorn.run(app, host=a.host, port=a.port, log_level="info", timeout_graceful_shutdown=20)
+            return 0
+        if a.cmd == "migrate-db":
+            from .service.accounts import Accounts
+            from .service.dbmigrate import migrate
+            url = os.environ.get("DATABASE_URL", "")
+            if not url.startswith(("postgres://", "postgresql://")):
+                raise ValueError("set DATABASE_URL to the PostgreSQL address first (it holds a password, so it is read from the environment, never from the command line)")
+            src = a.sqlite or str(Path(a.data) / "clipcrow.db")
+            target = Accounts(url, secret_file=Path(a.data) / "clipcrow.secret")
+            report = migrate(src, target)
+            print("copied:", ", ".join(f"{k} {v}" for k, v in report.items()))
+            print(f"target: {target.describe()}. Now set DATABASE_URL on the service and redeploy.")
             return 0
         if a.cmd == "export-sample":
             from .service.jobs import JobStore

@@ -248,7 +248,7 @@ def _one(kind: str, sender: str, reply_to: str) -> Optional[Mailer]:
     if kind == "smtp":
         if not env.get("SMTP_HOST"):
             return None
-        return SmtpMailer(env["SMTP_HOST"], int(env.get("SMTP_PORT", "587")), env.get("SMTP_USER", ""), env.get("SMTP_PASSWORD", ""), sender, reply_to,
+        return SmtpMailer(env["SMTP_HOST"], int(env.get("SMTP_PORT") or "587"), env.get("SMTP_USER", ""), env.get("SMTP_PASSWORD", ""), sender, reply_to,
                           env.get("SMTP_SECURITY", "starttls"))
     return None
 

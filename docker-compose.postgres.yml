@@ -1,0 +1,27 @@
+# Optional: run PostgreSQL beside ClipCrow in the same stack instead of using a managed database (Coolify can also create one for you: Resources > New > Database >
+# PostgreSQL, with scheduled backups, and then you only set DATABASE_URL below). Use this file together with docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+# See docs/deploy.md ("PostgreSQL") for the move from the old SQLite file.
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=clipcrow
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      - POSTGRES_DB=clipcrow
+    volumes:
+      - clipcrow-pg:/var/lib/postgresql/data       # the accounts, minutes and payments: back this up (pg_dump daily, and keep a copy off this machine)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clipcrow -d clipcrow"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  clipcrow:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://clipcrow:${POSTGRES_PASSWORD}@postgres:5432/clipcrow
+volumes:
+  clipcrow-pg:

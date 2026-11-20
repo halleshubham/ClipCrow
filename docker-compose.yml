@@ -50,6 +50,36 @@ services:
       - CLIPCROW_WORKER_PICKUP_SECONDS=${CLIPCROW_WORKER_PICKUP_SECONDS:-120}
       - CLIPCROW_WORKER_MAX_UPLOAD_MB=${CLIPCROW_WORKER_MAX_UPLOAD_MB:-300}      # the biggest clip a worker may send back
       - CLIPCROW_WORKER_MAX_CLIP_SECONDS=${CLIPCROW_WORKER_MAX_CLIP_SECONDS:-60}      # longer clips need a worker that sends the MP4 to the bucket (no proxy cap); otherwise they render on the server; 0 = no limit
+      # --- accounts database: empty = the SQLite file in /data; a postgresql:// address = PostgreSQL (docs/deploy.md). It holds a password: keep it a secret variable.
+      - DATABASE_URL=${DATABASE_URL:-}
+      - CLIPCROW_DB_POOL=${CLIPCROW_DB_POOL:-}              # PostgreSQL connections kept ready (default 10)
+      - CLIPCROW_SECRET_KEY=${CLIPCROW_SECRET_KEY:-}        # keys sign-in codes and seals stored credentials; empty = a random one in /data/clipcrow.secret (back it up)
+      # --- email (sign-in is by emailed code): Resend by default, or SMTP; see docs/deploy.md
+      - CLIPCROW_EMAIL=${CLIPCROW_EMAIL:-}
+      - CLIPCROW_EMAIL_FALLBACK=${CLIPCROW_EMAIL_FALLBACK:-}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - MAIL_FROM=${MAIL_FROM:-}
+      - MAIL_REPLY_TO=${MAIL_REPLY_TO:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_SECURITY=${SMTP_SECURITY:-}
+      - CLIPCROW_PUBLIC_URL=${CLIPCROW_PUBLIC_URL:-}        # https://clipcrow.example (links in mail are built from it)
+      # --- running it as a service (most of these can also be changed live on the Operator page)
+      - CLIPCROW_ADMINS=${CLIPCROW_ADMINS:-}
+      - CLIPCROW_ALERT_EMAIL=${CLIPCROW_ALERT_EMAIL:-}
+      - CLIPCROW_SAMPLE_DIR=${CLIPCROW_SAMPLE_DIR:-}
+      - CLIPCROW_PRICE_PER_MINUTE=${CLIPCROW_PRICE_PER_MINUTE:-}
+      - CLIPCROW_MIN_JOB_MINUTES=${CLIPCROW_MIN_JOB_MINUTES:-}
+      - CLIPCROW_SIGNUP_BONUS_MINUTES=${CLIPCROW_SIGNUP_BONUS_MINUTES:-}
+      - CLIPCROW_MARGIN_PERCENT=${CLIPCROW_MARGIN_PERCENT:-}
+      - CLIPCROW_MAX_ACTIVE_JOBS=${CLIPCROW_MAX_ACTIVE_JOBS:-}
+      - CLIPCROW_MAX_JOBS_PER_DAY=${CLIPCROW_MAX_JOBS_PER_DAY:-}
+      - CLIPCROW_MAX_JOB_MINUTES=${CLIPCROW_MAX_JOB_MINUTES:-}
+      - CLIPCROW_MAX_SIGNUPS_PER_DAY=${CLIPCROW_MAX_SIGNUPS_PER_DAY:-}
+      - SOCIOBIRD_OAUTH_CLIENT_ID=${SOCIOBIRD_OAUTH_CLIENT_ID:-}
+      - SOCIOBIRD_OAUTH_CLIENT_SECRET=${SOCIOBIRD_OAUTH_CLIENT_SECRET:-}
       # --- shutdown: how long a deploy waits for the running job before putting it back in the queue
       - DRAIN_TIMEOUT_SECONDS=${DRAIN_TIMEOUT_SECONDS:-45}
     volumes:

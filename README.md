@@ -93,7 +93,7 @@ involvement).
   nothing asks for generated video until one is registered.
 - **Transcript check** (job page, optional): the sentences the captions are made from, with times and the clips that use them. Fix a word and save: only those clips render again, cut points stay. Where the AI
   corrected the recogniser's words the original is shown (when no cleanup changed the timeline).
-- **Accounts** (`clipcrow serve --accounts [--no-signup]`, data in `<data>/clipcrow.db`): **sign-in by an emailed one-time code only, no passwords**
+- **Accounts** (`clipcrow serve --accounts [--no-signup]`, data in `<data>/clipcrow.db` or, with `DATABASE_URL`, in PostgreSQL: `docs/deploy.md`): **sign-in by an emailed one-time code only, no passwords**
   (a 6-digit code, valid 10 minutes, single use, 5 tries, stored only as a keyed hash; signing up and signing in are one step; rate limited per address
   and per IP). Email goes through Resend (default) or SMTP (`docs/email-task.md`, `docs/deploy.md`). Session cookie (HttpOnly, SameSite=Strict, only its hash
   is stored), per-user jobs (someone else's job is a 404 everywhere), account deletion (type your email to confirm; cancels a Razorpay subscription first

@@ -46,8 +46,8 @@ def signup(c, email="a@example.com", password=PW):
 def test_a_code_is_six_digits_works_once_and_is_stored_only_as_a_mac(db, tmp_path):
     code = db.request_code("A@Example.com", who="1.2.3.4")
     assert len(code) == 6 and code.isdigit()
-    raw = b"".join(f.read_bytes() for f in tmp_path.glob("t.db*"))
-    assert code.encode() not in raw                                                   # the table never holds the code itself
+    stored = str(db._q("SELECT * FROM login_codes").fetchall()) + str(db._q("SELECT * FROM login_sends").fetchall())
+    assert code not in stored and len(stored) > 20                                    # the table never holds the code itself (checked in the rows, on either engine)
     u = db.verify_code("a@example.com", f" {code[:3]} {code[3:]} ")                  # spaces from copy and paste are fine
     assert u.email == "a@example.com" and u.plan == "free"
     with pytest.raises(AccountError, match="not right or has expired"):             # single use
@@ -69,7 +69,7 @@ def test_a_wrong_code_five_times_kills_the_code_and_the_message_never_changes(db
 
 def test_a_code_expires_and_a_new_request_replaces_the_old_code(db):
     c1 = db.request_code("a@example.com")
-    db._q("UPDATE login_sends SET at = at - 120")                                     # past the 60 s wait
+    db._q("UPDATE login_sends SET sent_at = sent_at - 120")                                     # past the 60 s wait
     c2 = db.request_code("a@example.com")
     assert c2 and c1 != c2 or c1 == c2
     if c1 != c2:
@@ -84,9 +84,9 @@ def test_asking_for_codes_is_limited_per_address_per_hour_and_waits_between_mail
     assert db.request_code("a@example.com")
     assert db.request_code("a@example.com") is None                                   # within the 60 s wait: nothing is mailed, the answer is the same
     for _ in range(4):
-        db._q("UPDATE login_sends SET at = at - 120")
+        db._q("UPDATE login_sends SET sent_at = sent_at - 120")
         assert db.request_code("a@example.com")
-    db._q("UPDATE login_sends SET at = at - 120")
+    db._q("UPDATE login_sends SET sent_at = sent_at - 120")
     assert db.request_code("a@example.com") is None                                   # a sixth within the hour
     with pytest.raises(AccountError, match="valid email"):
         db.request_code("nope")
@@ -119,8 +119,8 @@ def test_sessions_store_only_a_hash_expire_and_can_be_ended(db, tmp_path):
     u = db.ensure_user("a@example.com")
     token = db.new_session(u.id)
     assert db.user_for_session(token).id == u.id and db.user_for_session("") is None and db.user_for_session("x" * 43) is None
-    raw = (tmp_path / "t.db").read_bytes() + (tmp_path / "t.db-wal").read_bytes() if (tmp_path / "t.db-wal").exists() else (tmp_path / "t.db").read_bytes()
-    assert token.encode() not in raw                                          # the database never holds the token itself
+    stored = str(db._q("SELECT * FROM sessions").fetchall())
+    assert token not in stored and len(stored) > 20                           # the database never holds the token itself
     db.end_session(token)
     assert db.user_for_session(token) is None
     t2 = db.new_session(u.id)
@@ -398,6 +398,9 @@ def test_a_paid_plan_keeps_jobs_longer_and_a_lapsed_one_counts_as_free(tmp_path,
 
 
 def test_the_database_is_backed_up_once_a_day_keeping_the_newest_few(db, tmp_path):
+    if db.dialect != "sqlite":
+        assert db.backup(tmp_path / "backups") is None                                      # PostgreSQL is backed up by its own service
+        pytest.skip("the file backup is SQLite's")
     db.ensure_user("a@example.com")
     folder = tmp_path / "backups"
     first = db.backup(folder, keep=2)

@@ -108,3 +108,31 @@ def pytest_unconfigure(config):
 
 
 os.environ.setdefault("CLIPCROW_SPEAKERS", "0")       # no voice model is ever downloaded by a test; the speaker tests pass their own embedder
+
+
+@pytest.fixture(autouse=True)
+def accounts_on_postgres(monkeypatch):
+    """With CLIPCROW_TEST_DATABASE_URL set, every ``Accounts(path)`` a test makes lives in PostgreSQL instead (in its own private schema, dropped afterwards), so the
+    accounts, billing, settings and publishing tests all run against the real engine. Without it they use SQLite as before."""
+    url = os.environ.get("CLIPCROW_TEST_DATABASE_URL")
+    if not url:
+        yield
+        return
+    import uuid
+    from clipcrow.service import accounts as acc
+    original, made = acc.Accounts.__init__, []
+
+    def init(self, target, **kw):
+        if str(target).startswith(("postgres://", "postgresql://")):                 # a test that asks for PostgreSQL itself
+            return original(self, target, **kw)
+        schema = "t_" + uuid.uuid4().hex[:16]
+        original(self, url, schema=schema, secret_file=Path(target).with_suffix(".secret"), **kw)
+        made.append(self)
+    monkeypatch.setattr(acc.Accounts, "__init__", init)
+    monkeypatch.setattr(acc.Accounts, "_sqlite_init", original, raising=False)        # for a test that needs a real SQLite file (the move to PostgreSQL)
+    yield
+    for a in made:
+        try:
+            a.db.drop_schema()
+        except Exception:                                                              # noqa: BLE001 - cleanup must not hide the test's own result
+            pass

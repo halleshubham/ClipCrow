@@ -24,7 +24,10 @@ From the production server's 37 finished jobs (`scripts/job_costs.py` re-runs th
 Long recordings cost about **Rs 2.4 to 3.9 a minute**; at Rs 8 a minute that is a 50 to 70% profit share (a 105% to 230% markup) before Razorpay's fee (about 2.4%) and the server. A 1-minute raw take costs about Rs 5.5 and is charged the 3-minute minimum (Rs 24), which is a 340% markup. Without a minimum it would be Rs 8, a 45% markup. A free 10-minute trial costs about Rs 17 to 35 in AI.
 Caveats: only 2 of the 37 jobs have metered GPU time (metering is recent; earlier jobs ran on the server's CPU or the home GPU, which costs electricity, not rupees on a bill); the server, storage and bandwidth are not counted; the raw takes tested were all under 2 minutes, so a 30-minute raw recording (the AI reads the whole transcript to judge retakes) will cost more than the table suggests: measure one before promising a price for long raw takes; my own test runs are in the data.
 
-## Restore test (do it once before launch, then every quarter)
+## Restore test, PostgreSQL (when `DATABASE_URL` is set)
+The daily file copy below is SQLite's and does nothing for PostgreSQL. Use the database service's backups (Coolify: the database's Backups tab, to R2 or S3), keep one off the machine, and once before launch restore the newest into a scratch database (`createdb scratch; pg_restore -d scratch dump` or the service's restore), start a staging copy of ClipCrow with `DATABASE_URL` pointing at it, and check people, plans and minutes are there. Write the date and the result in the dev log.
+
+## Restore test, SQLite (do it once before launch, then every quarter)
 1. Stop the service. 2. Copy `<data>/backups/clipcrow-YYYYMMDD.db` over `<data>/clipcrow.db` and delete `clipcrow.db-wal` and `clipcrow.db-shm`. 3. Start; sign in; confirm the people, plans and minutes are there. 4. Write the date and the result in the dev log. A restore loses accounts made, and minutes used, since the copy.
 
 ## Billing: the test-mode run (needs your Razorpay test keys; not done)

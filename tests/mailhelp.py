@@ -13,7 +13,7 @@ def code_for(client, email):
 
 def sign_up(client, email="a@example.com"):
     """Request a code and verify it: the account exists and the client holds the session cookie. Returns the verify response."""
-    client.app.state.accounts._q("UPDATE login_sends SET at = at - 120")        # tests skip the 60 s wait between two mails to one address
+    client.app.state.accounts._q("UPDATE login_sends SET sent_at = sent_at - 120")        # tests skip the 60 s wait between two mails to one address
     before = len(client.app.state.outbox.sent)
     r = client.post("/api/auth/code", json={"email": email})
     assert r.status_code == 200, r.text

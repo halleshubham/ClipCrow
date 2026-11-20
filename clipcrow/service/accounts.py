@@ -1,4 +1,4 @@
-"""Users, sessions and the usage ledger, in one SQLite file (``<data>/clipcrow.db``). Standard library only.
+"""Users, sessions and the usage ledger: PostgreSQL (``DATABASE_URL``) or, by default, one SQLite file (``<data>/clipcrow.db``); see ``db.py``.
 
 Sign-in is by an emailed one-time code only (docs/email-task.md): there are no passwords. A code is 6 digits from ``secrets``, valid 10 minutes,
 single use, dead after 5 wrong tries, and stored only as an HMAC (keyed with a server secret kept next to the database), so a copied table is
@@ -12,7 +12,8 @@ import hashlib
 import hmac
 import re
 import secrets
-import sqlite3
+import logging
+import os
 import threading
 import time
 import uuid
@@ -20,6 +21,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from . import db as dbm
+from .db import IntegrityError
+
+log = logging.getLogger("clipcrow.service")
 
 EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,24}\Z")
 SESSION_DAYS = 30
@@ -54,60 +60,65 @@ def month_key(when: datetime | None = None) -> str:
     return (when or datetime.now(timezone.utc)).strftime("%Y-%m")
 
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, pw_hash TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
-  plan TEXT NOT NULL DEFAULT 'free', plan_until TEXT, subscription TEXT, credits REAL NOT NULL DEFAULT 0,
-  notify_job_done INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS login_codes (
-  email TEXT PRIMARY KEY, code_hash TEXT NOT NULL, expires_at REAL NOT NULL, tries INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL);
-CREATE TABLE IF NOT EXISTS sociobird_links (
-  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, token_enc TEXT NOT NULL, label TEXT NOT NULL DEFAULT '',
-  connected_at TEXT NOT NULL, last_ok_at TEXT, last_error TEXT NOT NULL DEFAULT '');
-CREATE TABLE IF NOT EXISTS oauth_states (state_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at REAL NOT NULL);
-CREATE TABLE IF NOT EXISTS login_sends (email TEXT NOT NULL, at REAL NOT NULL);
-CREATE INDEX IF NOT EXISTS login_sends_email ON login_sends(email, at);
-CREATE TABLE IF NOT EXISTS sessions (
-  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL, expires_at REAL NOT NULL);
-CREATE TABLE IF NOT EXISTS usage (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  job_id TEXT, minutes REAL NOT NULL, credit_minutes REAL NOT NULL DEFAULT 0, month TEXT NOT NULL,
-  kind TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS usage_user_month ON usage(user_id, month);
-CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, received_at TEXT NOT NULL);
-"""
+def schema_statements(dialect: str) -> list[str]:
+    """The tables, as separate statements. SQLite keeps the old ``pw_hash`` column (a file from before the email-code sign-in may have it); PostgreSQL never had one."""
+    auto = "INTEGER PRIMARY KEY AUTOINCREMENT" if dialect == "sqlite" else "BIGSERIAL PRIMARY KEY"
+    pw = " pw_hash TEXT NOT NULL DEFAULT ''," if dialect == "sqlite" else ""
+    return [
+        f"CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL,{pw} created_at TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'free', "
+        "plan_until TEXT, subscription TEXT, credits DOUBLE PRECISION NOT NULL DEFAULT 0, notify_job_done INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0)",
+        "CREATE TABLE IF NOT EXISTS login_codes (email TEXT PRIMARY KEY, code_hash TEXT NOT NULL, expires_at DOUBLE PRECISION NOT NULL, tries INTEGER NOT NULL DEFAULT 0, "
+        "created_at DOUBLE PRECISION NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS sociobird_links (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, token_enc TEXT NOT NULL, "
+        "label TEXT NOT NULL DEFAULT '', connected_at TEXT NOT NULL, last_ok_at TEXT, last_error TEXT NOT NULL DEFAULT '')",
+        "CREATE TABLE IF NOT EXISTS oauth_states (state_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at DOUBLE PRECISION NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS login_sends (email TEXT NOT NULL, sent_at DOUBLE PRECISION NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS login_sends_email ON login_sends(email, sent_at)",
+        "CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL, "
+        "expires_at DOUBLE PRECISION NOT NULL)",
+        f"CREATE TABLE IF NOT EXISTS usage (id {auto}, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, job_id TEXT, minutes DOUBLE PRECISION NOT NULL, "
+        "credit_minutes DOUBLE PRECISION NOT NULL DEFAULT 0, month TEXT NOT NULL, kind TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS usage_user_month ON usage(user_id, month)",
+        "CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, received_at TEXT NOT NULL)",
+    ]
 
 
 class Accounts:
-    def __init__(self, path: str | Path, *, max_failures: int = 5, window_s: int = 900, secret: bytes | None = None):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(str(self.path), check_same_thread=False, isolation_level=None)
-        self._db.row_factory = sqlite3.Row
-        self._lock = threading.RLock()
-        with self._lock:
-            self._db.execute("PRAGMA journal_mode=WAL")
-            self._db.execute("PRAGMA foreign_keys=ON")
-            self._db.executescript(SCHEMA)
-            cols = {r[1] for r in self._db.execute("PRAGMA table_info(users)")}
-            if "notify_job_done" not in cols:                                       # an older database
-                self._db.execute("ALTER TABLE users ADD COLUMN notify_job_done INTEGER NOT NULL DEFAULT 0")
-            if "disabled" not in cols:
-                self._db.execute("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
+    def __init__(self, target: str | Path, *, max_failures: int = 5, window_s: int = 900, secret: bytes | None = None, schema: str | None = None,
+                 secret_file: str | Path | None = None, pool_size: int | None = None):
+        """``target``: a ``postgresql://`` address, or the path of a SQLite file. ``secret_file`` is where the server secret lives when the database is not a
+        file next to it (PostgreSQL); ``schema`` gives a PostgreSQL database a private schema (tests)."""
+        self.target = str(target)
+        self.postgres = dbm.is_postgres(target)
+        self.path = None if self.postgres else Path(target)
+        self._secret_file = Path(secret_file) if secret_file else (self.path.with_suffix(".secret") if self.path else None)
+        self.db = dbm.connect(target, schema=schema, pool_size=pool_size or int(os.environ.get("CLIPCROW_DB_POOL", "10") or 10))
+        self.db.script(schema_statements(self.db.dialect))
+        self.db.add_column("users", "notify_job_done", "INTEGER NOT NULL DEFAULT 0")             # an older database
+        self.db.add_column("users", "disabled", "INTEGER NOT NULL DEFAULT 0")
         self._secret = secret or self._load_secret()
+        self._lock = threading.RLock()
         self._fails: dict[str, list[float]] = {}
         self.max_failures, self.window_s = max_failures, window_s
 
+    @property
+    def dialect(self) -> str:
+        return self.db.dialect
+
+    def describe(self) -> str:
+        return dbm.describe(self.target)
+
     def _load_secret(self) -> bytes:
-        """The key that signs login codes: CLIPCROW_SECRET_KEY, else a random one kept next to the database (mode 600), made once."""
-        import os
+        """The key that signs login codes and seals stored credentials: CLIPCROW_SECRET_KEY, else a random one kept in a file (mode 600), made once."""
         env = os.environ.get("CLIPCROW_SECRET_KEY", "").strip()
         if env:
             return hashlib.sha256(env.encode()).digest()
-        f = self.path.with_suffix(".secret")
+        if self._secret_file is None:
+            raise RuntimeError("set CLIPCROW_SECRET_KEY, or give a secret file")
+        f = self._secret_file
         if f.is_file():
             return bytes.fromhex(f.read_text().strip())
+        f.parent.mkdir(parents=True, exist_ok=True)
         key = secrets.token_bytes(32)
         fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as h:
@@ -116,11 +127,13 @@ class Accounts:
 
     # --- plumbing -------------------------------------------------------------------------------
     def _q(self, sql: str, args: tuple = ()):
-        with self._lock:
-            return self._db.execute(sql, args)
+        return self.db.q(sql, args)
 
     def transaction(self):
         return _Tx(self)
+
+    def close(self) -> None:
+        self.db.close()
 
     @staticmethod
     def _user(row) -> User:
@@ -136,10 +149,7 @@ class Accounts:
         if row:
             return self._user(row)
         uid = uuid.uuid4().hex
-        try:
-            self._q("INSERT INTO users(id, email, created_at) VALUES (?,?,?)", (uid, email, _now()))
-        except sqlite3.IntegrityError:
-            pass                                                           # made a moment ago by a parallel request
+        self._q("INSERT INTO users(id, email, created_at) VALUES (?,?,?) ON CONFLICT(email) DO NOTHING", (uid, email, _now()))      # a parallel request may have made it
         return self._user(self._q("SELECT * FROM users WHERE email=?", (email,)).fetchone())
 
     def by_email(self, email: str) -> Optional[User]:
@@ -149,8 +159,9 @@ class Accounts:
     # --- a person's own SocioBird connection (the credential is stored encrypted; see secretbox.py) -------------
     def set_link(self, user_id: str, kind: str, token: str, label: str = "") -> None:
         from . import secretbox
-        self._q("INSERT OR REPLACE INTO sociobird_links(user_id, kind, token_enc, label, connected_at, last_ok_at, last_error) VALUES (?,?,?,?,?,?, '')",
-                (user_id, kind, secretbox.seal(self._secret, "sociobird", token), label[:80], _now(), _now()))
+        self._q("INSERT INTO sociobird_links(user_id, kind, token_enc, label, connected_at, last_ok_at, last_error) VALUES (?,?,?,?,?,?, '') "
+                "ON CONFLICT(user_id) DO UPDATE SET kind=excluded.kind, token_enc=excluded.token_enc, label=excluded.label, connected_at=excluded.connected_at, "
+                "last_ok_at=excluded.last_ok_at, last_error=''", (user_id, kind, secretbox.seal(self._secret, "sociobird", token), label[:80], _now(), _now()))
 
     def get_link(self, user_id: str) -> Optional[dict]:
         """The connection without its credential: ``{kind, label, connected_at, last_ok_at, last_error}``."""
@@ -181,9 +192,7 @@ class Accounts:
         """The person this state was made for, and the state is used up; None for an unknown, used or expired one. (The browser comes back from another site, so
         the session cookie may not be sent: the state alone says who started this, and it cannot be used for anyone else.)"""
         h = hashlib.sha256((state or "").encode()).hexdigest()
-        with self._lock:
-            row = self._db.execute("SELECT user_id, expires_at FROM oauth_states WHERE state_hash=?", (h,)).fetchone()
-            self._db.execute("DELETE FROM oauth_states WHERE state_hash=?", (h,))
+        row = self._q("DELETE FROM oauth_states WHERE state_hash=? RETURNING user_id, expires_at", (h,)).fetchone()         # one statement: two callbacks cannot both use it
         return row["user_id"] if row and row["expires_at"] > time.time() else None
 
     def delete_link(self, user_id: str) -> None:
@@ -239,19 +248,19 @@ class Accounts:
         self._throttle(f"ip:{who}", 20, 3600)                              # per IP: a flood of requests
         self._throttle("all", 600, 3600)                                   # global brake: cannot spend the mail quota or get the domain flagged
         now = time.time()
-        with self._lock:
-            self._db.execute("DELETE FROM login_sends WHERE at < ?", (now - 86400,))
-            sends = [r["at"] for r in self._db.execute("SELECT at FROM login_sends WHERE email=?", (email,)).fetchall()]
-            found = self._db.execute("SELECT disabled FROM users WHERE email=?", (email,)).fetchone()
+        with self.db.tx() as t:
+            t.q("DELETE FROM login_sends WHERE sent_at < ?", (now - 86400,))
+            sends = [r["sent_at"] for r in t.q("SELECT sent_at FROM login_sends WHERE email=?", (email,)).fetchall()]
+            found = t.q("SELECT disabled FROM users WHERE email=?", (email,)).fetchone()
             exists = found is not None
             code = f"{secrets.randbelow(10 ** 6):06d}"
             mac = self._mac(email, code)                                   # the same work whether or not a mail will go out
-            if (not exists and not allow_signup) or (exists and found["disabled"]) or any(now - t < CODE_WAIT_S for t in sends) \
-                    or sum(1 for t in sends if now - t < 3600) >= CODE_PER_HOUR or len(sends) >= CODE_PER_DAY:
+            if (not exists and not allow_signup) or (exists and found["disabled"]) or any(now - x < CODE_WAIT_S for x in sends) \
+                    or sum(1 for x in sends if now - x < 3600) >= CODE_PER_HOUR or len(sends) >= CODE_PER_DAY:
                 return None
-            self._db.execute("INSERT OR REPLACE INTO login_codes(email, code_hash, expires_at, tries, created_at) VALUES (?,?,?,0,?)",
-                             (email, mac, now + CODE_MINUTES * 60, now))
-            self._db.execute("INSERT INTO login_sends(email, at) VALUES (?,?)", (email, now))
+            t.q("INSERT INTO login_codes(email, code_hash, expires_at, tries, created_at) VALUES (?,?,?,0,?) ON CONFLICT(email) DO UPDATE SET "
+                "code_hash=excluded.code_hash, expires_at=excluded.expires_at, tries=0, created_at=excluded.created_at", (email, mac, now + CODE_MINUTES * 60, now))
+            t.q("INSERT INTO login_sends(email, sent_at) VALUES (?,?)", (email, now))
         return code
 
     def verify_code(self, email: str, code: str, *, who: str = "", allow_signup: bool = True) -> User:
@@ -262,18 +271,22 @@ class Accounts:
         code = re.sub(r"\s+", "", code or "")
         if not EMAIL.match(email) or not re.fullmatch(r"\d{6}", code):
             raise wrong
-        with self._lock:
-            row = self._db.execute("SELECT * FROM login_codes WHERE email=?", (email,)).fetchone()
+        outcome = None
+        with self.db.tx() as t:
+            row = t.q("SELECT * FROM login_codes WHERE email=?" + self.db.for_update, (email,)).fetchone()
             good = bool(row) and row["expires_at"] > time.time() and row["tries"] < CODE_TRIES
             ok = hmac.compare_digest(self._mac(email, code), row["code_hash"] if row else self._mac(email, "000000")) and good
             if not ok:
                 if row:
                     if row["tries"] + 1 >= CODE_TRIES:
-                        self._db.execute("DELETE FROM login_codes WHERE email=?", (email,))     # too many wrong tries: the code is dead
+                        t.q("DELETE FROM login_codes WHERE email=?", (email,))              # too many wrong tries: the code is dead
                     else:
-                        self._db.execute("UPDATE login_codes SET tries=tries+1 WHERE email=?", (email,))
-                raise wrong
-            self._db.execute("DELETE FROM login_codes WHERE email=?", (email,))                 # single use
+                        t.q("UPDATE login_codes SET tries=tries+1 WHERE email=?", (email,))
+                outcome = wrong
+            else:
+                t.q("DELETE FROM login_codes WHERE email=?", (email,))                      # single use
+        if outcome is not None:
+            raise outcome
         existing = self.by_email(email)
         if (existing is None and not allow_signup) or (existing is not None and existing.disabled):
             raise wrong
@@ -321,79 +334,56 @@ class Accounts:
         return float(row["m"])
 
     def reserve(self, user_id: str, job_id: str, minutes: float, allowance: float) -> Optional[float]:
-        """Take ``minutes`` from this month's allowance, then from purchased credits. Atomic. Returns the minutes
-        left afterwards, or None when there are not enough (nothing is taken)."""
-        with self._lock:
-            self._db.execute("BEGIN IMMEDIATE")
-            try:
-                user = self._db.execute("SELECT credits FROM users WHERE id=?", (user_id,)).fetchone()
-                used = float(self._db.execute("SELECT COALESCE(SUM(minutes - credit_minutes), 0) AS m FROM usage WHERE user_id=? AND month=?",
-                                              (user_id, month_key())).fetchone()["m"])
-                left = max(allowance - used, 0.0)
-                from_credits = max(minutes - left, 0.0)
-                if user is None or from_credits > user["credits"] + 1e-9:
-                    self._db.execute("ROLLBACK")
-                    return None
-                self._db.execute("UPDATE users SET credits = credits - ? WHERE id=?", (from_credits, user_id))
-                self._db.execute("INSERT INTO usage(user_id, job_id, minutes, credit_minutes, month, kind, created_at) VALUES (?,?,?,?,?,?,?)",
-                                 (user_id, job_id, minutes, from_credits, month_key(), "job", _now()))
-                self._db.execute("COMMIT")
-                return max(allowance - used - minutes, 0.0) + user["credits"] - from_credits
-            except Exception:
-                self._db.execute("ROLLBACK")
-                raise
+        """Take ``minutes`` from this month's allowance, then from purchased credits. Atomic (the person's row is locked, so two jobs started at once cannot both
+        spend the same minutes). Returns the minutes left afterwards, or None when there are not enough (nothing is taken)."""
+        with self.db.tx() as t:
+            user = t.q("SELECT credits FROM users WHERE id=?" + self.db.for_update, (user_id,)).fetchone()
+            if user is None:
+                return None
+            used = float(t.q("SELECT COALESCE(SUM(minutes - credit_minutes), 0) AS m FROM usage WHERE user_id=? AND month=?", (user_id, month_key())).fetchone()["m"])
+            left = max(allowance - used, 0.0)
+            from_credits = max(minutes - left, 0.0)
+            if from_credits > user["credits"] + 1e-9:
+                return None
+            t.q("UPDATE users SET credits = credits - ? WHERE id=?", (from_credits, user_id))
+            t.q("INSERT INTO usage(user_id, job_id, minutes, credit_minutes, month, kind, created_at) VALUES (?,?,?,?,?,?,?)",
+                (user_id, job_id, minutes, from_credits, month_key(), "job", _now()))
+            return max(allowance - used - minutes, 0.0) + user["credits"] - from_credits
 
     def refund(self, user_id: str, job_id: str) -> bool:
         """Give back what a job reserved (it failed or was cancelled). Once per job."""
-        with self._lock:
-            self._db.execute("BEGIN IMMEDIATE")
-            try:
-                rows = self._db.execute("SELECT kind, SUM(minutes) AS m, SUM(credit_minutes) AS c, MAX(month) AS mo FROM usage "
-                                        "WHERE user_id=? AND job_id=? GROUP BY kind", (user_id, job_id)).fetchall()
-                took = next((r for r in rows if r["kind"] == "job"), None)
-                if took is None or any(r["kind"] == "refund" for r in rows):
-                    self._db.execute("ROLLBACK")
-                    return False
-                self._db.execute("UPDATE users SET credits = credits + ? WHERE id=?", (took["c"], user_id))
-                self._db.execute("INSERT INTO usage(user_id, job_id, minutes, credit_minutes, month, kind, created_at) VALUES (?,?,?,?,?,?,?)",
-                                 (user_id, job_id, -took["m"], -took["c"], took["mo"], "refund", _now()))
-                self._db.execute("COMMIT")
-                return True
-            except Exception:
-                self._db.execute("ROLLBACK")
-                raise
+        with self.db.tx() as t:
+            t.q("SELECT credits FROM users WHERE id=?" + self.db.for_update, (user_id,))          # lock the person's row: two refunds of one job cannot both pass
+            rows = t.q("SELECT kind, SUM(minutes) AS m, SUM(credit_minutes) AS c, MAX(month) AS mo FROM usage WHERE user_id=? AND job_id=? GROUP BY kind", (user_id, job_id)).fetchall()
+            took = next((r for r in rows if r["kind"] == "job"), None)
+            if took is None or any(r["kind"] == "refund" for r in rows):
+                return False
+            t.q("UPDATE users SET credits = credits + ? WHERE id=?", (took["c"], user_id))
+            t.q("INSERT INTO usage(user_id, job_id, minutes, credit_minutes, month, kind, created_at) VALUES (?,?,?,?,?,?,?)",
+                (user_id, job_id, -took["m"], -took["c"], took["mo"], "refund", _now()))
+            return True
 
     # --- webhooks (idempotency) -----------------------------------------------------------------
     def first_time(self, event_id: str) -> bool:
-        try:
-            self._q("INSERT INTO webhook_events VALUES (?,?)", (event_id, _now()))
-            return True
-        except sqlite3.IntegrityError:
-            return False
+        return self._q("INSERT INTO webhook_events VALUES (?,?) ON CONFLICT(id) DO NOTHING", (event_id, _now())).rowcount == 1
 
     def backup(self, folder: str | Path, keep: int = 7) -> Optional[Path]:
-        """A consistent copy of the database (SQLite's online backup, safe while it is in use), once a day, the newest ``keep`` kept. Returns the file
-        made, or None when today's copy already exists."""
+        """SQLite only: a consistent copy of the database file (SQLite's online backup, safe while it is in use), once a day, the newest ``keep`` kept. Returns the
+        file made, or None when today's copy already exists. PostgreSQL is backed up by the database service (see docs/deploy.md): nothing is done here."""
+        if self.postgres:
+            return None
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
         dest = folder / f"clipcrow-{datetime.now(timezone.utc).strftime('%Y%m%d')}.db"
         made = None
         if not dest.exists():
-            made = self._copy_to(dest)
+            tmp = dest.with_suffix(".tmp")
+            self.db.backup_to(tmp)
+            tmp.replace(dest)
+            made = dest
         for old in sorted(folder.glob("clipcrow-*.db"))[:-keep]:
             old.unlink(missing_ok=True)
         return made
-
-    def _copy_to(self, dest: Path) -> Path:
-        tmp = dest.with_suffix(".tmp")
-        out = sqlite3.connect(str(tmp))
-        try:
-            with self._lock:
-                self._db.backup(out)
-        finally:
-            out.close()
-        tmp.replace(dest)
-        return dest
 
     def count(self) -> int:
         return int(self._q("SELECT COUNT(*) AS n FROM users").fetchone()["n"])
