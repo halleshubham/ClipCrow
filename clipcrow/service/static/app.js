@@ -1368,10 +1368,14 @@ async function jobView(jobId) {
     if (needsPolling()) {
       try { job = await api(`/jobs/${jobId}`); update(); }
       catch (e) { if (e instanceof SignInNeeded) { route(); return; } }
-      if (!dead) timer = setTimeout(poll, 1500);
+      if (!dead) timer = setTimeout(poll, pollDelay());
     }
   }
-  function schedule() { clearTimeout(timer); if (!dead) timer = setTimeout(poll, 1500); }
+  // a hidden tab asks rarely and a queued job changes slowly: this page used to ask every 1.5 s for hours
+  const pollDelay = () => (document.hidden ? 10000 : job.status === 'queued' ? 4000 : 1500);
+  const onVisible = () => { if (!document.hidden && !dead) { clearTimeout(timer); poll(); } };
+  document.addEventListener('visibilitychange', onVisible);
+  function schedule() { clearTimeout(timer); if (!dead) timer = setTimeout(poll, pollDelay()); }
 
   app.replaceChildren(
     el('div', { class: 'stack' },
@@ -1383,7 +1387,7 @@ async function jobView(jobId) {
       cutCard, whoCard, trCard, usage));
   update();
   timer = setTimeout(poll, 1500);
-  return { cleanup() { dead = true; clearTimeout(timer); } };
+  return { cleanup() { dead = true; clearTimeout(timer); document.removeEventListener('visibilitychange', onVisible); } };
 }
 
 async function jobsView() {

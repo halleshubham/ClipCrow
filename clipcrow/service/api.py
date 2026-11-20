@@ -357,6 +357,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return request.url.scheme == "https"          # correct behind the proxy because uvicorn trusts its X-Forwarded-Proto (cli.py)
 
     from .bodyguard import BodyGuard
+    from .compress import TextGzip
+    app.add_middleware(TextGzip)
     app.add_middleware(BodyGuard, upload_mb=max_upload_mb, session_cookies=(SESSION_COOKIE, COOKIE), require_sign_in=bool(accounts) or bool(token))
 
     @app.middleware("http")
@@ -406,14 +408,23 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(404, "No such job.")
         return job
 
+    days_memo: dict[str, tuple[float, tuple[int, int]]] = {}
+
     def days_for(job: Job) -> tuple[int, int]:
         """(retention days, original-video days) for a job: its owner's plan, or the environment defaults."""
         if accounts and job.owner:
+            hit = days_memo.get(job.owner)
+            if hit and time.monotonic() - hit[0] < 5.0:             # a job list asks once per job; the plan of one person does not change within seconds
+                return hit[1]
             try:
                 p = effective_plan(accounts.get(job.owner))
-                return p.retention_days, p.source_days
+                val = (p.retention_days, p.source_days)
             except KeyError:
-                return (0, 0)
+                val = (0, 0)
+            days_memo[job.owner] = (time.monotonic(), val)
+            if len(days_memo) > 2000:
+                days_memo.clear()
+            return val
         return env_days()
 
     if start_runner and (accounts or any(env_days()) or storage):
@@ -450,7 +461,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         """A new job from this person must stay inside the cost limits (an operator is exempt). Raises the refusal, after which the caller discards the job."""
         if user.email in admins:
             return
-        mine = [j for j in store.list() if j.owner == user.id and j.id != job_id]
+        mine = [j for j in store.briefs() if j.owner == user.id and j.id != job_id]
         why = job_refusal(limits, active=sum(1 for j in mine if j.status in ("queued", "running")), today=jobs_since(mine, 24), minutes=minutes)
         if why:
             raise HTTPException(why[0], why[1])
@@ -591,7 +602,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         need_accounts()
         if not hmac.compare_digest((body.email or "").strip().lower().encode(), user.email.encode()):
             raise HTTPException(403, "That is not the email of this account.")
-        if any(j.status in ("queued", "running") for j in store.list() if j.owner == user.id):
+        if any(j.status in ("queued", "running") for j in store.briefs() if j.owner == user.id):
             raise HTTPException(409, "Cancel your running jobs first.")
         if user.subscription and razorpay:                       # stop the charges FIRST; if that fails, delete nothing
             try:
@@ -599,7 +610,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             except BillingError:
                 raise HTTPException(UPSTREAM, "Your subscription could not be cancelled just now, so the account was not deleted. "
                                          "Try again in a minute.")
-        for j in store.list():
+        for j in store.briefs():
             if j.owner == user.id:
                 purge_remote(j.id, "Your files could not be removed from storage just now, so the account was not deleted. Try again in a minute.")
                 store.delete(j.id)
@@ -639,16 +650,26 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         app.state.watchdog = Watchdog(snapshot, lambda subject, body: mailq.send(plain_mail(alert_to, subject, [body], "alert")) if alert_to else None)
         app.state.watchdog.start()
 
+    cost_memo: dict[str, tuple[int, float]] = {}
+
     def job_cost(job_id: str) -> Optional[dict]:
         """What making this job cost, in rupees: the AI at the model's list price plus the metered GPU time. None when the plan is not on disk."""
         path = store.dir(job_id) / "out" / "edl.json"
         if not path.is_file():
             return None
-        try:
-            edl = load_edl(path)
-        except Exception:                                              # noqa: BLE001 - one unreadable plan must not break the page
-            return None
-        usd = estimate_total(edl.ai.calls) if edl.ai else 0
+        stamp = path.stat().st_mtime_ns
+        hit = cost_memo.get(job_id)
+        if hit and hit[0] == stamp:                                    # the plan holds the whole transcript: parse it once per change, not on every admin page
+            usd = hit[1]
+        else:
+            try:
+                edl = load_edl(path)
+            except Exception:                                          # noqa: BLE001 - one unreadable plan must not break the page
+                return None
+            usd = estimate_total(edl.ai.calls) if edl.ai else 0
+            cost_memo[job_id] = (stamp, usd)
+            if len(cost_memo) > 3000:
+                cost_memo.clear()
         rate = max(1.0, float(os.environ.get("CLIPCROW_USD_INR") or 88.0))
         gpu = gpu_summary(store.gpu_usage(job_id)).get("est_cost", 0.0)
         return {"ai": round((usd or 0) * rate, 2), "gpu": round(gpu, 2), "total": round((usd or 0) * rate + gpu, 2)}
@@ -1567,7 +1588,16 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     @app.get("/api/jobs", dependencies=[Depends(authed)])
     def list_jobs(request: Request) -> list[dict]:
         user = request.state.user
-        return [view(j) for j in store.list() if not accounts or j.owner == user.id]
+        if not accounts:
+            return [view(j) for j in store.list()]
+        out = []
+        for b in store.briefs():                                  # the person's own jobs only are read in full; everyone else's cost one stat
+            if b.owner == user.id:
+                try:
+                    out.append(view(store.get(b.id)))
+                except KeyError:
+                    continue
+        return out
 
     @app.get("/api/jobs/{job_id}", dependencies=[Depends(authed)])
     def get_job(job_id: str, request: Request) -> dict:

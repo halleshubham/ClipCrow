@@ -156,3 +156,36 @@ def test_the_open_config_hides_the_gpu_spend_and_the_rates_from_visitors(tmp_pat
     c = TestClient(app)
     sign_up(c, "a@example.com")
     assert "estimate" in c.get("/api/config").json()["gpu_worker"]
+
+
+# --- the job index ------------------------------------------------------------------------------------------
+
+def test_briefs_read_a_job_file_again_only_when_it_changed(tmp_path):
+    from clipcrow.service.jobs import JobStore, Params
+    st = JobStore(tmp_path)
+    a, b = st.create("a.mp4", Params()), st.create("b.mp4", Params())
+    st.update(a.id, lambda j: setattr(j, "owner", "u1"))
+    first = st.briefs()
+    assert {x.id: x.owner for x in first} == {a.id: "u1", b.id: None}
+    reads = []
+    real = type(st).get
+    st2 = st
+    again = st2.briefs()
+    assert [x.id for x in again] == [x.id for x in first] and again[0] is first[0]            # the same cached objects: nothing was parsed
+    st.update(b.id, lambda j: setattr(j, "status", "running"))
+    assert next(x for x in st.briefs() if x.id == b.id).status == "running"                    # a change is seen
+    st.delete(a.id)
+    assert [x.id for x in st.briefs()] == [b.id]                                               # a removed job leaves the index
+
+
+def test_text_is_gzipped_and_video_is_left_alone(tmp_path):
+    import gzip
+    from fastapi.testclient import TestClient
+    from clipcrow.service.api import create_app
+    from tests.test_service import FakePipeline
+    c = TestClient(create_app(tmp_path / "d", FakePipeline()))
+    r = c.get("/app.js", headers={"accept-encoding": "gzip"})
+    assert r.status_code == 200 and r.headers.get("content-encoding") == "gzip" and "accept-encoding" in r.headers["vary"].lower()
+    assert "clipcrow" in r.text.lower() or len(r.text) > 1000                                    # the client decoded it
+    plain = c.get("/app.js", headers={"accept-encoding": "identity"})
+    assert "content-encoding" not in plain.headers and len(plain.content) > int(r.headers["content-length"]) * 2

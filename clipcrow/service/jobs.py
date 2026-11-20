@@ -14,6 +14,7 @@ import re
 import shutil
 import threading
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
@@ -139,11 +140,20 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")   # ms: queue order and listing need a total order
 
 
+@dataclass(frozen=True)
+class Brief:
+    id: str
+    owner: Optional[str]
+    status: str
+    created_at: str
+
+
 class JobStore:
     def __init__(self, root: str | Path):
         self.root = Path(root) / "jobs"
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._briefs: dict[str, tuple] = {}
 
     def dir(self, job_id: str) -> Path:
         if not JOB_ID.match(job_id):
@@ -164,6 +174,7 @@ class JobStore:
         with self._lock:
             tmp.write_text(job.model_dump_json(indent=1), encoding="utf-8")
             os.replace(tmp, path)
+            self._briefs.pop(job.id, None)                  # a rewrite inside one clock tick with the same size must not look unchanged
 
     def get(self, job_id: str) -> Job:
         try:
@@ -225,6 +236,32 @@ class JobStore:
             except KeyError:
                 continue
         return sorted(jobs, key=lambda j: j.created_at, reverse=True)
+
+    def briefs(self) -> list["Brief"]:
+        """Owner, status and date of every job, newest first: for the checks that run on every request (limits, queue position). A job file is read again only when it
+        changed (size or modification time), so with thousands of jobs this costs one ``stat`` each instead of parsing every file."""
+        out, seen = [], set()
+        with self._lock:
+            for d in self.root.iterdir():
+                path = d / "job.json"
+                try:
+                    st = path.stat()
+                except OSError:
+                    continue
+                seen.add(d.name)
+                key = (st.st_mtime_ns, st.st_size)
+                hit = self._briefs.get(d.name)
+                if hit is None or hit[0] != key:
+                    try:
+                        j = Job.model_validate(json.loads(path.read_text(encoding="utf-8")))
+                    except (OSError, ValueError):
+                        continue
+                    hit = (key, Brief(j.id, j.owner, j.status, j.created_at))
+                    self._briefs[d.name] = hit
+                out.append(hit[1])
+            for gone in [k for k in self._briefs if k not in seen]:
+                del self._briefs[gone]
+        return sorted(out, key=lambda b: b.created_at, reverse=True)
 
     def delete(self, job_id: str) -> None:
         shutil.rmtree(self.dir(job_id), ignore_errors=True)

@@ -76,7 +76,7 @@ ENV CLIPCROW_HF_BIN=hyperframes CLIPCROW_FONT_DIR=/opt/fonts CLIPCROW_GSAP=/opt/
 VOLUME ["/data", "/models"]
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:8000/api/config >/dev/null || exit 1
+  CMD curl -fsS http://127.0.0.1:8000/api/health >/dev/null || exit 1
 
 # tini is PID 1 so SIGTERM from a deploy reaches the app, which then drains (finishes or requeues the running job).
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]

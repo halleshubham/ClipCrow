@@ -154,7 +154,7 @@ class JobRunner:
                 log.exception("on_finish failed for %s", job.id)
 
     def queue_position(self, job_id: str) -> int:
-        queued = [j for j in reversed(self.store.list()) if j.status == "queued"]
+        queued = [j for j in reversed(self.store.briefs()) if j.status == "queued"]
         return next((i + 1 for i, j in enumerate(queued) if j.id == job_id), 0)
 
     # --- shutdown --------------------------------------------------------------------------------
