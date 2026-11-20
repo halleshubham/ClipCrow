@@ -18,6 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import subprocess
+import threading
 import time
 import logging
 import math
@@ -469,6 +470,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(why[0], why[1])
 
     rates = RateLimiter()
+    zip_slots = threading.BoundedSemaphore(2)
 
     def throttle(request: Request, what: str, limit: int, window_s: float, message: str) -> None:
         """Costly routes (a style analysis, a re-cut, a render) are limited per person: a free account must not be able to spend the operator's LLM and GPU budget in a loop."""
@@ -1769,7 +1771,13 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         ready = [c.id for c in job.clips if c.ready]
         if not ready:
             raise HTTPException(404, "No reel is ready yet.")
-        tmpdir = Path(tempfile.mkdtemp(prefix="clipcrow-zip-"))
+        if not zip_slots.acquire(blocking=False):                      # an archive is built on disk before the first byte is sent: only a few at a time
+            raise HTTPException(429, "Several downloads are being prepared. Try again in a moment.")
+        try:
+            tmpdir = Path(tempfile.mkdtemp(prefix="clipcrow-zip-", dir=data_dir))        # the data disk, not a small /tmp
+        except BaseException:
+            zip_slots.release()
+            raise
         added = 0
         try:
             archive = tmpdir / "reels.zip"
@@ -1794,6 +1802,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         except BaseException:
             shutil.rmtree(tmpdir, ignore_errors=True)
             raise
+        finally:
+            zip_slots.release()
         return FileResponse(archive, media_type="application/zip", filename=f"{stem[:60]}-reels.zip",
                             background=BackgroundTask(shutil.rmtree, tmpdir, ignore_errors=True))
 

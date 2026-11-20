@@ -727,24 +727,30 @@ def render_cleaned(src: Path, keeps: list[tuple[int, int]], info: dict, dst: Pat
                 raise ValueError("ffmpeg could not read the audio")
             x = np.frombuffer(r.stdout, dtype=np.int16).reshape(-1, ch)
             off = info["a_start"] - info["v_start"]                           # audio relative to video time zero
-            if abs(off) > 0.001:
-                n = int(round(abs(off) * sr))
-                x = np.vstack([np.zeros((n, ch), np.int16), x]) if off > 0 else x[n:]
+            shift = int(round(abs(off) * sr)) if abs(off) > 0.001 else 0
+
+            def virtual(s0: int, s1: int):
+                """samples [s0, s1) of the audio moved by ``off``, without copying the whole recording (it is up to an hour of 48 kHz sound)"""
+                if shift and off > 0:                                   # the audio starts later than the picture: silence first
+                    zeros = max(0, min(s1, shift) - s0)
+                    data = x[max(s0 - shift, 0):max(s1 - shift, 0)]
+                    return np.vstack([np.zeros((zeros, ch), np.int16), data]) if zeros else data
+                if shift:                                               # the audio starts earlier: drop its head
+                    return x[shift + s0:shift + s1]
+                return x[s0:s1]
             fade = max(1, int(FADE_MS / 1000 * sr))
             ramp = np.linspace(0, 1, fade, dtype=np.float32)[:, None]
-            parts = []
-            for a, b in keeps:
-                s0, s1 = int(round(a / fps * sr)), int(round(b / fps * sr))
-                seg = x[s0:s1].astype(np.float32)
-                if len(seg) < s1 - s0:
-                    seg = np.vstack([seg, np.zeros((s1 - s0 - len(seg), ch), np.float32)])
-                if len(seg) > 2 * fade:
-                    seg[:fade] *= ramp
-                    seg[-fade:] *= ramp[::-1]
-                parts.append(seg)
-                check()
-            y = np.clip(np.vstack(parts), -32768, 32767).astype(np.int16)
-            (d / "a.raw").write_bytes(y.tobytes())
+            with open(d / "a.raw", "wb") as raw:                          # one segment in memory at a time, written as it is made (was: all of them, three times over)
+                for a, b in keeps:
+                    s0, s1 = int(round(a / fps * sr)), int(round(b / fps * sr))
+                    seg = virtual(s0, s1).astype(np.float32)
+                    if len(seg) < s1 - s0:
+                        seg = np.vstack([seg, np.zeros((s1 - s0 - len(seg), ch), np.float32)])
+                    if len(seg) > 2 * fade:
+                        seg[:fade] *= ramp
+                        seg[-fade:] *= ramp[::-1]
+                    raw.write(np.clip(seg, -32768, 32767).astype(np.int16).tobytes())
+                    check()
             cmd += ["-f", "s16le", "-ar", sr, "-ac", ch, "-i", d / "a.raw"]
         tail = ["-map", "[v]"]
         if info["has_audio"]:

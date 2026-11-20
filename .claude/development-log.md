@@ -286,3 +286,9 @@ poll back-off, EDL range bounds, logo re-encode, pin base images/ffmpeg/Node by 
    deleted); `CLIPCROW_WORKER_TOKEN_RENTED` is a pool token (the pod's token decides its pool and can be revoked alone); no outbound call follows a redirect (`httpsafe.install()`);
    loopback checks use the parsed host; the pod's address must be https. Still open: pin base images/ffmpeg/Node by checksum, SHA-pin CI actions, WavLM revision, cleanup audio memory
    (4-5 GB on 90 min), face sampling seeks, streamed zip/publish bodies, per-job AI budget, data export, email change.
+
+### Iteration 6 (same day)
+Cleanup writes the cut audio segment by segment (peak ~1 GB instead of 4-5 GB on a 90-minute recording; the audio offset is applied by index, not by copying the array); face sampling
+reads forward and decodes only the sampled frames, seeking only to start or over a gap of 3 s or more (identical frames, 15x faster on a long-GOP clip: 0.5 s against 7.6 s); the
+zip download builds at most 2 archives at a time, on the data disk. Verified on SQLite and PostgreSQL (the test wrapper now honours a caller's `secret_file`).
+Not done, needs checksums/digests from the network: pin the base images by digest, ffmpeg and Node by sha256, CI actions by commit; WavLM revision; streamed publish upload.

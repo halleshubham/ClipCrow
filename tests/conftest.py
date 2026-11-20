@@ -126,7 +126,8 @@ def accounts_on_postgres(monkeypatch):
         if str(target).startswith(("postgres://", "postgresql://")):                 # a test that asks for PostgreSQL itself
             return original(self, target, **kw)
         schema = "t_" + uuid.uuid4().hex[:16]
-        original(self, url, schema=schema, secret_file=Path(target).with_suffix(".secret"), **kw)
+        secret = kw.pop("secret_file", None) or Path(target).with_suffix(".secret")           # the caller's own file wins
+        original(self, url, schema=schema, secret_file=secret, **kw)
         made.append(self)
     monkeypatch.setattr(acc.Accounts, "__init__", init)
     monkeypatch.setattr(acc.Accounts, "_sqlite_init", original, raising=False)        # for a test that needs a real SQLite file (the move to PostgreSQL)

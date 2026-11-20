@@ -145,10 +145,28 @@ def sample_faces(video: str, start: float, end: float, detector: FaceDetector, *
     out: list[Sample] = []
     try:
         n = max(1, int((end - start) * rate))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        sequential = 1.0 < fps <= 240.0
+        pos = -1                                                   # the index of the next frame the decoder will give; -1 = unknown, seek first
         for k in range(n + 1):
             t = min(k / rate, end - start)
-            cap.set(cv2.CAP_PROP_POS_MSEC, (start + t) * 1000)
-            ok, frame = cap.read()
+            if sequential:
+                # Seeking costs a decode from the previous keyframe (seconds apart in a long-GOP recording) for EVERY sample; reading forward and only decoding to a picture
+                # the sampled frames costs one pass. A seek is used only to start, or to jump over a long gap.
+                target = int(round((start + t) * fps))
+                if pos < 0 or target < pos or target - pos > int(3 * fps):
+                    cap.set(cv2.CAP_PROP_POS_MSEC, (start + t) * 1000)
+                    pos = int(round(cap.get(cv2.CAP_PROP_POS_FRAMES)))
+                    target = max(target, pos)
+                while pos < target and cap.grab():
+                    pos += 1
+                if pos < target:
+                    continue
+                ok, frame = cap.read()
+                pos += 1
+            else:
+                cap.set(cv2.CAP_PROP_POS_MSEC, (start + t) * 1000)
+                ok, frame = cap.read()
             if not ok:
                 continue
             boxes = detector.detect(frame)
