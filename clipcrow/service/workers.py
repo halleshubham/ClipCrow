@@ -220,10 +220,16 @@ class WorkerHub:
     def __init__(self, token: str, *, pickup_seconds: float = 120.0, lease_seconds: float = 90.0,
                  online_seconds: float = 60.0, render_pin: str = "", render_build: str = "", disabled: frozenset = frozenset(), widen: bool = True, max_upload_bytes: int = 300 * 1024 * 1024,
                  max_direct_bytes: int = 2 * 1024 ** 3, storage=None, clock: Callable[[], float] = time.monotonic,
-                 on_task_end: Optional[Callable[[dict], None]] = None, rate_for: Optional[Callable[[str], float]] = None):
+                 on_task_end: Optional[Callable[[dict], None]] = None, rate_for: Optional[Callable[[str], float]] = None,
+                 pool_tokens: Optional[dict] = None):
         if not token or len(token) < 16:
             raise ValueError("CLIPCROW_WORKER_TOKEN must be at least 16 characters (try: openssl rand -hex 32)")
         self._token = token.encode()
+        self._pool_tokens: dict[str, bytes] = {}
+        for pool, tok in (pool_tokens or {}).items():
+            if pool not in ("home", "rented") or not tok or len(tok) < 16 or tok == token:
+                raise ValueError("a pool token must be at least 16 characters and differ from the main worker token")
+            self._pool_tokens[pool] = tok.encode()
         self.pickup_seconds, self.lease_seconds, self.online_seconds = pickup_seconds, lease_seconds, online_seconds
         self.render_pin, self.max_upload_bytes = render_pin, max_upload_bytes
         self.render_build = render_build                 # the render code version of this server; "" = do not check
@@ -244,7 +250,19 @@ class WorkerHub:
 
     # authentication ---------------------------------------------------------------------------------------------------
     def check_token(self, presented: str) -> bool:
-        return hmac.compare_digest(presented.encode(), self._token)
+        return self.pool_of(presented) is not None
+
+    def pool_of(self, presented: str) -> Optional[str]:
+        """None: not a worker token. "": the main token (the worker says which pool it is in). A pool name: a token that belongs to that pool only, whatever the worker says
+        (CLIPCROW_WORKER_TOKEN_RENTED goes on rented pods, so a stolen pod cannot ask for a home machine's tasks, and it can be revoked alone)."""
+        got = presented.encode()
+        found = None
+        for pool, tok in self._pool_tokens.items():                  # no early exit: the time taken does not say which one matched
+            if hmac.compare_digest(got, tok):
+                found = pool
+        if hmac.compare_digest(got, self._token):
+            return ""
+        return found
 
     # who is out there ------------------------------------------------------------------------------------------------
     def _touch(self, name: str, device: str = "", model: str = "", can: Optional[tuple] = None, pin: Optional[str] = None,

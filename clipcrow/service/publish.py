@@ -29,6 +29,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
+from ..httpsafe import https_or_loopback
+
 # Only platforms whose post settings were read from SocioBird's own schema (integrationSchema) are allowed. Left out on purpose: dev.to and
 # the others are articles, botsab is a WhatsApp group bot (no schema was checked for either).
 SUPPORTED = ("youtube", "instagram", "instagram-standalone", "tiktok", "facebook", "x", "linkedin", "linkedin-page", "telegram")
@@ -93,7 +95,7 @@ class SocioBird:
     def __init__(self, base_url: str, api_key: str, *, request: Callable[..., dict] | None = None):
         if not (base_url and api_key):
             raise ValueError("SocioBird needs a base URL and an API key")
-        if not base_url.startswith("https://") and not base_url.startswith("http://127.0.0.1"):
+        if not https_or_loopback(base_url):
             raise ValueError("the SocioBird address must be https")
         self.base, self._key = base_url.rstrip("/"), api_key
         self._request = request or self._http

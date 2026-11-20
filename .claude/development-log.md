@@ -272,3 +272,17 @@ No critical findings; no secret in git history; no known-vulnerable dependency. 
 login_sends, users.created_at; psycopg declared; stray wheel removed; `.gitignore` covers data/db/secret/env. Open (ranked in the review reply): ffmpeg demuxer/protocol pinning on
 uploads, body-size cap before auth, per-worker tokens, meter cleanup-review/retry/styles, operator rules (root admins), `/api/config` trimming, JobStore index (list() is O(all jobs)),
 poll back-off, EDL range bounds, logo re-encode, pin base images/ffmpeg/Node by checksum.
+
+## 2026-11-20 - Review follow-up, iterations 1-5
+1. `mediaguard.py`: untrusted uploads (source, outro, music, style reference, a worker's clip) must start like a real container and are opened with `-protocol_whitelist file,pipe`
+   and a container whitelist; `bodyguard.py` (ASGI): a changing `/api` request without a session/token is refused before its body is read, and bodies are capped per route (also chunked).
+2. Costly routes limited per person (`ops.RateLimiter`): style analysis, speaker checks, re-runs, clip edits; re-cuts max 5 per job; retry and re-cut call `enforce_limits`; clip
+   re-renders have their own queue; a root operator (CLIPCROW_ADMINS) cannot be disabled and only a root operator edits `extra_admins`; `/api/config` shows visitors no GPU spend, rates or errors.
+3. `JobStore.briefs()` (owner, status, date; re-read only when the file changed) replaces full scans in limits, queue position, account delete and the job list; job page polls calmly
+   (hidden tab 10 s, queued 4 s); `compress.TextGzip` (text only, never video); logos 361->138 KB and 110->37 KB; job cost memoised; Docker health check on `/api/health`.
+4. EDL: canvas 240-2160 x 240-3840, fps 1-60, <= 60 overlays, no inf/nan; transcript text cannot close the prompt fence; invisible direction marks removed (ZWJ/ZWNJ kept); logos and
+   generated pictures are decoded and written again as PNG; the service ignores `links`; CI token read-only.
+5. A failed job run again and failed again refunds its second reserve; the signup bonus is given once per mailbox (lowercase, no +tag, no Gmail dots; remembered after the account is
+   deleted); `CLIPCROW_WORKER_TOKEN_RENTED` is a pool token (the pod's token decides its pool and can be revoked alone); no outbound call follows a redirect (`httpsafe.install()`);
+   loopback checks use the parsed host; the pod's address must be https. Still open: pin base images/ffmpeg/Node by checksum, SHA-pin CI actions, WavLM revision, cleanup audio memory
+   (4-5 GB on 90 min), face sampling seeks, streamed zip/publish bodies, per-job AI budget, data export, email change.

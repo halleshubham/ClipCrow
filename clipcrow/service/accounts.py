@@ -371,11 +371,17 @@ class Accounts:
             t.q("SELECT credits FROM users WHERE id=?" + self.db.for_update, (user_id,))          # lock the person's row: two refunds of one job cannot both pass
             rows = t.q("SELECT kind, SUM(minutes) AS m, SUM(credit_minutes) AS c, MAX(month) AS mo FROM usage WHERE user_id=? AND job_id=? GROUP BY kind", (user_id, job_id)).fetchall()
             took = next((r for r in rows if r["kind"] == "job"), None)
-            if took is None or any(r["kind"] == "refund" for r in rows):
+            back = next((r for r in rows if r["kind"] == "refund"), None)
+            if took is None:
                 return False
-            t.q("UPDATE users SET credits = credits + ? WHERE id=?", (took["c"], user_id))
+            # what is still held for this job: every reserve minus every refund (a failed job that was run again reserved twice, and must be able to refund the second time)
+            held_m = float(took["m"]) + (float(back["m"]) if back else 0.0)
+            held_c = float(took["c"]) + (float(back["c"]) if back else 0.0)
+            if held_m <= 1e-9:
+                return False
+            t.q("UPDATE users SET credits = credits + ? WHERE id=?", (held_c, user_id))
             t.q("INSERT INTO usage(user_id, job_id, minutes, credit_minutes, month, kind, created_at) VALUES (?,?,?,?,?,?,?)",
-                (user_id, job_id, -took["m"], -took["c"], took["mo"], "refund", _now()))
+                (user_id, job_id, -held_m, -held_c, took["mo"], "refund", _now()))
             return True
 
     # --- webhooks (idempotency) -----------------------------------------------------------------

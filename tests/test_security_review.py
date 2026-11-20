@@ -212,3 +212,100 @@ def test_a_transcript_cannot_close_the_prompt_fence_or_hide_direction_marks():
     assert "</transcript>" not in line and "<b>" not in line and "hello" in line
     assert clean_text("a‮b​c", 20) == "abc"
     assert clean_text("क‍ष", 20) == "क‍ष"                      # the joiner Indic scripts need stays
+
+
+# --- money ----------------------------------------------------------------------------------------------------
+
+def test_a_job_that_failed_was_run_again_and_failed_again_gets_its_second_reserve_back_too(tmp_path):
+    a = Accounts(tmp_path / "c.db")
+    u = a.ensure_user("a@example.com")
+    a.add_credits(u.id, 100)
+    assert a.reserve(u.id, "j1", 10, 0) is not None and a.refund(u.id, "j1") is True
+    assert a.refund(u.id, "j1") is False                              # still once per reserve
+    assert a.reserve(u.id, "j1", 10, 0) is not None                   # run again
+    assert a.refund(u.id, "j1") is True and round(a.get(u.id).credits, 6) == 100.0
+    assert a.refund(u.id, "j1") is False
+
+
+def test_the_welcome_bonus_is_given_once_per_mailbox_not_once_per_account(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from clipcrow.service.api import create_app
+    from tests.mailhelp import Outbox, sign_up
+    from tests.test_payg import payg_catalog
+    from tests.test_service import FakePipeline
+    a = Accounts(tmp_path / "d" / "c.db")
+    app = create_app(tmp_path / "d", FakePipeline(), accounts=a, mailer=Outbox(), catalog=payg_catalog(signup_bonus_minutes=10.0))
+    c = TestClient(app)
+    sign_up(c, "Jane.Doe@gmail.com")
+    assert a.by_email("jane.doe@gmail.com").credits == 10.0
+    c2 = TestClient(app)
+    sign_up(c2, "janedoe+promo@gmail.com")                            # the same mailbox under another spelling
+    assert a.by_email("janedoe+promo@gmail.com").credits == 0.0
+    assert c.request("DELETE", "/api/account", json={"email": "jane.doe@gmail.com"}).status_code == 200
+    c3 = TestClient(app)
+    sign_up(c3, "jane.doe@gmail.com")
+    assert a.by_email("jane.doe@gmail.com").credits == 0.0           # signing up again after deleting does not earn it again
+
+
+# --- workers --------------------------------------------------------------------------------------------------
+
+def test_a_rented_pool_token_decides_the_pool_whatever_the_worker_says(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from clipcrow.service.api import create_app
+    from tests.test_service import FakePipeline
+    monkeypatch.setenv("CLIPCROW_WORKER_TOKEN_RENTED", "r" * 32)
+    app = create_app(tmp_path / "d", FakePipeline(), worker_token="m" * 32)
+    c = TestClient(app)
+    hub = app.state.hub
+    for tok, claims, real in (("r" * 32, "home", "rented"), ("m" * 32, "home", "home"), ("m" * 32, "rented", "rented")):
+        r = c.post("/api/worker/poll", json={"worker": f"w-{real}-{claims}", "wait": 0, "pool": claims}, headers={"Authorization": f"Bearer {tok}"})
+        assert r.status_code == 200
+    assert c.post("/api/worker/poll", json={"worker": "x", "wait": 0}, headers={"Authorization": "Bearer " + "z" * 32}).status_code == 401
+    assert hub._seen["w-rented-home"].pool == "rented"                            # claimed "home", the token said rented
+
+
+def test_a_pool_token_equal_to_the_main_token_is_refused():
+    from clipcrow.service.workers import WorkerHub
+    with pytest.raises(ValueError):
+        WorkerHub("m" * 32, pool_tokens={"rented": "m" * 32})
+
+
+# --- outbound HTTP --------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("url,ok", [("https://example.com", True), ("http://127.0.0.1:8000", True), ("http://localhost:8000", True), ("http://[::1]:8000", True),
+                                    ("http://127.0.0.1.evil.com", False), ("http://localhost.evil.com", False), ("http://example.com", False), ("ftp://example.com", False), ("https://", False)])
+def test_only_https_or_a_real_loopback_address_may_carry_a_secret(url, ok):
+    from clipcrow.httpsafe import https_or_loopback
+    assert https_or_loopback(url) is ok
+
+
+def test_a_redirect_is_not_followed(tmp_path):
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from clipcrow import httpsafe
+    hits = []
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append((self.path, self.headers.get("Authorization")))
+            if self.path == "/a":
+                self.send_response(302)
+                self.send_header("Location", "/b")
+                self.end_headers()
+            else:
+                self.send_response(200)
+                self.end_headers()
+
+        def log_message(self, *a):
+            pass
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    httpsafe.install()
+    try:
+        with pytest.raises(urllib.error.HTTPError):
+            urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{srv.server_port}/a", headers={"Authorization": "Bearer secret"}), timeout=5)
+        assert [h[0] for h in hits] == ["/a"]                          # the key never went to /b
+    finally:
+        srv.shutdown()

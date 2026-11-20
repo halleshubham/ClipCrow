@@ -313,7 +313,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     pictures = PictureStore(data_dir)
     runner.brands = brands
     styles = StyleStore(data_dir)
-    hub = WorkerHub(worker_token, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds, render_pin=HYPERFRAMES_VERSION, render_build=render_build(),
+    hub = WorkerHub(worker_token, pool_tokens={k: v for k, v in (('rented', os.environ.get('CLIPCROW_WORKER_TOKEN_RENTED', '').strip()),) if v}, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds, render_pin=HYPERFRAMES_VERSION, render_build=render_build(),
                     disabled=frozenset(x.strip() for x in (os.environ.get("CLIPCROW_WORKER_DISABLED") or "").split(",") if x.strip()),
                     widen=(os.environ.get("CLIPCROW_GPU_FALLBACK") or "any").strip().lower() != "strict",
                     max_upload_bytes=int(float(os.environ.get("CLIPCROW_WORKER_MAX_UPLOAD_MB", "300") or 300) * 1024 * 1024),
@@ -349,13 +349,15 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     app = FastAPI(title="ClipCrow", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.store, app.state.runner, app.state.accounts, app.state.catalog = store, runner, accounts, catalog
     app.state.mirror, app.state.mirror_source = mirror, backup_source
-    app.state.pod = pod
+    app.state.pod, app.state.hub = pod, hub
     app.state.outbox = mailer if isinstance(mailer, Outbox) else None            # tests read the sign-in code from here
     limit = max_upload_mb * 1024 * 1024
 
     def secure_cookie(request: Request) -> bool:
         return request.url.scheme == "https"          # correct behind the proxy because uvicorn trusts its X-Forwarded-Proto (cli.py)
 
+    from ..httpsafe import install as no_redirects
+    no_redirects()                                      # a server we send a key to cannot bounce the key elsewhere with a redirect
     from .bodyguard import BodyGuard
     from .compress import TextGzip
     app.add_middleware(TextGzip)
@@ -528,11 +530,19 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     sample_path = (sample_dir or os.environ.get("CLIPCROW_SAMPLE_DIR", "")).strip()
 
+    def identity_hash(email: str) -> str:
+        """The same mailbox under its usual spellings: lowercase, no +tag, and no dots in a Gmail address."""
+        local, _, domain = email.strip().lower().partition("@")
+        local = local.split("+", 1)[0]
+        if domain in ("gmail.com", "googlemail.com"):
+            local, domain = local.replace(".", ""), "gmail.com"
+        return hashlib.sha256(f"{local}@{domain}".encode()).hexdigest()
+
     def welcome(user: User) -> None:
         """A new account gets the sample job (when the operator made one) and one welcome mail. Neither may ever fail the sign-in."""
         link, bonus = "", (catalog.payg.signup_bonus_minutes if catalog.payg else 0)
-        if bonus:
-            accounts.add_credits(user.id, bonus)                       # once: this runs only for a brand-new account
+        if bonus and accounts.first_time("bonus:" + identity_hash(user.email)):
+            accounts.add_credits(user.id, bonus)                       # once per PERSON: deleting the account and signing up again, or a+1@gmail.com, does not earn it again
         try:
             if sample_path:
                 job = import_sample(store, sample_path, user.id)
@@ -933,6 +943,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         secret = os.environ.get("SOCIOBIRD_OAUTH_CLIENT_SECRET", "")
         if not (oauth_id and secret):
             raise PublishError("SocioBird sign-in is not set up on this server.")
+        from ..httpsafe import https_or_loopback
+        if not https_or_loopback(oauth_token_url):
+            raise PublishError("SocioBird sign-in is set up with an address that is not https, so the secret was not sent.")
         data = json.dumps({"grant_type": "authorization_code", "code": code, "client_id": oauth_id, "client_secret": secret}).encode()
         req = urllib.request.Request(oauth_token_url, data=data, method="POST", headers={"Content-Type": "application/json", "User-Agent": "ClipCrow/1.0"})
         try:
@@ -1884,8 +1897,10 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if hub is None:
             raise HTTPException(404, "Not found.")
         header = request.headers.get("authorization", "")
-        if not header.lower().startswith("bearer ") or not hub.check_token(header[7:].strip()):
+        pool = hub.pool_of(header[7:].strip()) if header.lower().startswith("bearer ") else None
+        if pool is None:
             raise HTTPException(401, "That worker token is not right.")
+        request.state.worker_pool = pool
 
     def task_id_or_404(task_id: str) -> str:
         if not re.fullmatch(TASK_ID, task_id):
@@ -1893,8 +1908,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return task_id
 
     @app.post("/api/worker/poll", dependencies=[Depends(worker_auth)])
-    async def worker_poll(body: PollIn) -> dict:
-        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model, tuple(body.can), body.pin, body.direct, body.power, body.pool, body.build)
+    async def worker_poll(body: PollIn, request: Request) -> dict:
+        pool = request.state.worker_pool or body.pool                    # a pool token decides the pool, not the worker
+        task = await asyncio.to_thread(hub.poll, body.worker, body.wait, body.device, body.model, tuple(body.can), body.pin, body.direct, body.power, pool, body.build)
         if task is None:
             return {"task": None}
         out = {"id": task.id, "kind": task.kind, "lease_seconds": hub.lease_seconds, "meta": task.meta}

@@ -213,3 +213,8 @@ stops). Without Docker: `pip install -e '.[sravaani]' --extra-index-url https://
 ### Behind a proxy
 `CLIPCROW_TRUSTED_PROXIES` (addresses/CIDRs, or `*`) says whose `X-Forwarded-For/-Proto` the service believes. Default: `*` when `CLIPCROW_PUBLIC_URL` is https, else loopback only.
 Without it every visitor looks like the proxy and the per-IP sign-in limits become one shared bucket. Use `*` only if the container is reachable solely through the proxy.
+
+### Worker tokens
+`CLIPCROW_WORKER_TOKEN` is the main token (your own machine). Give rented pods their own: set `CLIPCROW_WORKER_TOKEN_RENTED` (at least 16 characters, different) and put THAT value in the
+pod's `CLIPCROW_WORKER_TOKEN`. A pod holding it is always in the rented pool whatever it claims, so a stolen pod cannot ask for your home machine's work, and changing that one variable
+revokes every pod without touching the home worker.

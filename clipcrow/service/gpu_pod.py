@@ -20,7 +20,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timezone
 from typing import Callable, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import quote, parse_qs, urlparse
 
 log = logging.getLogger("clipcrow.pod")
 
@@ -107,11 +107,14 @@ def jupyter_run(web_url: str, command: str, timeout: float = 180.0, *, wait_read
     if connect is None:
         import websocket                                              # noqa: PLC0415  (only needed when a pod is configured)
         connect = websocket.create_connection
+    from ..httpsafe import https_or_loopback
+    if not https_or_loopback(web_url):
+        raise PodError("the pod's address is not https, so its token was not sent")           # the Jupyter token would travel in the clear
     u = urlparse(web_url)
     token = (parse_qs(u.query).get("token") or [""])[0]
     base = f"{u.scheme}://{u.netloc}"
     term = _open_terminal(base, token, wait_ready, sleep, opener, clock)
-    ws = connect(base.replace("http", "ws", 1) + f"/terminals/websocket/{term}?token={token}", timeout=timeout)
+    ws = connect(base.replace("http", "ws", 1) + f"/terminals/websocket/{term}?token={quote(token, safe='')}", timeout=timeout)
     tag = uuid.uuid4().hex[:8]
     ws.send(json.dumps(["stdin", f"({command}) 2>&1; echo __EN''D_{tag}__ $?\n"]))
     out, end = "", time.time() + timeout

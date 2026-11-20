@@ -25,6 +25,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
 
+from .httpsafe import https_or_loopback, install as no_redirects
+
 POLL_WAIT = 20.0
 BACKOFF = (2, 5, 10, 30, 60)
 
@@ -48,7 +50,7 @@ class Transport:
 
 class HttpTransport(Transport):
     def __init__(self, base: str, token: str):
-        if not base.startswith(("https://", "http://127.0.0.1", "http://localhost")):
+        if not https_or_loopback(base):
             raise ValueError("use an https:// address (plain http is only allowed for localhost)")
         self.base, self._token = base.rstrip("/"), token
 
@@ -92,7 +94,7 @@ class HttpTransport(Transport):
 
     def put_part(self, url, src, offset, length, *, timeout=60.0):
         """A presigned URL carries its own signature: the worker token must NOT be sent there (it is another host)."""
-        if not url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
+        if not https_or_loopback(url):
             raise ValueError("the storage address is not https")
         try:
             with open(src, "rb") as f:
@@ -486,6 +488,7 @@ def handle_speakers(transport: Transport, name: str, task: dict, log: Callable[[
 
 
 def main(server: str, name: str, model: str, *, render: bool = True, cache_gb: float = 20.0, parallel: int = 1, pool: str = "home") -> int:
+    no_redirects()
     token = os.environ.get("CLIPCROW_WORKER_TOKEN", "")
     if len(token) < 16:
         print("set CLIPCROW_WORKER_TOKEN to the same secret the server has (at least 16 characters)", file=sys.stderr)
