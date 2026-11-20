@@ -158,3 +158,26 @@ def jobs_since(jobs: Iterable, hours: float, owner: Optional[str] = None, status
         if made >= cut:
             n += 1
     return n
+
+
+class RateLimiter:
+    """At most ``limit`` hits per ``window_s`` for each key (a person, a job). In memory, thread-safe, and keys with no recent hits are dropped, so it cannot grow without bound."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self._hits: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+        self._clock = clock
+
+    def allow(self, key: str, limit: int, window_s: float) -> bool:
+        now = self._clock()
+        with self._lock:
+            fresh = [t for t in self._hits.get(key, ()) if now - t < window_s]
+            if len(fresh) >= limit:
+                self._hits[key] = fresh
+                return False
+            fresh.append(now)
+            self._hits[key] = fresh
+            if len(self._hits) > 5000:                                 # sweep keys that have gone quiet
+                for k in [k for k, v in self._hits.items() if not v or now - v[-1] > 86400]:
+                    del self._hits[k]
+            return True

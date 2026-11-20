@@ -52,6 +52,7 @@ class JobRunner:
     def __init__(self, store: JobStore, pipeline: Pipeline):
         self.store, self.pipeline = store, pipeline
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-job")
+        self._edit_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipcrow-edit")      # one clip re-render does not wait behind a 30-minute job
         self.on_finish = None                                      # called with the job once it is done, failed or cancelled
         self.on_change = None                                      # called with a job id when its files changed (to mirror them)
         self.brands = None                                         # BrandStore: the logo and ending video of an account
@@ -344,7 +345,7 @@ class JobRunner:
                 self._replan[key] = replan
             self._mark(job_id, clip_id, new, render="queued", render_error="", edited=True)
         self._changed(job_id)
-        self._pool.submit(self._render_clip, job_id, clip_id)
+        self._edit_pool.submit(self._render_clip, job_id, clip_id)
         return True
 
     def set_speakers(self, job_id: str, overrides: dict[int, int | None]) -> list[str]:
@@ -394,7 +395,7 @@ class JobRunner:
                 self._replan[key] = "switch"
                 self._mark(job_id, cid, None, render="queued", render_error="", edited=True)
         for cid in queued:
-            self._pool.submit(self._render_clip, job_id, cid)
+            self._edit_pool.submit(self._render_clip, job_id, cid)
         self._changed(job_id)
         return queued
 
@@ -467,7 +468,7 @@ class JobRunner:
                 self._mark(job_id, cid, new, render="queued", render_error="", edited=True)
         self._changed(job_id)
         for cid in hit:
-            self._pool.submit(self._render_clip, job_id, cid)
+            self._edit_pool.submit(self._render_clip, job_id, cid)
         return hit
 
     def reset_clip(self, job_id: str, clip_id: str) -> bool:
@@ -488,7 +489,7 @@ class JobRunner:
             self._replan.pop(key, None)
             self._mark(job_id, clip_id, new, render="queued", render_error="", edited=False)
         self._changed(job_id)
-        self._pool.submit(self._render_clip, job_id, clip_id)
+        self._edit_pool.submit(self._render_clip, job_id, clip_id)
         return True
 
     def rerender(self, job_id: str, clip_id: str) -> None:
@@ -497,7 +498,7 @@ class JobRunner:
             key = (job_id, clip_id)
             self._gen[key] = self._gen.get(key, 0) + 1
             self._mark(job_id, clip_id, render="queued", render_error="")
-        self._pool.submit(self._render_clip, job_id, clip_id)
+        self._edit_pool.submit(self._render_clip, job_id, clip_id)
 
     def _render_clip(self, job_id: str, clip_id: str) -> None:
         if not self._enter():

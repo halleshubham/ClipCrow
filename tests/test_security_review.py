@@ -107,3 +107,52 @@ def test_an_unsigned_post_is_refused_before_its_body_is_read_and_chunked_bodies_
         for _ in range(20):
             yield b"x" * (1024 * 1024)
     assert c.post("/api/jobs", content=chunks(), headers={"content-type": "multipart/form-data; boundary=x"}).status_code == 413
+
+
+# --- costly routes, operators, the open config -------------------------------------------------------------
+
+def test_the_rate_limiter_counts_a_window_and_forgets_quiet_keys():
+    from clipcrow.service.ops import RateLimiter
+    now = [0.0]
+    r = RateLimiter(clock=lambda: now[0])
+    assert [r.allow("a", 3, 60) for _ in range(4)] == [True, True, True, False]
+    assert r.allow("b", 3, 60) is True                                # another key is separate
+    now[0] = 61
+    assert r.allow("a", 3, 60) is True                                # the window passed
+
+
+def _boss_and_user(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from tests.mailhelp import sign_up
+    from tests.test_ops import client
+    c, a, app = client(tmp_path, monkeypatch, admins="boss@example.com")
+    boss = TestClient(app)
+    sign_up(boss, "boss@example.com")
+    other = TestClient(app)
+    sign_up(other, "second@example.com")
+    return boss, other, a, app
+
+
+def test_a_root_operator_cannot_be_disabled_and_only_a_root_operator_edits_the_operator_list(tmp_path, monkeypatch):
+    boss, second, a, app = _boss_and_user(tmp_path, monkeypatch)
+    assert boss.put("/api/admin/settings", json={"values": {"extra_admins": "second@example.com"}}).status_code == 200
+    assert second.get("/api/me").json()["admin"] is True              # now an operator, but not a root one
+    boss_id = a.by_email("boss@example.com").id
+    r = second.post(f"/api/admin/users/{boss_id}/disabled", json={"disabled": True})
+    assert r.status_code == 422 and "root operator" in r.json()["detail"]
+    assert second.put("/api/admin/settings", json={"values": {"extra_admins": ""}}).status_code == 403
+    assert boss.put("/api/admin/settings", json={"values": {"extra_admins": ""}}).status_code == 200
+
+
+def test_the_open_config_hides_the_gpu_spend_and_the_rates_from_visitors(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from clipcrow.service.api import create_app
+    from tests.mailhelp import Outbox, sign_up
+    from tests.test_service import FakePipeline
+    a = Accounts(tmp_path / "d" / "c.db")
+    app = create_app(tmp_path / "d", FakePipeline(), accounts=a, mailer=Outbox(), worker_token="w" * 32)
+    anon = TestClient(app).get("/api/config").json()
+    assert "estimate" not in anon["gpu_worker"] and "pod" not in anon["gpu_worker"] and "stale" not in anon["gpu_worker"]
+    c = TestClient(app)
+    sign_up(c, "a@example.com")
+    assert "estimate" in c.get("/api/config").json()["gpu_worker"]

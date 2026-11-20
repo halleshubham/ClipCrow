@@ -45,7 +45,7 @@ from .accounts import AccountError, Accounts, CODE_MINUTES, CODE_WAIT_S, User
 from .sample import import_sample
 from .economics import economics as job_economics, suggest_min_minutes, suggest_price, target_markup
 from . import settings as opsettings
-from .ops import Limits, Snapshot, Watchdog, admin_emails, disk_snapshot, is_throwaway, job_refusal, jobs_since
+from .ops import Limits, Snapshot, Watchdog, admin_emails, disk_snapshot, is_throwaway, job_refusal, jobs_since, RateLimiter
 from .mailer import MailQueue, Mailer, Message, Outbox, billing_mail, job_done_mail, plain_mail, sign_in_code_mail, welcome_mail
 from .billing import BillingError, Razorpay, apply_event
 from .brand import MAX_LOGO_BYTES, MAX_MUSIC_BYTES, MAX_OUTRO_BYTES, TRACK_ID, BrandStore, track_path
@@ -455,6 +455,15 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if why:
             raise HTTPException(why[0], why[1])
 
+    rates = RateLimiter()
+
+    def throttle(request: Request, what: str, limit: int, window_s: float, message: str) -> None:
+        """Costly routes (a style analysis, a re-cut, a render) are limited per person: a free account must not be able to spend the operator's LLM and GPU budget in a loop."""
+        user = getattr(request.state, "user", None)
+        who = user.id if user else (request.client.host if request.client else "-")
+        if not rates.allow(f"{what}:{who}", limit, window_s):
+            raise HTTPException(429, message)
+
     # --- config and login ---------------------------------------------------------------
     @app.get("/api/config")
     def config(request: Request) -> dict:
@@ -464,16 +473,18 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             email = u.email if u else None
         except HTTPException:
             signed_in = False
+        is_admin = bool(email and email in admins)
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
                 "pricing": catalog.payg.view() if catalog.payg else None, "signup": bool(accounts) and allow_signup, "signup_paused": bool(accounts) and allow_signup and accounts.signups_today() >= limits.signups_per_day,
                 "email": email, "admin": bool(email and email in admins), "mail": bool(mailer), "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(accounts) or bool(sociobird),
-                "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready(),
+                "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready() if (signed_in or not (accounts or token)) else "",
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
                 "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online()),
                                "render": bool(hub and hub.online("render")),
-                               **({"stale": hub.stale_workers()} if hub and hub.stale_workers() else {}),
-                               "estimate": estimate_numbers(load_rates(), pod.hourly if pod is not None else None),
-                               **({"pod": pod.status()} if pod is not None else {})}}
+                               # the numbers behind the cost estimate and the pod's spend are for people who are signed in / the operator, not for the open internet
+                               **({"stale": hub.stale_workers()} if (is_admin or not (accounts or token)) and hub and hub.stale_workers() else {}),
+                               **({"estimate": estimate_numbers(load_rates(), pod.hourly if pod is not None else None)} if signed_in else {}),
+                               **({"pod": pod.status() if is_admin else {"state": pod.state}} if pod is not None and signed_in else {})}}
 
     @app.post("/api/login")
     def login(body: Login, request: Request) -> JSONResponse:
@@ -787,6 +798,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     @app.put("/api/admin/settings")
     def admin_settings_put(body: SettingsBody, admin: User = Depends(admin_only)) -> dict:
+        if "extra_admins" in body.values and admin.email not in env_admins:
+            raise HTTPException(403, "Only a root operator (set in the server's environment) can change who else is an operator.")
         try:
             opset.update(body.values, admin.id)
         except ValueError as e:
@@ -826,6 +839,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         user = admin_target(user_id)
         if user.id == admin.id:
             raise HTTPException(422, "You cannot disable your own account.")
+        if user.email in env_admins and body.disabled:
+            raise HTTPException(422, "A root operator (set in the server's environment) cannot be disabled here.")
         accounts.set_disabled(user.id, body.disabled)
         log.info("admin %s %s %s", admin.id[:8], "disabled" if body.disabled else "enabled", user.id[:8])
         return {"disabled": body.disabled}
@@ -1587,6 +1602,17 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         job = job_or_404(job_id, request)
         if job.status != "done":
             raise HTTPException(409, "The cuts can be changed once the job has finished.")
+        if accounts and request.state.user:
+            enforce_limits(request.state.user, 0, job.id)
+        counter = store.dir(job_id) / "out" / "recuts.count"
+        try:
+            done_recuts = int(counter.read_text() or 0)
+        except (OSError, ValueError):
+            done_recuts = 0
+        if done_recuts >= 5:
+            raise HTTPException(429, "This recording has been cut again 5 times; start a new job to cut it differently.")
+        counter.parent.mkdir(parents=True, exist_ok=True)
+        counter.write_text(str(done_recuts + 1))
         if job.source_removed or store.source_path(job_id) is None:
             raise HTTPException(409, "The original recording has been removed, so it cannot be cut again.")
         if any(c.render in ("queued", "rendering") for c in job.clips):
@@ -1634,6 +1660,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(503, problem)
         minutes = 0
         if accounts and job.owner:
+            enforce_limits(request.state.user, float(job.source.get("duration") or 0) / 60, job.id)
+            throttle(request, "retry", 10, 3600, "Too many re-runs in the last hour. Try again later.")
             minutes = max(1, math.ceil(float(job.source.get("duration") or 0) / 60))
             plan = effective_plan(request.state.user)
             if accounts.reserve(job.owner, job.id, minutes, plan.monthly_minutes) is None:
@@ -1778,6 +1806,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     async def style_create(request: Request, file: UploadFile = File(...), name: str = Form(""), rights: str = Form("")) -> dict:
         if not truthy(rights):
             raise HTTPException(400, "Confirm that you may use this video as a reference.")
+        throttle(request, "style", 6, 3600, "You have analysed several reference videos in the last hour. Try again later.")
         suffix = Path(file.filename or "").suffix.lower()
         if suffix not in VIDEO_SUFFIXES:
             raise HTTPException(400, "Upload an MP4, MOV, MKV, WebM or M4V video.")
@@ -2113,6 +2142,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     @app.put("/api/jobs/{job_id}/clips/{clip_id}", dependencies=[Depends(authed)])
     def clip_put(job_id: str, clip_id: str, edit: ClipEdit, request: Request) -> dict:
         editable(job_id, clip_id, request)
+        throttle(request, "edit", 40, 60, "You are editing faster than the clips can be rendered. Wait a moment.")
         try:
             changed = runner.edit_clip(job_id, clip_id, edit)
         except ValueError as e:
@@ -2143,6 +2173,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     def speakers_build(job_id: str, request: Request) -> dict:
         """Find who is on screen and whose voice is whose, for a job made without it. Takes a few minutes; the clips are framed again when it is done."""
         job_or_404(job_id, request)
+        throttle(request, "speakers", 6, 3600, "You have started several speaker checks in the last hour. Try again later.")
         try:
             started = runner.build_speakers(job_id)
         except ValueError as e:
@@ -2214,6 +2245,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         if job.status == "done" and (job.source_removed or store.working_video(job_id) is None):
             raise HTTPException(409, "The original video was removed to save space, so the clips can no longer be rendered again. "
                                      "You can still download them.")
+        throttle(request, "edit", 40, 60, "You are editing faster than the clips can be rendered. Wait a moment.")
         try:
             clips = runner.edit_transcript(job_id, body)
         except ValueError as e:
@@ -2225,6 +2257,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     @app.post("/api/jobs/{job_id}/clips/{clip_id}/reset", dependencies=[Depends(authed)])
     def clip_reset(job_id: str, clip_id: str, request: Request) -> dict:
         editable(job_id, clip_id, request)
+        throttle(request, "edit", 40, 60, "You are editing faster than the clips can be rendered. Wait a moment.")
         try:
             changed = runner.reset_clip(job_id, clip_id)
         except ValueError as e:
@@ -2236,6 +2269,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         editable(job_id, clip_id, request)
         if store.get(job_id).clip(clip_id).render in ("queued", "rendering"):
             raise HTTPException(409, "This clip is already rendering.")
+        throttle(request, "edit", 40, 60, "You are editing faster than the clips can be rendered. Wait a moment.")
         runner.rerender(job_id, clip_id)
         return {"render": store.get(job_id).clip(clip_id).model_dump()}
 
