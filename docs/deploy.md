@@ -209,3 +209,7 @@ back to Whisper and the job log says why ("SraVaani unavailable (...): using Whi
 Set both in Coolify (`CLIPCROW_ASR=sravaani`, `HF_TOKEN=...`) and redeploy; the first job after that waits for the download. It writes every spoken word,
 stumbles included, and gives its own word times (starts within about 0.1-0.3 s of ElevenLabs Scribe's on a 84 s test; ends are pulled back to where the voice
 stops). Without Docker: `pip install -e '.[sravaani]' --extra-index-url https://download.pytorch.org/whl/cpu`, or point `CLIPCROW_SRAVAANI_DIR` at a folder with the files.
+
+### Behind a proxy
+`CLIPCROW_TRUSTED_PROXIES` (addresses/CIDRs, or `*`) says whose `X-Forwarded-For/-Proto` the service believes. Default: `*` when `CLIPCROW_PUBLIC_URL` is https, else loopback only.
+Without it every visitor looks like the proxy and the per-IP sign-in limits become one shared bucket. Use `*` only if the container is reachable solely through the proxy.

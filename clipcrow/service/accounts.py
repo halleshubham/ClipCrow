@@ -74,8 +74,12 @@ def schema_statements(dialect: str) -> list[str]:
         "CREATE TABLE IF NOT EXISTS oauth_states (state_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at DOUBLE PRECISION NOT NULL)",
         "CREATE TABLE IF NOT EXISTS login_sends (email TEXT NOT NULL, sent_at DOUBLE PRECISION NOT NULL)",
         "CREATE INDEX IF NOT EXISTS login_sends_email ON login_sends(email, sent_at)",
+        "CREATE INDEX IF NOT EXISTS login_sends_at ON login_sends(sent_at)",
+        "CREATE INDEX IF NOT EXISTS users_created ON users(created_at)",
         "CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at TEXT NOT NULL, "
         "expires_at DOUBLE PRECISION NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS sessions_expires ON sessions(expires_at)",
+        "CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)",
         f"CREATE TABLE IF NOT EXISTS usage (id {auto}, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, job_id TEXT, minutes DOUBLE PRECISION NOT NULL, "
         "credit_minutes DOUBLE PRECISION NOT NULL DEFAULT 0, month TEXT NOT NULL, kind TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS usage_user_month ON usage(user_id, month)",
@@ -93,6 +97,9 @@ class Accounts:
         self.path = None if self.postgres else Path(target)
         self._secret_file = Path(secret_file) if secret_file else (self.path.with_suffix(".secret") if self.path else None)
         self.db = dbm.connect(target, schema=schema, pool_size=pool_size or int(os.environ.get("CLIPCROW_DB_POOL", "10") or 10))
+        cols = self.db.columns("login_sends")
+        if cols and "sent_at" not in cols:                                                       # an early development shape (column "at"): only short-lived rate-limit rows
+            self.db.script(["DROP TABLE login_sends"])
         self.db.script(schema_statements(self.db.dialect))
         self.db.add_column("users", "notify_job_done", "INTEGER NOT NULL DEFAULT 0")             # an older database
         self.db.add_column("users", "disabled", "INTEGER NOT NULL DEFAULT 0")
@@ -117,12 +124,20 @@ class Accounts:
             raise RuntimeError("set CLIPCROW_SECRET_KEY, or give a secret file")
         f = self._secret_file
         if f.is_file():
-            return bytes.fromhex(f.read_text().strip())
+            try:
+                key = bytes.fromhex(f.read_text().strip())
+            except ValueError:
+                key = b""
+            if len(key) != 32:                                         # empty or cut short (a crash while it was written): never sign with a known key
+                raise RuntimeError(f"{f.name} is damaged; restore it from a backup (deleting it would lock everyone out of stored SocioBird links)")
+            return key
         f.parent.mkdir(parents=True, exist_ok=True)
         key = secrets.token_bytes(32)
         fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as h:
             h.write(key.hex())
+            h.flush()
+            os.fsync(h.fileno())
         return key
 
     # --- plumbing -------------------------------------------------------------------------------
@@ -366,6 +381,10 @@ class Accounts:
     # --- webhooks (idempotency) -----------------------------------------------------------------
     def first_time(self, event_id: str) -> bool:
         return self._q("INSERT INTO webhook_events VALUES (?,?) ON CONFLICT(id) DO NOTHING", (event_id, _now())).rowcount == 1
+
+    def forget(self, event_id: str) -> None:
+        """Take back a webhook marker when applying the event failed, so the payment provider's retry is applied instead of answered "duplicate"."""
+        self._q("DELETE FROM webhook_events WHERE id=?", (event_id,))
 
     def backup(self, folder: str | Path, keep: int = 7) -> Optional[Path]:
         """SQLite only: a consistent copy of the database file (SQLite's online backup, safe while it is in use), once a day, the newest ``keep`` kept. Returns the

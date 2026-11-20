@@ -26,8 +26,16 @@ def _hf_cmd() -> list[str]:
     return ["npx", "--yes", f"hyperframes@{HYPERFRAMES_VERSION}"]
 
 
+_SECRETISH = ("KEY", "TOKEN", "SECRET", "PASSWORD", "DATABASE_URL", "ANTHROPIC", "RAZORPAY", "RESEND", "SMTP", "WEBHOOK", "GEMINI", "OPENAI", "CREDENTIAL", "R2_", "AWS_")
+
+
+def child_env() -> dict:
+    """The environment for render and media child processes: Chrome and ffmpeg decode untrusted files, so they never see the service's API keys, tokens or database address."""
+    return {k: v for k, v in os.environ.items() if not any(w in k.upper() for w in _SECRETISH)}
+
+
 def _run(args: list[str], cwd: Path, timeout: int, env: dict | None = None):
-    full_env = {**os.environ, **(env or {})}
+    full_env = {**child_env(), **(env or {})}
     try:
         return subprocess.run([*_hf_cmd(), *args], cwd=cwd, capture_output=True, text=True,
                               timeout=timeout, env=full_env)

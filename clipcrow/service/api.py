@@ -353,6 +353,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     app.state.outbox = mailer if isinstance(mailer, Outbox) else None            # tests read the sign-in code from here
     limit = max_upload_mb * 1024 * 1024
 
+    def secure_cookie(request: Request) -> bool:
+        return request.url.scheme == "https"          # correct behind the proxy because uvicorn trusts its X-Forwarded-Proto (cli.py)
+
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         resp = await call_next(request)
@@ -360,7 +363,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "no-referrer"
         if request.url.path.startswith("/api"):
-            resp.headers["Cache-Control"] = "no-store"
+            resp.headers.setdefault("Cache-Control", "no-store")      # an endpoint that sets its own (fonts, tracks) keeps it
         elif "Cache-Control" not in resp.headers:      # the UI files: always revalidate (ETag), or a deploy leaves old JS in browsers
             resp.headers["Cache-Control"] = "no-cache"
         return resp
@@ -475,13 +478,13 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(401, "That token is not right.")
         resp = JSONResponse({"ok": True})
         resp.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=30 * 86400,
-                        secure=request.url.scheme == "https")
+                        secure=secure_cookie(request))
         return resp
 
     # --- accounts -------------------------------------------------------------------------------
     def set_session(resp: JSONResponse, request: Request, user: User) -> JSONResponse:
         resp.set_cookie(SESSION_COOKIE, accounts.new_session(user.id), httponly=True, samesite="strict",
-                        max_age=30 * 86400, secure=request.url.scheme == "https")
+                        max_age=30 * 86400, secure=secure_cookie(request))
         return resp
 
     def need_accounts() -> Accounts:
@@ -1229,7 +1232,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             event = json.loads(body)
         except ValueError:
             raise HTTPException(400, "Not JSON.")
-        event_id = request.headers.get("x-razorpay-event-id") or hashlib.sha256(body).hexdigest()
+        event_id = hashlib.sha256(body).hexdigest()          # from the SIGNED body: the event-id header is not covered by the signature, so a replay could change it
         def tell(user, kind: str, detail: str) -> None:
             if mailq:
                 mailq.send(billing_mail(user.email, kind, detail))

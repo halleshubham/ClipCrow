@@ -151,7 +151,10 @@ def main(argv: list[str] | None = None) -> int:
                              mailer=mailer, public_url=os.environ.get("CLIPCROW_PUBLIC_URL", ""),
                              worker_token=os.environ.get("CLIPCROW_WORKER_TOKEN") or None,
                              worker_pickup_seconds=float(os.environ.get("CLIPCROW_WORKER_PICKUP_SECONDS", "120") or 120))
-            uvicorn.run(app, host=a.host, port=a.port, log_level="info", timeout_graceful_shutdown=20)
+            # behind the proxy (Coolify/Traefik, Cloudflare) every request arrives from the proxy's address: trust its X-Forwarded-* headers, or the per-IP limits become one
+            # global bucket and the session cookie loses `Secure`. CLIPCROW_TRUSTED_PROXIES: addresses/CIDRs, or "*" (default when the public address is https).
+            trusted = os.environ.get("CLIPCROW_TRUSTED_PROXIES", "").strip() or ("*" if os.environ.get("CLIPCROW_PUBLIC_URL", "").startswith("https://") else "127.0.0.1")
+            uvicorn.run(app, host=a.host, port=a.port, log_level="info", timeout_graceful_shutdown=20, proxy_headers=True, forwarded_allow_ips=trusted)
             return 0
         if a.cmd == "migrate-db":
             from .service.accounts import Accounts

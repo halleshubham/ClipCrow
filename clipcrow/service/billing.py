@@ -84,7 +84,7 @@ class Razorpay:
     # --- webhooks ---------------------------------------------------------------------------------
     def verify(self, body: bytes, signature: str) -> bool:
         want = hmac.new(self._hook.encode(), body, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(want, (signature or "").strip())
+        return hmac.compare_digest(want.encode(), (signature or "").strip().encode("utf-8", "replace"))
 
 
 def _iso(epoch) -> Optional[str]:
@@ -95,6 +95,18 @@ def _iso(epoch) -> Optional[str]:
 
 
 def apply_event(event: dict, event_id: str, accounts: Accounts, catalog: Catalog, notify: Optional[Callable[[object, str, str], None]] = None) -> str:
+    """Apply one event; if applying it fails part-way the "seen" markers are removed again, so the retry is not lost as a "duplicate" (a paid recharge must never vanish)."""
+    link_id = (((event.get("payload") or {}).get("payment_link") or {}).get("entity") or {}).get("id")
+    try:
+        return _apply_event(event, event_id, accounts, catalog, notify)
+    except Exception:
+        accounts.forget(event_id)
+        if link_id:
+            accounts.forget(f"link:{link_id}")
+        raise
+
+
+def _apply_event(event: dict, event_id: str, accounts: Accounts, catalog: Catalog, notify: Optional[Callable[[object, str, str], None]] = None) -> str:
     """Apply one verified webhook event. Returns a short word for the log: applied | duplicate | ignored. ``notify(user, kind, detail)`` is told
     (after the change) about: paid | payment-failed | ended | cancelled, so the person gets a mail; it never changes money or plans itself."""
     say = notify or (lambda *_a: None)
