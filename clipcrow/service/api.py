@@ -492,7 +492,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
                 "pricing": catalog.payg.view() if catalog.payg else None, "signup": bool(accounts) and allow_signup, "signup_paused": bool(accounts) and allow_signup and accounts.signups_today() >= limits.signups_per_day,
                 "email": email, "admin": bool(email and email in admins), "mail": bool(mailer), "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(accounts) or bool(sociobird),
-                "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready() if (signed_in or not (accounts or token)) else "",
+                "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready() if (signed_in or not (accounts or token)) else None,
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
                 "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online()),
                                "render": bool(hub and hub.online("render")),

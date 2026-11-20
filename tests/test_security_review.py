@@ -309,3 +309,11 @@ def test_a_redirect_is_not_followed(tmp_path):
         assert [h[0] for h in hits] == ["/a"]                          # the key never went to /b
     finally:
         srv.shutdown()
+
+
+def test_the_open_config_keeps_the_shape_the_image_smoke_test_checks(tmp_path):
+    from fastapi.testclient import TestClient
+    from clipcrow.service.api import create_app
+    from tests.test_service import FakePipeline
+    c = TestClient(create_app(tmp_path / "d", FakePipeline(), token="t" * 20)).get("/api/config").json()
+    assert c["needs_login"] is True and c["signed_in"] is False and c["ready"] is None
