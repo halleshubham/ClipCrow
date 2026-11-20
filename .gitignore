@@ -7,3 +7,13 @@ node_modules/
 /vendor/
 *.egg-info/
 examples/assets/
+
+# local runtime data and secrets
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.secret
+.env
+worker.env
+*.whl
