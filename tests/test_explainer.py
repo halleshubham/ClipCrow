@@ -25,14 +25,17 @@ from tests.conftest import base_edl
 from tests.test_planner import SRC, make_transcript, scripted
 
 def _real_png() -> bytes:
-    import io
+    """A PNG that really decodes (64x64 noise, built with the standard library: Pillow is not a dependency)."""
     import random
-    from PIL import Image
+    import struct
+    import zlib
     rnd = random.Random(1)
-    im = Image.frombytes("RGB", (64, 64), bytes(rnd.randrange(256) for _ in range(64 * 64 * 3)))
-    buf = io.BytesIO()
-    im.save(buf, "PNG")
-    return buf.getvalue()
+    raw = b"".join(b"\x00" + bytes(rnd.randrange(256) for _ in range(64 * 3)) for _ in range(64))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
 
 
 PNG = _real_png()                                    # a picture that really decodes: generated images are decoded and written again
