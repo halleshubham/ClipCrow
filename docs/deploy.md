@@ -135,6 +135,7 @@ requests, so the machine opens no port and needs no tunnel.
    docker run --rm --gpus all --shm-size=2g --no-healthcheck -e CLIPCROW_WORKER_TOKEN -v clipcrow-models:/models \
      ghcr.io/halleshubham/clipcrow:latest clipcrow worker --server https://<your domain> --name home-gpu
    ```
+   `scripts/home-gpu-worker.sh` does this for you (settings are environment variables: `SERVER`, `NAME`, `PARALLEL`, `MODEL`, `POOL`, `IMAGE`; also `stop`, `logs`, `status`).
    (needs `nvidia-container-toolkit`; check with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`).
    Without Docker: `pip install 'clipcrow[asr]' 'av<19' nvidia-cublas-cu12 'nvidia-cudnn-cu12==9.*'`, put those two libraries' folders on
    `LD_LIBRARY_PATH`, then run `clipcrow worker --server ...`. The first run downloads the model (about 3 GB).
