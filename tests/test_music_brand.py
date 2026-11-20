@@ -38,7 +38,7 @@ def test_a_bad_track_is_refused_and_the_old_one_stays(store, tmp_path):
     before = store.music_path(OWNER).read_bytes()
     junk = tmp_path / "j.mp3"
     junk.write_bytes(b"not audio")
-    for bad, msg in ((junk, "could not be read|no sound|converted"), (track(tmp_path / "short", 2.0), "between 5 seconds")):
+    for bad, msg in ((junk, "could not be read|no sound|converted|not a video or audio"), (track(tmp_path / "short", 2.0), "between 5 seconds")):
         with pytest.raises(BrandError, match=msg):
             store.put_music(OWNER, bad)
     silent_video = tmp_path / "v.mp4"

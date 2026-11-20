@@ -356,6 +356,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     def secure_cookie(request: Request) -> bool:
         return request.url.scheme == "https"          # correct behind the proxy because uvicorn trusts its X-Forwarded-Proto (cli.py)
 
+    from .bodyguard import BodyGuard
+    app.add_middleware(BodyGuard, upload_mb=max_upload_mb, session_cookies=(SESSION_COOKIE, COOKIE), require_sign_in=bool(accounts) or bool(token))
+
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         resp = await call_next(request)

@@ -732,7 +732,12 @@ def validate_clip(path: Path, edl, clip, *, max_bytes: int) -> None:
         raise ClipRejected("the clip the worker sent is empty")
     if size > max_bytes:
         raise ClipRejected("the clip the worker sent is too large")
-    r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_entries",
+    from .. import mediaguard
+    try:
+        mediaguard.check_file(path)
+    except (mediaguard.NotMedia, OSError):
+        raise ClipRejected("the clip the worker sent is not a video file") from None
+    r = subprocess.run(["ffprobe", "-v", "error", *mediaguard.LOCAL, "-print_format", "json", "-show_entries",
                         "format=format_name,duration:stream=codec_type,codec_name,width,height", "-i", str(path)],
                        capture_output=True, text=True, timeout=60)
     try:

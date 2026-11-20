@@ -11,9 +11,16 @@ def probe_source(path: str | Path, uri: str | None = None, *, remote: bool = Fal
     """Duration, size and fps of a media file via ffprobe. ``remote=True``: ``path`` is an http(s) URL that the SERVER made
     (a presigned link to its own bucket, never an address a person typed), read with range requests so a 4 GB upload is
     probed without downloading it."""
+    from .. import mediaguard
     args = ["ffprobe", "-v", "error"]
     if remote:
-        args += ["-protocol_whitelist", "http,https,tcp,tls,crypto", "-rw_timeout", "30000000"]
+        args += [*mediaguard.REMOTE, "-rw_timeout", "30000000"]
+    else:
+        try:
+            mediaguard.check_file(path)
+        except (mediaguard.NotMedia, OSError) as e:
+            raise ValueError(str(e)) from None
+        args += mediaguard.LOCAL
     r = subprocess.run([*args, "-select_streams", "v:0", "-show_entries",
                         "stream=width,height,r_frame_rate:format=duration", "-of", "json", str(path)],
                        capture_output=True, text=True, timeout=120 if remote else None)

@@ -19,8 +19,16 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import mediaguard
 from ..branding import BrandError, BrandKit, probe_media
 from ..edl import CaptionStyle
+
+
+def _must_be_media(path: Path) -> None:
+    try:
+        mediaguard.check_file(path)
+    except (mediaguard.NotMedia, OSError):
+        raise BrandError("That file is not a video or audio file.") from None
 
 MAX_LOGO_BYTES = 3 * 1024 * 1024
 MAX_OUTRO_BYTES = 90 * 1024 * 1024
@@ -323,6 +331,7 @@ class BrandStore:
         its tags or cover art: what is stored is what we made. The person is responsible for the right to use the track."""
         if source.stat().st_size > MAX_MUSIC_BYTES:
             raise BrandError(f"The music can be at most {MAX_MUSIC_BYTES // (1024 * 1024)} MB.")
+        _must_be_media(source)
         info = probe_media(source)
         if not info["has_audio"]:
             raise BrandError("That file has no sound.")
@@ -331,7 +340,7 @@ class BrandStore:
         d = self._dir(owner, brand)
         d.mkdir(parents=True, exist_ok=True)
         out = d / "music.new.m4a"
-        r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(source), "-vn", "-map", "0:a:0", "-map_metadata", "-1", "-ac", "2", "-ar", "48000",
+        r = subprocess.run(["ffmpeg", "-y", "-v", "error", *mediaguard.LOCAL, "-i", str(source), "-vn", "-map", "0:a:0", "-map_metadata", "-1", "-ac", "2", "-ar", "48000",
                             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)], capture_output=True, text=True, timeout=300)
         if r.returncode != 0 or not out.is_file():
             out.unlink(missing_ok=True)
@@ -344,6 +353,7 @@ class BrandStore:
         """``source`` is an uploaded file already on disk (the caller capped its size). Re-encoded to 1080x1920/30 fps."""
         if source.stat().st_size > MAX_OUTRO_BYTES:
             raise BrandError(f"The ending video can be at most {MAX_OUTRO_BYTES // (1024 * 1024)} MB.")
+        _must_be_media(source)
         info = probe_media(source)
         if not info["has_video"]:
             raise BrandError("That file has no picture.")
@@ -353,7 +363,7 @@ class BrandStore:
         d.mkdir(parents=True, exist_ok=True)
         out = d / "outro.new.mp4"
         norm = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,format=yuv420p"
-        cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(source)]
+        cmd = ["ffmpeg", "-y", "-v", "error", *mediaguard.LOCAL, "-i", str(source)]
         if not info["has_audio"]:
             cmd += ["-f", "lavfi", "-t", f"{info['duration']:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
         cmd += ["-vf", norm, "-map", "0:v:0", "-map", "0:a:0" if info["has_audio"] else "1:a:0", "-t", f"{info['duration']:.3f}",

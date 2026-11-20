@@ -147,7 +147,7 @@ def test_a_good_clip_passes_and_every_kind_of_wrong_clip_is_rejected(tmp_path):
         validate_clip(make_mp4(tmp_path / "mpeg4.mp4", 3.0, vcodec="mpeg4"), edl, clip, max_bytes=10_000_000)
     junk = tmp_path / "junk.mp4"
     junk.write_bytes(b"<html><script>alert(1)</script></html>" * 100)
-    with pytest.raises(ClipRejected, match="readable"):
+    with pytest.raises(ClipRejected, match="readable|not a video"):
         validate_clip(junk, edl, clip, max_bytes=10_000_000)
     tiny = tmp_path / "tiny.mp4"
     tiny.write_bytes(b"x")

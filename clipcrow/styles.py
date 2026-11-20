@@ -154,7 +154,12 @@ def _run(cmd: list[str], timeout: int = 240) -> subprocess.CompletedProcess:
 
 
 def probe(path) -> dict:
-    r = _run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)], 60)
+    from . import mediaguard
+    try:
+        mediaguard.check_file(path)
+    except (mediaguard.NotMedia, OSError):
+        raise StyleError("That file could not be read as a video.")
+    r = _run(["ffprobe", "-v", "error", *mediaguard.LOCAL, "-print_format", "json", "-show_format", "-show_streams", str(path)], 60)
     if r.returncode != 0:
         raise StyleError("That file could not be read as a video.")
     import json

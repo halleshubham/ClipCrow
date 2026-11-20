@@ -232,7 +232,7 @@ def _run(cmd: list[str], what: str) -> None:
 
 def probe_media(path: str | Path) -> dict:
     """{"duration", "width", "height", "has_audio", "has_video"} from ffprobe (the file is never trusted)."""
-    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration",
+    r = subprocess.run(["ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "stream=codec_type,width,height:format=duration",
                         "-of", "json", str(path)], capture_output=True, text=True)
     if r.returncode != 0:
         raise BrandError("That file could not be read as media.")
