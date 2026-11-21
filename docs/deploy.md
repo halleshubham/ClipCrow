@@ -219,3 +219,10 @@ Without it every visitor looks like the proxy and the per-IP sign-in limits beco
 `CLIPCROW_WORKER_TOKEN` is the main token (your own machine). Give rented pods their own: set `CLIPCROW_WORKER_TOKEN_RENTED` (at least 16 characters, different) and put THAT value in the
 pod's `CLIPCROW_WORKER_TOKEN`. A pod holding it is always in the rented pool whatever it claims, so a stolen pod cannot ask for your home machine's work, and changing that one variable
 revokes every pod without touching the home worker.
+
+### Superadmin: credits and the free trial
+A **superadmin** is an address in `CLIPCROW_ADMINS` (the server's environment). Other operators (added on the settings page) can look at the Operator page but cannot change money.
+- **Credits:** Operator, People, "Manage credits" opens a person's page: their balance, add or remove minutes with a reason (never below zero), and the ledger of every manual change
+  (who, when, why). Use it after a UPI/bank payment, or to take back a mistake.
+- **Free minutes for a new account** (`signup_bonus_minutes`, 10 to start) is set **only** on the Operator settings page by a superadmin. `CLIPCROW_SIGNUP_BONUS_MINUTES` is no longer
+  read. The bonus is given once per mailbox (also after deleting the account, and for `+tag` or Gmail-dot spellings). The list of other operators is superadmin-only too.

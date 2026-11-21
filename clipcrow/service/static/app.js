@@ -327,11 +327,13 @@ async function adminSettingsView() {
       input = el('input', { id, type: 'number', value: String(s.value), inputmode: 'decimal', step: s.kind === 'int' ? '1' : 'any', min: s.min == null ? null : String(s.min), max: s.max == null ? null : String(s.max) });
       read = () => input.value;
     }
+    if (s.locked) { input.disabled = true; input.title = 'Only a superadmin can change this'; }
     fields.set(s.key, { read, original: s.kind === 'bool' ? !!s.value : s.value, input });
     input.addEventListener('input', mark); input.addEventListener('change', mark);
     const meta = el('div', { class: 'hint', 'data-keep': '1' },
       `Default ${s.kind === 'bool' ? (s.default ? 'on' : 'off') : (s.default === '' ? 'empty' : s.default)}${s.unit ? ' ' + s.unit : ''}`,
-      s.source === 'operator' ? [' · set here · ', el('button', { class: 'linkbtn', type: 'button', text: 'Reset', onclick: async () => {
+      s.locked ? ' · superadmin only' : '',
+      s.source === 'operator' && !s.locked ? [' · set here · ', el('button', { class: 'linkbtn', type: 'button', text: 'Reset', onclick: async () => {
         try { await api(`/admin/settings/${s.key}`, { method: 'DELETE' }); await adminSettingsView(); } catch (ex) { err.textContent = ex.message; err.hidden = false; }
       } })] : '');
     if (s.kind === 'bool') return el('div', {}, el('label', { class: 'check', for: id }, input, el('span', {}, el('strong', { text: s.label }), el('br'), el('span', { class: 'muted', text: s.help }))), meta);
@@ -362,6 +364,47 @@ async function adminSettingsView() {
     el('div', { class: 'actionbar' }, el('div', { class: 'abar' }, el('span', { class: 'small muted', text: 'Changes apply at once. Reset puts a setting back to what the server started with.' }), el('div', { class: 'grp' }, saved, save)))));
 }
 
+// one person's extra minutes: the balance, a way for a superadmin to add or remove minutes with a reason, and the ledger of every change
+async function adminUserView(userId) {
+  const d = await api(`/admin/users/${userId}/credits`);
+  const ov = await api('/admin/overview');
+  const who = ov.users.find((u) => u.id === userId);
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const ledger = d.history.length
+    ? el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['When (UTC)', 'Change', 'Balance', 'By', 'Why'].map((h) => el('th', { text: h })))),
+      el('tbody', {}, d.history.map((h) => el('tr', {}, el('td', { text: h.at.replace('T', ' ').slice(0, 16) }),
+        el('td', { text: (h.delta > 0 ? '+' : '') + h.delta }), el('td', { text: String(h.balance) }), el('td', { translate: 'no', text: h.by }), el('td', { text: h.note || '' }))))))
+    : el('p', { class: 'small muted', text: 'No manual changes yet.' });
+  let form = el('p', { class: 'small muted', text: 'Only a superadmin (an address in CLIPCROW_ADMINS) can add or remove minutes.' });
+  if (ov.superadmin) {
+    const kind = segmented('cr-kind', 'wallet', 'What to do', 'Add minutes the person paid for or was given, or take back minutes added by mistake. The balance never goes below zero.',
+      [['add', 'Add minutes', 'plus'], ['remove', 'Remove minutes', 'x']]);
+    const amount = el('input', { id: 'cr-amount', type: 'number', min: '0.1', step: '0.1', inputmode: 'decimal', placeholder: 'minutes' });
+    const note = el('input', { id: 'cr-note', type: 'text', maxlength: '200', placeholder: 'Why (e.g. paid by UPI, ref 1234)', autocomplete: 'off' });
+    const quick = el('div', { class: 'row' }, [10, 30, 60, 300].map((n) => el('button', { class: 'btn', type: 'button', text: `${n} min`, onclick: () => { amount.value = String(n); amount.focus(); } })));
+    const go = el('button', { class: 'btn primary', type: 'button', text: 'Apply' });
+    go.addEventListener('click', async () => {
+      err.hidden = true;
+      const n = Number(amount.value);
+      if (!(n > 0)) { err.textContent = 'Enter how many minutes (more than 0).'; err.hidden = false; return; }
+      const minutes = document.getElementById('cr-kind').value === 'remove' ? -n : n;
+      go.disabled = true;
+      try {
+        await api(`/admin/users/${userId}/credits`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ minutes, note: note.value }) });
+        await adminUserView(userId);
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; go.disabled = false; }
+    });
+    form = el('div', { class: 'stack' }, kind,
+      el('div', {}, fieldLabel('timer', 'Minutes', 'cr-amount', ''), amount, quick),
+      el('div', {}, fieldLabel('pencil', 'Why (kept in the ledger)', 'cr-note', ''), note), el('div', { class: 'row' }, go));
+  }
+  app.replaceChildren(el('div', { class: 'stack' }, el('h1', { translate: 'no', text: who ? who.email : 'Account' }),
+    el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin', text: 'Back to the overview' })), err,
+    el('section', { class: 'card stack' }, el('h2', { text: 'Extra minutes' }), el('div', { class: 'stat' }, el('div', { class: 'num', text: String(d.balance) }),
+      el('div', { class: 'small muted', text: 'bought or given, never expire; the monthly allowance is separate' })), form),
+    el('section', { class: 'card stack' }, el('h2', { text: 'Ledger' }), ledger)));
+}
+
 async function adminView() {
   const ov = await api('/admin/overview');
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
@@ -372,14 +415,13 @@ async function adminView() {
   };
   const stat = (label, value, bad) => el('div', { class: 'stat' }, el('div', { class: bad ? 'num bad' : 'num', text: String(value) }), el('div', { class: 'small muted', text: label }));
   const rows = ov.users.map((u) => {
-    const mins = el('input', { type: 'number', 'aria-label': `Add minutes for ${u.email}`, placeholder: '+ minutes', inputmode: 'numeric' });
     const plan = el('select', { 'aria-label': `Plan for ${u.email}` }, (ov.plans || ['free']).map((p) => el('option', { value: p, text: p, selected: p === u.plan })));
     return el('tr', {},
       el('td', { translate: 'no', text: u.email + (u.disabled ? ' (disabled)' : '') }),
       el('td', {}, plan, el('button', { class: 'btn', type: 'button', text: 'Apply', onclick: () => act(`/admin/users/${u.id}/plan`, { plan: plan.value }) })),
       el('td', { text: `${u.used_minutes} used, ${u.credits} extra` }),
       el('td', { text: String(u.jobs) }),
-      el('td', {}, mins, el('button', { class: 'btn', type: 'button', text: 'Add', onclick: () => { const n = Number(mins.value); if (n) act(`/admin/users/${u.id}/credits`, { minutes: n }); } })),
+      el('td', {}, el('a', { class: 'btn', href: `#/admin/users/${u.id}`, text: ov.superadmin ? 'Manage credits' : 'View credits' })),
       el('td', {}, el('button', { class: 'btn', type: 'button', text: u.disabled ? 'Enable' : 'Disable', onclick: () => { if (confirm(u.disabled ? 'Enable this account?' : 'Disable this account and sign it out?')) act(`/admin/users/${u.id}/disabled`, { disabled: !u.disabled }); } })));
   });
   app.replaceChildren(el('div', { class: 'stack' }, el('h1', { text: 'Operator' }), el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin/settings', text: 'Settings' })),
@@ -392,7 +434,7 @@ async function adminView() {
     err,
     moneyCard(ov.money),
     el('section', { class: 'card stack' }, el('h2', { text: 'People' }),
-      el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['Email', 'Plan', 'This month', 'Jobs', 'Extra minutes', ''].map((t) => el('th', { text: t })))), el('tbody', {}, rows)))),
+      el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['Email', 'Plan', 'This month', 'Jobs', 'Credits', ''].map((t) => el('th', { text: t })))), el('tbody', {}, rows)))),
     el('section', { class: 'card stack' }, el('h2', { text: 'Recent failures' }),
       ov.recent_failed.length ? el('ul', { class: 'plain' }, ov.recent_failed.map((f) => el('li', {}, el('a', { href: `#/jobs/${f.id}`, text: f.id }), ` ${f.owner}: ${f.error || 'no message'}`)))
         : el('p', { class: 'small muted', text: 'None.' }))));
@@ -2274,6 +2316,7 @@ async function route() {
     else if (hash === '#/account') await accountView();
     else if (hash === '#/admin' && state.config.admin) await adminView();
     else if (hash === '#/admin/settings' && state.config.admin) await adminSettingsView();
+    else if (state.config.admin && (m = hash.match(/^#\/admin\/users\/([a-f0-9]{32})$/))) await adminUserView(m[1]);
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})\/share$/))) { const v = await shareView(m[1], m[2]); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/schedule(?:\?clips=((?:c\d{1,3},?){1,30}))?$/))) { const v = await scheduleView(m[1], m[2] || ''); cleanup = v.cleanup; }
     else if ((m = hash.match(/^#\/jobs\/([a-f0-9]{12})\/clips\/(c\d{1,3})$/))) { const v = await clipEditorView(m[1], m[2]); cleanup = v.cleanup; }

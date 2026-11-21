@@ -32,6 +32,7 @@ class Setting:
     choices: tuple = ()
     unit: str = ""
     max_length: int = 400
+    superadmin: bool = False           # only a root operator (CLIPCROW_ADMINS in the environment) may change it
 
 
 GROUPS = [
@@ -49,7 +50,7 @@ SCHEMA: list[Setting] = [
     # --- pricing
     Setting("price_per_minute", "pricing", "Price per minute of video", "What one minute of uploaded video costs. Changing it never changes minutes already bought.", "float", 0.5, 10000, unit="₹"),
     Setting("min_job_minutes", "pricing", "Minimum charge per job", "The least any job is charged, however short the video: a tiny job costs the AI almost as much as a bigger one.", "int", 1, 600, unit="minutes"),
-    Setting("signup_bonus_minutes", "pricing", "Free minutes for a new account", "Added once, when an address signs in for the first time. 0 turns the free trial off.", "float", 0, 10000, unit="minutes"),
+    Setting("signup_bonus_minutes", "pricing", "Free minutes for a new account", "Added once, when an address signs in for the first time. 0 turns the free trial off. Only a superadmin can change it.", "float", 0, 10000, unit="minutes", superadmin=True),
     Setting("min_recharge", "pricing", "Smallest recharge", "The least a person can pay in one recharge.", "int", 10, 1_000_000, unit="₹"),
     Setting("max_recharge", "pricing", "Largest recharge", "The most a person can pay in one recharge.", "int", 10, 10_000_000, unit="₹"),
     Setting("tier1_from", "pricing", "Bonus tier 1: from", "A recharge of at least this much earns the bonus below. 0 turns the tier off.", "int", 0, 10_000_000, unit="₹"),
@@ -65,7 +66,7 @@ SCHEMA: list[Setting] = [
     Setting("signup_open", "access", "New sign-ups are open", "Off: only people who already have an account can sign in.", "bool"),
     Setting("signups_per_day", "access", "New accounts per day", "After this many new accounts today, new addresses get no code until tomorrow. Existing accounts still sign in. 0 means no limit.", "int", 0, 1_000_000),
     Setting("blocked_email_domains", "access", "Extra blocked mail domains", "Comma-separated domains refused at sign-up (throw-away mailboxes). A built-in list is always blocked too.", "text", max_length=1000),
-    Setting("extra_admins", "access", "Other operators (emails)", "Comma-separated emails that can open this page, in addition to the CLIPCROW_ADMINS in the environment (which cannot be removed here).", "text", max_length=1000),
+    Setting("extra_admins", "access", "Other operators (emails)", "Comma-separated emails that can open this page, in addition to the CLIPCROW_ADMINS in the environment (which cannot be removed here).", "text", max_length=1000, superadmin=True),
     # --- limits
     Setting("max_active_jobs", "limits", "Jobs running or waiting at once", "Per person. 0 means no limit.", "int", 0, 1000),
     Setting("max_jobs_per_day", "limits", "Jobs per 24 hours", "Per person. 0 means no limit.", "int", 0, 100000),
@@ -249,4 +250,4 @@ class SettingsStore:
     def view(self) -> list[dict]:
         vals, over = self.values(), self.overridden()
         return [{"key": s.key, "group": s.group, "label": s.label, "help": s.help, "kind": s.kind, "unit": s.unit, "min": s.minimum, "max": s.maximum,
-                 "choices": list(s.choices), "value": vals[s.key], "default": self.base[s.key], "source": "operator" if s.key in over else "default"} for s in SCHEMA]
+                 "choices": list(s.choices), "value": vals[s.key], "default": self.base[s.key], "source": "operator" if s.key in over else "default", "superadmin": s.superadmin} for s in SCHEMA]

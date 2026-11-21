@@ -107,8 +107,7 @@ def load_catalog(path: str | Path | None = None) -> Catalog:
             raw["price_paise_per_minute"] = round(float(env["CLIPCROW_PRICE_PER_MINUTE"]) * 100)
         if env.get("CLIPCROW_MIN_JOB_MINUTES"):
             raw["min_job_minutes"] = int(env["CLIPCROW_MIN_JOB_MINUTES"])
-        if env.get("CLIPCROW_SIGNUP_BONUS_MINUTES"):
-            raw["signup_bonus_minutes"] = float(env["CLIPCROW_SIGNUP_BONUS_MINUTES"])
+        # the free minutes for a new account are NOT read from the environment: only a superadmin sets them, on the Operator settings page (plans.json holds the starting value)
         payg = Payg(**raw)
         if payg.price_paise_per_minute < 1 or not 100 <= payg.min_recharge_paise <= payg.max_recharge_paise or payg.signup_bonus_minutes < 0 or payg.min_job_minutes < 1 \
                 or any(a < 0 or not 0 <= pct <= 100 for a, pct in payg.bonus_tiers):

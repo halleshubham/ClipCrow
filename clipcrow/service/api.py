@@ -145,7 +145,8 @@ class SettingsBody(BaseModel):
 
 
 class AdminCredits(BaseModel):
-    minutes: float = Field(ge=-100000, le=100000)
+    minutes: float = Field(ge=-100000, le=100000)                # added (positive) or removed (negative)
+    note: str = Field(default="", max_length=200)               # why: "paid by UPI ref 123", "goodwill after a failed job" ... kept in the ledger
 
 
 class AdminPlan(BaseModel):
@@ -769,9 +770,11 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 {"name": "Public address for links in mail", "set": bool(base_url), "detail": base_url},
                 {"name": "Plans file", "set": flag("CLIPCROW_PLANS")}, {"name": "Operators from the environment", "set": bool(env_admins), "detail": f"{len(env_admins)}"}]
 
-    def settings_view() -> dict:
-        return {"groups": [{"id": g, "title": t, "about": a} for g, t, a in opsettings.GROUPS], "settings": opset.view(), "services": services(),
-                "history": opset.history(), "accounts": bool(accounts), "billing": bool(razorpay)}
+    def settings_view(viewer: Optional[User] = None) -> dict:
+        root = bool(viewer and viewer.email in env_admins)
+        view_rows = [{**r, "locked": bool(r.get("superadmin")) and not root} for r in opset.view()]          # a superadmin-only setting is shown, but only a superadmin can change it
+        return {"groups": [{"id": g, "title": t, "about": a} for g, t, a in opsettings.GROUPS], "settings": view_rows, "services": services(),
+                "history": opset.history(), "accounts": bool(accounts), "billing": bool(razorpay), "superadmin": root}
 
     def admin_only(request: Request) -> User:
         user = authed(request)
@@ -779,8 +782,14 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
             raise HTTPException(404, "Not found.")                  # the page does not exist for anyone else
         return user
 
-    @app.get("/api/admin/overview", dependencies=[Depends(admin_only)])
-    def admin_overview() -> dict:
+    def superadmin_only(admin: User = Depends(admin_only)) -> User:
+        """A root operator: an address in CLIPCROW_ADMINS in the server's environment. Other operators (added on the settings page) can look, not change money."""
+        if admin.email not in env_admins:
+            raise HTTPException(403, "Only a superadmin can do this.")
+        return admin
+
+    @app.get("/api/admin/overview")
+    def admin_overview(admin: User = Depends(admin_only)) -> dict:
         snap = snapshot()
         jobs = store.list()
         by_owner: dict[str, int] = {}
@@ -808,7 +817,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                  "target_markup_percent": round(markup), "totals": job_economics(total_rev, total_cost, markup),
                  "suggested_price_per_minute": suggest_price(per_min, markup), "suggested_min_job_minutes": suggest_min_minutes(shorts, price_per_minute(), markup) if shorts else None,
                  "note": "Revenue is the list price of the minutes charged (free-trial minutes included); cost is the AI at list price plus metered GPU time. Server, storage and the payment fee are not counted."}
-        return {"money": money, "users": users, "plans": list(catalog.plans), "signups_today": accounts.signups_today(), "signup_cap": limits.signups_per_day,
+        return {"superadmin": admin.email in env_admins, "money": money, "users": users, "plans": list(catalog.plans), "signups_today": accounts.signups_today(), "signup_cap": limits.signups_per_day,
                 "jobs": {s: sum(1 for j in jobs if j.status == s) for s in ("queued", "running", "done", "failed", "cancelled")},
                 "disk_free_gb": round(snap.disk_free_gb, 1), "disk_free_pct": round(snap.disk_free_pct), "failed_last_hour": snap.failed_last_hour,
                 "unserved_tasks": snap.unserved_tasks, "mail": mailer.name if mailer else "off", "mail_failures_hour": snap.mail_failures_hour,
@@ -825,38 +834,52 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         except KeyError:
             raise HTTPException(404, "No such account.")
 
-    @app.get("/api/admin/settings", dependencies=[Depends(admin_only)])
-    def admin_settings() -> dict:
-        return settings_view()
+    @app.get("/api/admin/settings")
+    def admin_settings(admin: User = Depends(admin_only)) -> dict:
+        return settings_view(admin)
 
     @app.put("/api/admin/settings")
     def admin_settings_put(body: SettingsBody, admin: User = Depends(admin_only)) -> dict:
-        if "extra_admins" in body.values and admin.email not in env_admins:
-            raise HTTPException(403, "Only a root operator (set in the server's environment) can change who else is an operator.")
+        locked = [k for k in body.values if k in opsettings.BY_KEY and opsettings.BY_KEY[k].superadmin]
+        if locked and admin.email not in env_admins:
+            raise HTTPException(403, "Only a superadmin can change: " + ", ".join(sorted(locked)) + ".")
         try:
             opset.update(body.values, admin.id)
         except ValueError as e:
             raise HTTPException(422, str(e))
         apply_settings()
         log.info("admin %s changed settings: %s", admin.id[:8], ", ".join(sorted(body.values))[:200])
-        return settings_view()
+        return settings_view(admin)
 
     @app.delete("/api/admin/settings/{key}")
     def admin_settings_reset(key: str, admin: User = Depends(admin_only)) -> dict:
+        if key in opsettings.BY_KEY and opsettings.BY_KEY[key].superadmin and admin.email not in env_admins:
+            raise HTTPException(403, "Only a superadmin can change: " + key + ".")
         try:
             opset.reset(key, admin.id)
         except ValueError as e:
             raise HTTPException(404, str(e))
         apply_settings()
         log.info("admin %s reset setting %s", admin.id[:8], key[:40])
-        return settings_view()
+        return settings_view(admin)
 
     @app.post("/api/admin/users/{user_id}/credits")
-    def admin_credits(user_id: str, body: AdminCredits, request: Request, admin: User = Depends(admin_only)) -> dict:
+    def admin_credits(user_id: str, body: AdminCredits, admin: User = Depends(superadmin_only)) -> dict:
+        """Add (positive) or remove (negative) extra minutes by hand. Never below zero; every change is written to the person's ledger with who made it and why."""
         user = admin_target(user_id)
-        accounts.add_credits(user.id, body.minutes)
-        log.info("admin %s changed the credit minutes of %s by %s", admin.id[:8], user.id[:8], body.minutes)
-        return {"credit_minutes": round(accounts.get(user.id).credits, 1)}
+        if body.minutes == 0:
+            raise HTTPException(422, "Enter a number of minutes to add or remove.")
+        try:
+            balance = accounts.adjust_credits(user.id, body.minutes, admin.email, body.note.strip())
+        except AccountError as e:
+            raise HTTPException(422, str(e))
+        log.info("superadmin %s changed the credit minutes of %s by %s", admin.id[:8], user.id[:8], body.minutes)
+        return {"credit_minutes": round(balance, 1)}
+
+    @app.get("/api/admin/users/{user_id}/credits")
+    def admin_credit_history(user_id: str, admin: User = Depends(admin_only)) -> dict:
+        user = admin_target(user_id)
+        return {"balance": round(accounts.get(user.id).credits, 1), "history": accounts.credit_history(user.id)}
 
     @app.post("/api/admin/users/{user_id}/plan")
     def admin_plan(user_id: str, body: AdminPlan, admin: User = Depends(admin_only)) -> dict:

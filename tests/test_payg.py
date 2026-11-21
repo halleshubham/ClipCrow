@@ -122,9 +122,9 @@ def test_the_price_is_public_and_on_the_config(env):
 def test_the_price_the_minimum_and_the_bonus_come_from_the_environment_when_set(tmp_path, monkeypatch):
     monkeypatch.setenv("CLIPCROW_PRICE_PER_MINUTE", "6.5")
     monkeypatch.setenv("CLIPCROW_MIN_JOB_MINUTES", "5")
-    monkeypatch.setenv("CLIPCROW_SIGNUP_BONUS_MINUTES", "2")
+    monkeypatch.setenv("CLIPCROW_SIGNUP_BONUS_MINUTES", "2")                     # ignored: only a superadmin sets the free minutes, on the settings page
     g = load_catalog().payg
-    assert g.price_paise_per_minute == 650 and g.min_job_minutes == 5 and g.signup_bonus_minutes == 2
+    assert g.price_paise_per_minute == 650 and g.min_job_minutes == 5 and g.signup_bonus_minutes == Payg().signup_bonus_minutes
     monkeypatch.setenv("CLIPCROW_MIN_JOB_MINUTES", "0")
     with pytest.raises(ValueError, match="payg"):
         load_catalog()

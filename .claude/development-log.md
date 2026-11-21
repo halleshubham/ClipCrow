@@ -292,3 +292,9 @@ Cleanup writes the cut audio segment by segment (peak ~1 GB instead of 4-5 GB on
 reads forward and decodes only the sampled frames, seeking only to start or over a gap of 3 s or more (identical frames, 15x faster on a long-GOP clip: 0.5 s against 7.6 s); the
 zip download builds at most 2 archives at a time, on the data disk. Verified on SQLite and PostgreSQL (the test wrapper now honours a caller's `secret_file`).
 Not done, needs checksums/digests from the network: pin the base images by digest, ffmpeg and Node by sha256, CI actions by commit; WavLM revision; streamed publish upload.
+
+## 2026-11-21 - Superadmin: manage credits, free trial set on the page only
+`superadmin_only` (an address in CLIPCROW_ADMINS) guards `POST /api/admin/users/{id}/credits` (add or remove, reason, never below zero, `Accounts.adjust_credits`, ledger table `credit_log`)
+and `signup_bonus_minutes` / `extra_admins` (`Setting.superadmin`; other operators see them locked, the API answers 403). `GET .../credits` shows the ledger to every operator. The
+environment variable `CLIPCROW_SIGNUP_BONUS_MINUTES` is no longer read (plans.json holds the starting value, the page changes it). UI: `#/admin/users/<id>` (balance, add/remove, quick
+amounts, reason, ledger), locked settings. Checked at 360 px in both themes. Tests: `tests/test_superadmin.py`.

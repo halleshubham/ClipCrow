@@ -83,6 +83,9 @@ def schema_statements(dialect: str) -> list[str]:
         f"CREATE TABLE IF NOT EXISTS usage (id {auto}, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, job_id TEXT, minutes DOUBLE PRECISION NOT NULL, "
         "credit_minutes DOUBLE PRECISION NOT NULL DEFAULT 0, month TEXT NOT NULL, kind TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS usage_user_month ON usage(user_id, month)",
+        f"CREATE TABLE IF NOT EXISTS credit_log (id {auto}, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, delta DOUBLE PRECISION NOT NULL, "
+        "balance_after DOUBLE PRECISION NOT NULL, by_email TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS credit_log_user ON credit_log(user_id, id)",
         "CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, received_at TEXT NOT NULL)",
     ]
 
@@ -383,6 +386,25 @@ class Accounts:
             t.q("INSERT INTO usage(user_id, job_id, minutes, credit_minutes, month, kind, created_at) VALUES (?,?,?,?,?,?,?)",
                 (user_id, job_id, -held_m, -held_c, took["mo"], "refund", _now()))
             return True
+
+    def adjust_credits(self, user_id: str, delta: float, by: str, note: str = "") -> float:
+        """A superadmin adds or removes extra minutes by hand. Atomic, never below zero, and every change is written to a ledger with who made it and why.
+        Returns the new balance. Raises AccountError when the account does not exist or when a removal is more than the balance."""
+        with self.db.tx() as t:
+            row = t.q("SELECT credits FROM users WHERE id=?" + self.db.for_update, (user_id,)).fetchone()
+            if row is None:
+                raise AccountError("No such account.")
+            new = round(float(row["credits"]) + float(delta), 6)
+            if new < -1e-9:
+                raise AccountError(f"That removes {abs(delta):g} minutes, but the account has only {float(row['credits']):g} extra minutes.")
+            new = max(new, 0.0)
+            t.q("UPDATE users SET credits=? WHERE id=?", (new, user_id))
+            t.q("INSERT INTO credit_log(user_id, delta, balance_after, by_email, note, created_at) VALUES (?,?,?,?,?,?)", (user_id, float(delta), new, by[:200], note[:200], _now()))
+            return new
+
+    def credit_history(self, user_id: str, limit: int = 50) -> list[dict]:
+        rows = self._q("SELECT delta, balance_after, by_email, note, created_at FROM credit_log WHERE user_id=? ORDER BY id DESC LIMIT ?", (user_id, int(limit))).fetchall()
+        return [{"delta": r["delta"], "balance": r["balance_after"], "by": r["by_email"], "note": r["note"], "at": r["created_at"]} for r in rows]
 
     # --- webhooks (idempotency) -----------------------------------------------------------------
     def first_time(self, event_id: str) -> bool:
