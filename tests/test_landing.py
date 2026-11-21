@@ -16,7 +16,7 @@ def test_the_landing_page_is_public_self_contained_and_links_to_the_app(tmp_path
     r = c.get("/")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"] and "one long video" in r.text.lower()      # no sign-in needed
     html = r.text
-    assert "<script" not in html.replace('<script src="/landing/landing.js" defer></script>', "") and 'style="' not in html                                                              # the CSP allows neither
+    assert "<script" not in html.replace('<script src="/landing/landing.js?v=2" defer></script>', "") and 'style="' not in html                                                              # the CSP allows neither
     assert not re.findall(r'(?:src|href)="https?://', html)                                                             # nothing from another site
     assert 'href="/dashboard"' in html and "/dashboard#/privacy" in html and "/dashboard#/terms" in html and "support@shackyapps.in" in html
     for path in re.findall(r'(?:src|href)="(/[^"#]+)"', html):                                                          # every local file it names exists
@@ -54,3 +54,19 @@ def test_the_dashboard_is_the_app_and_the_old_addresses_still_work(tmp_path):
     js = (STATIC / "landing" / "landing.js").read_text(encoding="utf-8")
     assert "location.replace('/dashboard'" in js and "hashchange" in js                                                                  # an old /#/jobs/... link goes to the app
     assert c.get("/api/health").json() == {"ok": True} and c.get("/api/config").status_code == 200
+
+
+def test_every_file_the_ui_serves_is_in_the_installed_package():
+    """The image installs the package, so a static file that package-data misses is a 404 in production (the landing page once had no CSS)."""
+    import fnmatch
+    import tomllib
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    patterns = tomllib.loads((root / "pyproject.toml").read_text())["tool"]["setuptools"]["package-data"]["clipcrow.service"]
+    base = root / "clipcrow" / "service"
+    def covered(rel: str, pat: str) -> bool:                      # setuptools globs: "*" stays inside one folder (fnmatch's would cross "/")
+        a, b = rel.split("/"), pat.split("/")
+        return len(a) == len(b) and all(fnmatch.fnmatchcase(x, y) for x, y in zip(a, b))
+    missing = [str(p.relative_to(base)) for p in (base / "static").rglob("*") if p.is_file() and "__pycache__" not in p.parts
+               and not any(covered(p.relative_to(base).as_posix(), pat) for pat in patterns)]
+    assert missing == []

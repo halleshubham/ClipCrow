@@ -41,6 +41,9 @@ fail() { echo "SMOKE FAIL: $*"; docker logs "$cid" 2>&1 | tail -20; exit 1; }
 page="$(curl -sS -w '\n%{http_code}' http://127.0.0.1:18000/ || true)"
 echo "GET / -> HTTP $(tail -n1 <<<"$page"), $(wc -c <<<"$page") bytes"
 grep -q "ClipCrow" <<<"$page" || fail "the UI page does not mention ClipCrow: $(head -c 300 <<<"$page")"
+for asset in /landing/landing.css /landing/landing.js /style.css /app.js /icons.css; do          # the installed package must carry every file the pages load (the landing page once shipped without its CSS)
+  [ "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:18000$asset" || true)" = "200" ] || fail "$asset is not served by the image"
+done
 code="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/api/jobs || true)"
 echo "GET /api/jobs without a login -> HTTP $code"
 [ "$code" = "401" ] || fail "the API answered $code without a login (wanted 401)"

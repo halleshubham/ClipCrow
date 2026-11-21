@@ -298,3 +298,8 @@ Not done, needs checksums/digests from the network: pin the base images by diges
 and `signup_bonus_minutes` / `extra_admins` (`Setting.superadmin`; other operators see them locked, the API answers 403). `GET .../credits` shows the ledger to every operator. The
 environment variable `CLIPCROW_SIGNUP_BONUS_MINUTES` is no longer read (plans.json holds the starting value, the page changes it). UI: `#/admin/users/<id>` (balance, add/remove, quick
 amounts, reason, ledger), locked settings. Checked at 360 px in both themes. Tests: `tests/test_superadmin.py`.
+
+## 2026-11-22 - The landing page shipped without its CSS
+`package-data` listed `static/*`, which does not reach `static/landing/`, so the installed package (what the image runs) had no landing.css/js: the page showed as plain HTML. Tests run from the source tree, so
+they never saw it. Fixed in pyproject; guard test `test_every_file_the_ui_serves_is_in_the_installed_package` (setuptools-style globs, fails on the old setting); the image smoke test now fetches
+the landing CSS/JS and the app files and fails on a non-200; the asset URLs carry `?v=2` because Cloudflare served the 404 with a 4-hour browser cache.

@@ -35,5 +35,5 @@ pythonpath = ["."]
 markers = ["render: needs Node 22, FFmpeg, Chrome and the HyperFrames CLI (set CLIPCROW_RENDER_TESTS=1)"]
 
 [tool.setuptools.package-data]
-"clipcrow.service" = ["static/*"]
+"clipcrow.service" = ["static/*", "static/landing/*"]
 "clipcrow" = ["sfx/*", "tracks/*", "models/*", "fonts_catalog.json"]
