@@ -504,6 +504,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
 
     @app.post("/api/login")
     def login(body: Login, request: Request) -> JSONResponse:
+        if accounts:                                                    # with accounts on, the only way in is the emailed code: this route does not exist
+            raise HTTPException(404, "Not found.")
         if not token or not hmac.compare_digest(body.token.encode(), token.encode()):
             raise HTTPException(401, "That token is not right.")
         resp = JSONResponse({"ok": True})

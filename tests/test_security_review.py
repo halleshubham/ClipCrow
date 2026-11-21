@@ -317,3 +317,16 @@ def test_the_open_config_keeps_the_shape_the_image_smoke_test_checks(tmp_path):
     from tests.test_service import FakePipeline
     c = TestClient(create_app(tmp_path / "d", FakePipeline(), token="t" * 20)).get("/api/config").json()
     assert c["needs_login"] is True and c["signed_in"] is False and c["ready"] is None
+
+
+def test_with_accounts_on_there_is_no_token_or_password_login_at_all(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from clipcrow.service.api import create_app
+    from tests.mailhelp import Outbox
+    from tests.test_service import FakePipeline
+    a = Accounts(tmp_path / "d" / "c.db")
+    c = TestClient(create_app(tmp_path / "d", FakePipeline(), accounts=a, mailer=Outbox(), token="shared-token-123456"))
+    assert c.post("/api/login", json={"token": "shared-token-123456"}).status_code == 404          # the old shared token does nothing
+    for path in ("/api/auth/login", "/api/auth/register", "/api/auth/password", "/api/auth/reset"):
+        assert c.post(path, json={"email": "a@example.com", "password": "x" * 12}).status_code in (404, 405)
+    assert c.get("/api/jobs", headers={"Authorization": "Bearer shared-token-123456"}).status_code == 401   # and the token is not a bearer key either
