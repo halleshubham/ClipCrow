@@ -57,7 +57,7 @@ from .publish import LIMITS, PublishError, SocioBird, caption_html, settings_for
 from ..buildid import render_build
 from .gpu_cost import estimate_numbers, load_rates, rate_lookup, summarise as gpu_summary
 from .schedule import Chan, MAX_CHANNELS as BULK_CHANNELS, MAX_CLIPS as BULK_CLIPS, MAX_PER_DAY, SchedulePrefs, ScheduleError, clean_times, plan as plan_schedule, zone as schedule_zone
-from .retention import Sweeper, env_days, expires_at
+from .retention import Sweeper, env_days, expires_at, evict_local_clips
 from .storage import Mirror, S3Storage, StorageError, signature
 from .pictures import MAX_BYTES as MAX_PICTURE_BYTES, PICTURE_ID, PictureError, PictureStore, parse_ids
 from .uploads import OPEN_LIMIT, Upload, UploadStore
@@ -142,6 +142,10 @@ class SettingsBody(BaseModel):
 class AdminCredits(BaseModel):
     minutes: float = Field(ge=-100000, le=100000)                # added (positive) or removed (negative)
     note: str = Field(default="", max_length=200)               # why: "paid by UPI ref 123", "goodwill after a failed job" ... kept in the ledger
+
+
+class ClaimJobs(BaseModel):
+    email: str = Field(max_length=254)                           # the account that receives every job that has no owner
 
 
 class AdminPlan(BaseModel):
@@ -269,7 +273,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
                demo: bool = False, start_runner: bool = True, accounts: Accounts | None = None,
                catalog: Catalog | None = None, allow_signup: bool = True, razorpay: Razorpay | None = None,
                sociobird: SocioBird | None = None, sociobird_shared: bool = False, storage: S3Storage | None = None,
-               storage_redirect: bool = False, backup_source: bool = False, local_clip_days: int = 0,
+               storage_redirect: bool = False, backup_source: bool = False, local_clip_days: Optional[float] = None,
                worker_token: str | None = None, worker_pickup_seconds: float = 120.0, worker_lease_seconds: float = 90.0,
                mailer: Mailer | None = None, public_url: str = "", limits: Limits | None = None, alert_email: str = "", sample_dir: str = "", sociobird_factory: Callable[[str], SocioBird] | None = None,
                sociobird_oauth_exchange: Callable[[str], str] | None = None) -> FastAPI:
@@ -435,7 +439,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         d = job.model_dump()
         d["queue_position"] = runner.queue_position(job.id) if job.status == "queued" else 0
         days = days_for(job)[0]
-        d["expires_at"] = None if job.sample else expires_at(job, days)        # a sample is never expired by retention
+        d["expires_at"] = None if (job.sample or job.keep) else expires_at(job, days)        # a sample is never expired by retention
         return d
 
     def charge_minutes(duration: float) -> int:
@@ -878,6 +882,97 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         accounts.set_disabled(user.id, body.disabled)
         log.info("admin %s %s %s", admin.id[:8], "disabled" if body.disabled else "enabled", user.id[:8])
         return {"disabled": body.disabled}
+
+    # --- storage: what is on the server's disk, what the bucket holds, old jobs ---------------------------------------
+    cleanup_lock = threading.Lock()
+
+    def jobs_disk_usage() -> dict:
+        """Bytes under the jobs folder by kind: the uploaded originals (and the cleaned cut made from them), the finished clips, and everything else."""
+        out = {"originals": 0, "clips": 0, "other": 0}
+        for job_dir in store.root.iterdir():
+            for dirpath, _dirs, files in os.walk(job_dir):
+                for name in files:
+                    try:
+                        n = os.lstat(os.path.join(dirpath, name)).st_size
+                    except OSError:
+                        continue
+                    if name.startswith("source.") or name == "clean.mp4":
+                        out["originals"] += n
+                    elif re.fullmatch(r"c\d{1,3}\.mp4", name):
+                        out["clips"] += n
+                    else:
+                        out["other"] += n
+        return out
+
+    def storage_report() -> dict:
+        free_gb, free_pct = disk_snapshot(str(Path(data_dir)))
+        jobs = [j for j in store.list() if j.status not in ("queued", "running")]
+        removable = {"removed": 0, "bytes": 0, "kept": 0, "kept_bytes": 0}
+        if storage:
+            for j in jobs:
+                r = evict_local_clips(store, j, storage, dry_run=True)
+                for k in removable:
+                    removable[k] += r[k]
+        usage = jobs_disk_usage()
+        unowned = sum(1 for j in store.list() if not j.owner and not j.sample) if accounts else 0
+        gb = lambda n: round(n / 2 ** 30, 2)
+        return {"disk_free_gb": round(free_gb, 1), "disk_free_pct": round(free_pct), "r2": storage is not None, "mirror": mirror is not None,
+                "local_clip_days": local_clip_days, "jobs_gb": {k: gb(v) for k, v in usage.items()},
+                "clips_safe_to_remove": removable["removed"], "clips_safe_gb": gb(removable["bytes"]),
+                "clips_not_in_bucket": removable["kept"], "clips_not_in_bucket_gb": gb(removable["kept_bytes"]),
+                "unowned_jobs": unowned, "superadmin": False}
+
+    @app.get("/api/admin/storage")
+    def admin_storage(admin: User = Depends(admin_only)) -> dict:
+        return {**storage_report(), "superadmin": admin.email in env_admins}
+
+    @app.post("/api/admin/storage/cleanup")
+    def admin_storage_cleanup(admin: User = Depends(superadmin_only)) -> dict:
+        """Remove from the server the clip files that have an identical copy in the bucket. Each one is checked with the bucket first (the object must be there, same size)."""
+        if not storage:
+            raise HTTPException(409, "Object storage is not set up, so there is nothing to rely on: no file was removed.")
+        if not cleanup_lock.acquire(blocking=False):
+            raise HTTPException(409, "A cleanup is already running.")
+        try:
+            total = {"removed": 0, "bytes": 0, "kept": 0, "kept_bytes": 0}
+            for j in store.list():
+                if j.status in ("queued", "running"):
+                    continue
+                r = evict_local_clips(store, j, storage, verify=True)
+                for k in total:
+                    total[k] += r[k]
+        finally:
+            cleanup_lock.release()
+        log.info("superadmin %s removed %s local clip files (%s bytes) that are safe in the bucket; %s kept", admin.id[:8], total["removed"], total["bytes"], total["kept"])
+        return {"removed": total["removed"], "freed_gb": round(total["bytes"] / 2 ** 30, 2), "kept": total["kept"], "kept_gb": round(total["kept_bytes"] / 2 ** 30, 2)}
+
+    @app.post("/api/admin/storage/upload-missing")
+    def admin_storage_upload_missing(admin: User = Depends(superadmin_only)) -> dict:
+        if mirror is None:
+            raise HTTPException(409, "Object storage is not set up.")
+        return {"queued": mirror.reconcile()}
+
+    @app.post("/api/admin/jobs/claim")
+    def admin_claim_jobs(body: ClaimJobs, admin: User = Depends(superadmin_only)) -> dict:
+        """Give every job that has no owner (made before accounts) to one account, and keep them for ever: a job that belongs to someone is otherwise expired by that
+        plan's retention, which would delete jobs that are older than it."""
+        need_accounts()
+        try:
+            who = accounts.by_email(body.email.strip().lower())
+        except Exception:                                                  # noqa: BLE001
+            who = None
+        if who is None:
+            raise HTTPException(404, "No account has that address yet. Sign in once with it first.")
+        n = 0
+        for j in store.list():
+            if j.owner or j.sample or j.status in ("queued", "running"):
+                continue
+            def give(job, uid=who.id):
+                job.owner, job.keep = uid, True
+            store.update(j.id, give)
+            n += 1
+        log.info("superadmin %s gave %s old jobs to account %s", admin.id[:8], n, who.id[:8])
+        return {"assigned": n}
 
     # --- publishing (SocioBird) -------------------------------------------------------------------
     publish_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="clipcrow-publish")

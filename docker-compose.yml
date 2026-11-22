@@ -30,7 +30,7 @@ services:
       - R2_PREFIX=${R2_PREFIX:-clipcrow}
       - CLIPCROW_R2_BACKUP_SOURCE=${CLIPCROW_R2_BACKUP_SOURCE:-}
       - CLIPCROW_R2_REDIRECT=${CLIPCROW_R2_REDIRECT:-}
-      - CLIPCROW_LOCAL_CLIP_DAYS=${CLIPCROW_LOCAL_CLIP_DAYS:-}
+      - CLIPCROW_LOCAL_CLIP_DAYS=${CLIPCROW_LOCAL_CLIP_DAYS:-}      # with R2: days a clip file stays here after its copy is in the bucket (empty = ~1 hour, 0 = at once, off = for ever)
       - CLIPCROW_DIRECT_UPLOAD=${CLIPCROW_DIRECT_UPLOAD:-}        # 0 = send uploads through the server instead of straight to R2
       - CLIPCROW_UPLOAD_PART_MB=${CLIPCROW_UPLOAD_PART_MB:-}      # part size for direct uploads (default 64; smaller retries faster on a bad connection)
       # --- retention without accounts (0 = keep for ever)

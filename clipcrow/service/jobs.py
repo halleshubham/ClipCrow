@@ -123,6 +123,7 @@ class Job(_M):
     cancel_requested: bool = False          # a person asked to stop while it was running: a restart must not start it again
     attempts: int = 0                       # times a restart interrupted this job and it was queued again (one automatic retry)
     remote: dict[str, str] = Field(default_factory=dict)   # relative name -> signature of the copy in object storage
+    keep: bool = False                      # kept for ever by the operator (old jobs given to an account): retention never deletes it
     sample: bool = False                    # the sample a new account starts with: costs no minutes, is not expired by retention, cannot be re-cut
 
     def clip(self, clip_id: str) -> ClipInfo:

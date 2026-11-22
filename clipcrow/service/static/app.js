@@ -389,8 +389,46 @@ async function adminUserView(userId) {
     el('section', { class: 'card stack' }, el('h2', { text: 'Ledger' }), ledger)));
 }
 
-async function adminView() {
+// where the server's disk goes, what the bucket (Cloudflare R2) holds, and the two clean-ups. Numbers only; the buttons are for a superadmin.
+function storageCard(st, email, refresh, notice) {
+  const status = el('p', { class: 'small', role: 'status', text: notice || '' });
+  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
+  const run = async (path, body, done) => {
+    err.hidden = true; status.textContent = 'Working…';
+    try { const r = await api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); await refresh(done(r)); }
+    catch (ex) { status.textContent = ''; err.textContent = ex.message; err.hidden = false; }
+  };
+  const hours = st.local_clip_days == null ? null : Math.round(st.local_clip_days * 24);
+  const policy = !st.r2 ? 'Cloudflare R2 is not set up: clips stay on the server.'
+    : hours == null ? 'Clips stay on the server for ever (CLIPCROW_LOCAL_CLIP_DAYS is off).'
+    : hours === 0 ? 'A clip leaves the server as soon as its copy is in R2.' : `A clip leaves the server about ${hours} hour${hours === 1 ? '' : 's'} after its copy is in R2.`;
+  const line = (label, value) => el('li', {}, el('strong', { text: label + ' ' }), value);
+  const buttons = [];
+  if (st.superadmin) {
+    if (st.r2) {
+      buttons.push(el('button', { class: 'btn primary', type: 'button', disabled: st.clips_safe_to_remove === 0, text: `Remove ${st.clips_safe_to_remove} clip file${st.clips_safe_to_remove === 1 ? '' : 's'} from the server`,
+        onclick: () => { if (confirm('Remove these clip files from the server? Each one is checked in R2 first (it must be there, same size), and the clips stay playable from R2.')) run('/admin/storage/cleanup', {}, (r) => `Removed ${r.removed} files, freed ${r.freed_gb} GB. Kept ${r.kept} that are not safely in R2.`); } }));
+      buttons.push(el('button', { class: 'btn', type: 'button', text: 'Upload missing copies to R2 now', onclick: () => run('/admin/storage/upload-missing', {}, (r) => `Checking ${r.queued} finished jobs; missing files are uploading in the background.`) }));
+    }
+    if (st.unowned_jobs) buttons.push(el('button', { class: 'btn', type: 'button', text: `Give ${st.unowned_jobs} old job${st.unowned_jobs === 1 ? '' : 's'} to me and keep them`,
+      onclick: () => { if (confirm(`Give the ${st.unowned_jobs} jobs that have no owner to ${email}? They are kept for ever (retention never deletes them).`)) run('/admin/jobs/claim', { email }, (r) => `${r.assigned} jobs are now in your account.`); } }));
+  }
+  return el('section', { class: 'card stack' }, el('h2', { text: 'Storage' }),
+    el('ul', { class: 'plain' },
+      line('Server disk:', `${st.disk_free_gb} GB free (${st.disk_free_pct}%)`),
+      line('Used by jobs on the server:', `originals ${st.jobs_gb.originals} GB, clips ${st.jobs_gb.clips} GB, other ${st.jobs_gb.other} GB`),
+      line('Cloudflare R2:', st.r2 ? 'connected' : 'not set up'),
+      st.r2 ? line('Clips with a verified copy in R2:', `${st.clips_safe_to_remove} (${st.clips_safe_gb} GB), safe to remove from the server`) : null,
+      st.r2 ? line('Clips not in R2 yet:', `${st.clips_not_in_bucket} (${st.clips_not_in_bucket_gb} GB), kept on the server`) : null,
+      st.unowned_jobs ? line('Old jobs with no owner:', String(st.unowned_jobs)) : null),
+    el('p', { class: 'small muted', text: policy }),
+    st.superadmin ? null : el('p', { class: 'small muted', text: 'Only a superadmin can remove files or change who owns jobs.' }),
+    err, buttons.length ? el('div', { class: 'row' }, buttons) : null, status);
+}
+
+async function adminView(notice) {
   const ov = await api('/admin/overview');
+  const st = await api('/admin/storage');
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
   const act = async (path, body) => {
     err.hidden = true;
@@ -412,10 +450,11 @@ async function adminView() {
     el('section', { class: 'card stack' }, el('h2', { text: 'Now' }),
       el('div', { class: 'statrow' },
         stat('jobs running', ov.jobs.running), stat('waiting', ov.jobs.queued), stat('failed in the last hour', ov.failed_last_hour, ov.failed_last_hour >= 5),
-        stat('disk free (GB)', ov.disk_free_gb, ov.disk_free_pct < 10), stat('sign-ups today', `${ov.signups_today} of ${ov.signup_cap}`), stat('mail', ov.mail, ov.mail === 'off'),
+        stat('server disk free (GB)', ov.disk_free_gb, ov.disk_free_pct < 10), stat('sign-ups today', `${ov.signups_today} of ${ov.signup_cap}`), stat('mail', ov.mail, ov.mail === 'off'),
         stat('GPU worker', ov.gpu_worker.online ? 'online' : 'offline'), stat('GPU tasks stuck', ov.unserved_tasks, ov.unserved_tasks > 0),
         ov.pod && stat('on-demand GPU', ov.pod.state))),
     err,
+    storageCard(st, state.config.email, adminView, typeof notice === 'string' ? notice : ''),
     moneyCard(ov.money),
     el('section', { class: 'card stack' }, el('h2', { text: 'People' }),
       el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['Email', 'Plan', 'This month', 'Jobs', 'Credits', ''].map((t) => el('th', { text: t })))), el('tbody', {}, rows)))),

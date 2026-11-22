@@ -10,6 +10,25 @@ from pathlib import Path
 from .edl import EDLError, json_schema, load_edl
 
 
+DEFAULT_LOCAL_CLIP_DAYS = 0.05           # about 72 minutes: long enough to watch or edit the clip you just made, then the bucket copy is the only one
+
+
+def local_clip_days_from_env(value: str, has_storage: bool):
+    """How long a finished clip's file stays on the server once an identical copy is in the bucket. Not set: about an hour. A number of days (0 = as soon as it is
+    uploaded). ``off`` keeps them for ever. Without a bucket there is no copy to rely on, so nothing is ever removed."""
+    if not has_storage:
+        return None
+    v = (value or "").strip().lower()
+    if v in ("off", "keep", "never", "no", "false"):
+        return None
+    if not v:
+        return DEFAULT_LOCAL_CLIP_DAYS
+    try:
+        return max(0.0, float(v))
+    except ValueError:
+        return DEFAULT_LOCAL_CLIP_DAYS
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="clipcrow")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -147,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
                              razorpay=Razorpay.from_env() if accounts else None, sociobird=SocioBird.from_env(),
                              storage=storage, storage_redirect=os.environ.get("CLIPCROW_R2_REDIRECT") == "1",
                              backup_source=os.environ.get("CLIPCROW_R2_BACKUP_SOURCE") == "1",
-                             local_clip_days=int(os.environ.get("CLIPCROW_LOCAL_CLIP_DAYS", "0") or 0),
+                             local_clip_days=local_clip_days_from_env(os.environ.get("CLIPCROW_LOCAL_CLIP_DAYS", ""), storage is not None),
                              sociobird_shared=os.environ.get("CLIPCROW_SOCIOBIRD_SHARED") == "1",
                              mailer=mailer, public_url=os.environ.get("CLIPCROW_PUBLIC_URL", ""),
                              worker_token=os.environ.get("CLIPCROW_WORKER_TOKEN") or None,

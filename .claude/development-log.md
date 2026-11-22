@@ -309,3 +309,10 @@ Removed the `CLIPCROW_TOKEN` login: the `/api/login` route, the token branch of 
 compose variable. `clipcrow serve` on a public address now needs `CLIPCROW_ACCOUNTS=1` (or `--insecure`); `CLIPCROW_TOKEN` is ignored with a notice. Without accounts the app is open and meant for this
 machine only. `/api/health` now also says `busy` (true while a job runs or waits) for deploy checks, since a bearer token can no longer list jobs. `scripts/job_costs.py` takes `CLIPCROW_SESSION` (the
 `clipcrow_session` cookie) instead of the token. The image smoke test starts the container with `CLIPCROW_ACCOUNTS=1`. The only password-typed input left is the masked SocioBird API key field (not a login).
+
+## 2026-11-22 - Clips leave the server once they are in R2; old jobs go to an account
+`CLIPCROW_LOCAL_CLIP_DAYS` was empty in production, which meant "never": every clip stayed on the server disk next to its R2 copy. Now, with R2 configured, an unset value means about an hour
+(`cli.local_clip_days_from_env`), `0` at once, `off` never; the hourly sweep calls `retention.evict_local_clips` (signature must match what was uploaded). The Operator page has a Storage card
+(`GET /api/admin/storage`; superadmin actions `POST /api/admin/storage/cleanup` (verifies each clip with a HEAD request to the bucket first), `.../upload-missing`, and `POST /api/admin/jobs/claim`).
+`Job.keep` (set by claim) exempts a job from retention: otherwise old jobs given to a free-plan account would be deleted at the next sweep, bucket copies included. Evicted clips play through the
+presigned-URL redirect that already existed. Originals are not removed by the cleanup. Tests: `tests/test_storage_cleanup.py`.

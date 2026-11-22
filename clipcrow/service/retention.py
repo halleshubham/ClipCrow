@@ -20,10 +20,10 @@ def _age_days(job: Job, now: datetime) -> float:
 
 
 def sweep(store: JobStore, days_for: Callable[[Job], tuple[int, int]], *, now: Optional[datetime] = None,
-          storage=None, local_clip_days: int = 0) -> dict:
+          storage=None, local_clip_days: Optional[float] = None) -> dict:
     """``days_for(job) -> (retention_days, source_days)``; 0 keeps. With object storage the bucket copies are removed
-    first (and when that fails nothing local is deleted, so the next pass retries); ``local_clip_days`` frees disk by
-    removing a finished clip's local file once an identical copy is in the bucket. Returns what was removed."""
+    first (and when that fails nothing local is deleted, so the next pass retries); ``local_clip_days`` (None = keep them) frees disk by
+    removing a finished clip's local file once an identical copy is in the bucket (0 = as soon as it is). A ``keep`` job is never expired. Returns what was removed."""
     now = now or datetime.now(timezone.utc)
     out = {"jobs": 0, "sources": 0, "evicted": 0}
     for job in store.list():
@@ -31,7 +31,7 @@ def sweep(store: JobStore, days_for: Callable[[Job], tuple[int, int]], *, now: O
             continue
         keep_days, source_days = days_for(job)
         age = _age_days(job, now)
-        if keep_days and age >= keep_days:
+        if keep_days and age >= keep_days and not job.keep:
             if storage:
                 try:
                     storage.delete_job(job.id)
@@ -61,13 +61,43 @@ def sweep(store: JobStore, days_for: Callable[[Job], tuple[int, int]], *, now: O
                     j.remote.pop(r, None)
             store.update(job.id, mark)
             out["sources"] += 1
-        if storage and local_clip_days and age >= local_clip_days:
-            for rel, sig in job.remote.items():
-                p = store.dir(job.id) / rel
-                if rel.startswith("out/c") and rel.endswith(".mp4") and p.is_file() and signature(p) == sig:
-                    p.unlink()
-                    out["evicted"] += 1
+        if storage and local_clip_days is not None and age >= local_clip_days:
+            out["evicted"] += evict_local_clips(store, job, storage)["removed"]
     return out
+
+
+def evict_local_clips(store: JobStore, job: Job, storage, *, verify: bool = False, dry_run: bool = False) -> dict:
+    """Remove the local MP4 of each finished clip whose identical copy is in the bucket. "Identical" = the signature recorded when it was uploaded matches the file now;
+    with ``verify`` the bucket is also asked (one HEAD request) whether the object is really there with the same size, so a stale record can never cost a clip.
+    ``dry_run`` only counts. Returns {removed, bytes, kept, kept_bytes}: ``kept`` are local clips that are NOT safely in the bucket (left alone)."""
+    r = {"removed": 0, "bytes": 0, "kept": 0, "kept_bytes": 0}
+    for rel, sig in list(job.remote.items()):
+        p = store.dir(job.id) / rel
+        if not (rel.startswith("out/c") and rel.endswith(".mp4") and p.is_file()):
+            continue
+        size = p.stat().st_size
+        safe = signature(p) == sig
+        if safe and verify:
+            try:
+                safe = storage.size(job.id, rel) == size
+            except StorageError:
+                safe = False
+        if not safe:
+            r["kept"] += 1
+            r["kept_bytes"] += size
+            continue
+        if not dry_run:
+            p.unlink(missing_ok=True)
+        r["removed"] += 1
+        r["bytes"] += size
+    # a finished clip that was never recorded as uploaded is still local only: count it so the operator sees what the bucket does not have yet
+    for c in job.clips:
+        rel = f"out/{c.id}.mp4"
+        p = store.dir(job.id) / rel
+        if rel not in job.remote and p.is_file():
+            r["kept"] += 1
+            r["kept_bytes"] += p.stat().st_size
+    return r
 
 
 def expires_at(job: Job, retention_days: int) -> Optional[str]:
@@ -79,7 +109,7 @@ def expires_at(job: Job, retention_days: int) -> Optional[str]:
 class Sweeper:
     """Runs ``sweep`` now and then in a background thread."""
 
-    def __init__(self, store: JobStore, days_for, every_s: float = 3600, *, storage=None, mirror=None, local_clip_days: int = 0,
+    def __init__(self, store: JobStore, days_for, every_s: float = 3600, *, storage=None, mirror=None, local_clip_days: Optional[float] = None,
                  extra=()):
         self.store, self.days_for, self.every_s = store, days_for, every_s
         self.storage, self.mirror, self.local_clip_days = storage, mirror, local_clip_days

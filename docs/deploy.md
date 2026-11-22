@@ -86,8 +86,8 @@ The accounts, minutes, payments and SocioBird connections live in one database. 
 1. R2 > create a **private** bucket. Create an API token with *Object Read & Write* limited to that bucket.
 2. Set `R2_ACCOUNT_ID` (or `R2_ENDPOINT` for the EU jurisdiction), `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`.
 3. Finished jobs are mirrored to the bucket in the background. Useful knobs: `CLIPCROW_R2_REDIRECT=1` (playback and downloads
-   come straight from R2, which offloads your server's bandwidth), `CLIPCROW_LOCAL_CLIP_DAYS=3` (free local disk once an identical
-   copy is in R2), `CLIPCROW_R2_BACKUP_SOURCE=1` (also keep the uploaded original there).
+   come straight from R2, which offloads your server's bandwidth), `CLIPCROW_LOCAL_CLIP_DAYS` (days a clip file stays on the server once an identical
+   copy is in R2; **not set = about an hour**, `0` = as soon as it is uploaded, `off` = for ever; without R2 nothing is ever removed), `CLIPCROW_R2_BACKUP_SOURCE=1` (also keep the uploaded original there).
 4. **CORS (needed for direct uploads).** Browsers upload to the bucket's address, so the bucket must allow your site. Run, with a token
    that may change bucket settings (the Object Read & Write token above cannot):
    `clipcrow r2-cors --origin https://<your domain>` (add `--show` to see the current rule). Or in the Cloudflare dashboard, bucket
@@ -226,3 +226,9 @@ A **superadmin** is an address in `CLIPCROW_ADMINS` (the server's environment). 
   (who, when, why). Use it after a UPI/bank payment, or to take back a mistake.
 - **Free minutes for a new account** (`signup_bonus_minutes`, 10 to start) is set **only** on the Operator settings page by a superadmin. `CLIPCROW_SIGNUP_BONUS_MINUTES` is no longer
   read. The bonus is given once per mailbox (also after deleting the account, and for `+tag` or Gmail-dot spellings). The list of other operators is superadmin-only too.
+
+### Storage page (Operator)
+Operator, **Storage**: the server disk, what jobs use on it (originals, clips, other), whether R2 is connected, how many clips have a verified copy in R2 and how many are not there yet.
+A superadmin can **remove the local clip files** that are safe (each is checked with R2 first: the object must exist with the same size; the clips stay playable from R2),
+**upload missing copies to R2 now**, and **give old jobs that have no owner to their own account and keep them** (a job that belongs to an account is otherwise expired by its plan's
+retention, 30 days on the free plan). Originals (`source.*`, `clean.mp4`) are never removed by the cleanup: they are what re-rendering and editing need; they follow `source_days`.

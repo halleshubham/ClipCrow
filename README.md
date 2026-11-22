@@ -124,8 +124,8 @@ involvement).
   `CLIPCROW_R2_BACKUP_SOURCE=1`) and re-mirrored when a clip is re-rendered or edited. A clip whose local file is gone is
   served by a **presigned URL valid for 10 minutes** (the bucket stays private; ownership is checked first; the CSP allows
   only the bucket's origin for media), with `CLIPCROW_R2_REDIRECT=1` all playback and downloads go to the bucket while the
-  copy is identical (a clip re-rendered locally is never served stale). `CLIPCROW_LOCAL_CLIP_DAYS=N` frees disk by removing
-  a local clip after N days once an identical copy is in the bucket. Deleting a job or an account **removes the bucket
+  copy is identical (a clip re-rendered locally is never served stale). `CLIPCROW_LOCAL_CLIP_DAYS` (default about an hour; `0` = at once; `off` = never) frees disk by removing
+  a local clip once an identical copy is in the bucket. Deleting a job or an account **removes the bucket
   copies first and aborts if that fails**; retention does the same and retries next hour. R2 specifics handled: region
   `auto`, SigV4, path-style addressing, and checksums sent only when required (newer boto3 sends CRC32 by default, which R2
   rejects). Tested against an S3-compatible server (moto), not against live R2 (no credentials in the build environment).
