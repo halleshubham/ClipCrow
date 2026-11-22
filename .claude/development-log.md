@@ -329,3 +329,9 @@ Production had `CLIPCROW_SOCIOBIRD_SHARED=1`, so anyone without their own connec
 notice. `/api/sociobird` no longer reports `shared`. Tests: `tests/test_sociobird_user.py` (a server key and the old env value never expose channels). The production flag was set to `0` in Coolify first (needs a restart to apply).
 
 Threads added to the posting platforms (`publish.SUPPORTED`): SocioBird's schema for it needs no extra settings and allows 500 characters. A Threads channel only appears for a person whose OWN SocioBird has one connected.
+
+## 2026-11-22 - Superadmin audit and the People table
+Audit of the operator surface (`docs/superadmin.md`). Fixed: every privileged action now goes to the append-only `admin_audit` (written BEFORE the action; source address included), not only view-as; plans and ALL
+settings are superadmin-only (operators read); credit changes need a reason (3+ characters) and are capped at 10,000 minutes; mail to the alert address for operator-list changes, 1,000+ minute changes and
+view-as; superadmin sessions last 7 days. UI: People table rebuilt for an operator (Person with tags, Minutes left, Used this month, Jobs, Actions; plan column only when there are several plans; you first;
+disabled rows dimmed); the audit card lists every action with details. Not done: a second factor, step-up codes, dual control, audit export (listed in the document).

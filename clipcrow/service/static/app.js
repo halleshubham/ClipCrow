@@ -352,6 +352,7 @@ async function adminSettingsView() {
       el('tbody', {}, d.history.map((h) => el('tr', {}, el('td', { text: h.at }), el('td', { translate: 'no', text: h.by }), el('td', { text: h.key }), el('td', { text: String(h.old) }), el('td', { text: String(h.new) })))))) : el('p', { class: 'small muted', text: 'No changes yet.' }));
   app.replaceChildren(el('div', { class: 'stack' }, el('h1', { text: 'Operator settings' }),
     el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin', text: 'Back to the overview' })),
+    d.superadmin ? null : el('p', { class: 'small muted', text: 'You can read these settings. Only a superadmin can change them.' }),
     err, services, ...groups, history,
     el('div', { class: 'actionbar' }, el('div', { class: 'abar' }, el('span', { class: 'small muted', text: 'Changes apply at once. Reset puts a setting back to what the server started with.' }), el('div', { class: 'grp' }, saved, save)))));
 }
@@ -372,13 +373,14 @@ async function adminUserView(userId) {
     const kind = segmented('cr-kind', 'wallet', 'What to do', 'Add minutes the person paid for or was given, or take back minutes added by mistake. The balance never goes below zero.',
       [['add', 'Add minutes', 'plus'], ['remove', 'Remove minutes', 'x']]);
     const amount = el('input', { id: 'cr-amount', type: 'number', min: '0.1', step: '0.1', inputmode: 'decimal', placeholder: 'minutes' });
-    const note = el('input', { id: 'cr-note', type: 'text', maxlength: '200', placeholder: 'Why (e.g. paid by UPI, ref 1234)', autocomplete: 'off' });
+    const note = el('input', { id: 'cr-note', type: 'text', maxlength: '200', placeholder: 'Required: e.g. paid by UPI, ref 1234', autocomplete: 'off', required: true });
     const quick = el('div', { class: 'row' }, [10, 30, 60, 300].map((n) => el('button', { class: 'btn', type: 'button', text: `${n} min`, onclick: () => { amount.value = String(n); amount.focus(); } })));
     const go = el('button', { class: 'btn primary', type: 'button', text: 'Apply' });
     go.addEventListener('click', async () => {
       err.hidden = true;
       const n = Number(amount.value);
-      if (!(n > 0)) { err.textContent = 'Enter how many minutes (more than 0).'; err.hidden = false; return; }
+      if (!(n > 0) || n > 10000) { err.textContent = 'Enter how many minutes (more than 0, at most 10,000 at a time).'; err.hidden = false; return; }
+      if (note.value.trim().length < 3) { err.textContent = 'Say why: a few words, for example "paid by UPI ref 1234".'; err.hidden = false; note.focus(); return; }
       const minutes = document.getElementById('cr-kind').value === 'remove' ? -n : n;
       go.disabled = true;
       try {
@@ -388,7 +390,7 @@ async function adminUserView(userId) {
     });
     form = el('div', { class: 'stack' }, kind,
       el('div', {}, fieldLabel('timer', 'Minutes', 'cr-amount', ''), amount, quick),
-      el('div', {}, fieldLabel('pencil', 'Why (kept in the ledger)', 'cr-note', ''), note), el('div', { class: 'row' }, go));
+      el('div', {}, fieldLabel('pencil', 'Why (required, kept in the ledger and the audit log)', 'cr-note', ''), note), el('div', { class: 'row' }, go));
   }
   app.replaceChildren(el('div', { class: 'stack' }, el('h1', { translate: 'no', text: who ? who.email : 'Account' }),
     el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin', text: 'Back to the overview' })), err,
@@ -396,6 +398,9 @@ async function adminUserView(userId) {
       el('div', { class: 'small muted', text: 'bought or given, never expire; the monthly allowance is separate' })), form),
     el('section', { class: 'card stack' }, el('h2', { text: 'Ledger' }), ledger)));
 }
+
+const AUDIT_WORDS = { 'view-as-start': 'started viewing', 'view-as-stop': 'stopped viewing', credits: 'changed minutes', plan: 'changed plan', disable: 'disabled account', enable: 'enabled account',
+  settings: 'changed settings', 'settings-reset': 'reset a setting', 'claim-jobs': 'gave old jobs to', 'storage-cleanup': 'removed local clips', 'storage-upload-missing': 'uploaded missing copies' };
 
 // where the server's disk goes, what the bucket (Cloudflare R2) holds, and the two clean-ups. Numbers only; the buttons are for a superadmin.
 function storageCard(st, email, refresh, notice) {
@@ -445,19 +450,31 @@ async function adminView(notice) {
     catch (ex) { err.textContent = ex.message; err.hidden = false; }
   };
   const stat = (label, value, bad) => el('div', { class: 'stat' }, el('div', { class: bad ? 'num bad' : 'num', text: String(value) }), el('div', { class: 'small muted', text: label }));
-  const rows = ov.users.map((u) => {
-    const plan = el('select', { 'aria-label': `Plan for ${u.email}` }, (ov.plans || ['free']).map((p) => el('option', { value: p, text: p, selected: p === u.plan })));
-    return el('tr', {},
-      el('td', { translate: 'no', text: u.email + (u.disabled ? ' (disabled)' : '') }),
-      el('td', {}, plan, el('button', { class: 'btn', type: 'button', text: 'Apply', onclick: () => act(`/admin/users/${u.id}/plan`, { plan: plan.value }) })),
-      el('td', { text: `${u.used_minutes} used, ${u.credits} extra` }),
-      el('td', { text: String(u.jobs) }),
-      el('td', {}, el('a', { class: 'btn', href: `#/admin/users/${u.id}`, text: ov.superadmin ? 'Manage credits' : 'View credits' }),
-        ov.superadmin && !u.is_superadmin ? el('button', { class: 'btn', type: 'button', text: 'View as', title: 'See their jobs exactly as they do (read-only, silent, logged)', onclick: async () => {
-          try { await api('/admin/impersonate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: u.id }) }); state.config = await api('/config'); showBanner(); location.hash = '#/jobs'; route(); }
-          catch (ex) { err.textContent = ex.message; err.hidden = false; } } }) : null),
-      el('td', {}, el('button', { class: 'btn', type: 'button', text: u.disabled ? 'Enable' : 'Disable', onclick: () => { if (confirm(u.disabled ? 'Enable this account?' : 'Disable this account and sign it out?')) act(`/admin/users/${u.id}/disabled`, { disabled: !u.disabled }); } })));
+  // People: one row per account. Minutes left is what matters (and goes red at 0); the plan column only appears when there is more than one plan to choose from.
+  const manyPlans = (ov.plans || []).length > 1;
+  const me = state.config.email;
+  const tag = (text, cls) => el('span', { class: `tag${cls ? ' ' + cls : ''}`, text });
+  const viewAs = async (u) => {
+    try { await api('/admin/impersonate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: u.id }) }); state.config = await api('/config'); showBanner(); location.hash = '#/jobs'; route(); }
+    catch (ex) { err.textContent = ex.message; err.hidden = false; }
+  };
+  const people = [...ov.users].sort((x, y) => (y.email === me) - (x.email === me));            // you first, then newest
+  const rows = people.map((u) => {
+    const plan = manyPlans ? el('select', { 'aria-label': `Plan for ${u.email}`, disabled: !ov.superadmin }, ov.plans.map((p) => el('option', { value: p, text: p, selected: p === u.plan }))) : null;
+    return el('tr', { class: u.disabled ? 'off' : '' },
+      el('td', {}, el('div', { class: 'who' }, el('span', { translate: 'no', text: u.email }), u.email === me ? tag('you') : null, u.is_superadmin ? tag('superadmin') : null, u.disabled ? tag('disabled', 'bad') : null),
+        el('div', { class: 'tiny muted', text: `joined ${new Date(u.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}` })),
+      manyPlans ? el('td', {}, plan, !ov.superadmin ? null : el('button', { class: 'btn', type: 'button', text: 'Change', onclick: () => act(`/admin/users/${u.id}/plan`, { plan: plan.value }) })) : null,
+      el('td', { class: u.left_minutes <= 0 ? 'num bad' : 'num', title: 'Minutes they can still use: extra minutes bought or given, plus any monthly allowance left', text: String(u.left_minutes) }),
+      el('td', { class: 'num', title: 'Minutes of video uploaded this calendar month', text: String(u.used_minutes) }),
+      el('td', { class: 'num', title: 'Jobs they have made', text: String(u.jobs) }),
+      el('td', {}, el('div', { class: 'acts' },
+        el('a', { class: 'btn', href: `#/admin/users/${u.id}`, title: ov.superadmin ? 'Add or remove minutes, see the ledger' : 'See the ledger', text: ov.superadmin ? 'Credits' : 'View credits' }),
+        ov.superadmin && !u.is_superadmin ? el('button', { class: 'btn', type: 'button', text: 'View as', title: 'See their jobs exactly as they do (read-only, silent, logged)', onclick: () => viewAs(u) }) : null,
+        u.is_superadmin ? null : el('button', { class: 'linkbtn danger', type: 'button', text: u.disabled ? 'Enable' : 'Disable', title: u.disabled ? 'Let them sign in again' : 'Sign them out and stop them signing in',
+          onclick: () => { if (confirm(u.disabled ? `Enable ${u.email}?` : `Disable ${u.email} and sign them out?`)) act(`/admin/users/${u.id}/disabled`, { disabled: !u.disabled }); } }))));
   });
+  const peopleHead = ['Person', manyPlans ? 'Plan' : null, 'Minutes left', 'Used this month', 'Jobs', 'Actions'].filter(Boolean);
   app.replaceChildren(el('div', { class: 'stack' }, el('h1', { text: 'Operator' }), el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin/settings', text: 'Settings' })),
     el('section', { class: 'card stack' }, el('h2', { text: 'Now' }),
       el('div', { class: 'statrow' },
@@ -468,12 +485,12 @@ async function adminView(notice) {
     err,
     storageCard(st, state.config.email, adminView, typeof notice === 'string' ? notice : ''),
     moneyCard(ov.money),
-    el('section', { class: 'card stack' }, el('h2', { text: 'People' }),
-      el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['Email', 'Plan', 'This month', 'Jobs', 'Credits', ''].map((t) => el('th', { text: t })))), el('tbody', {}, rows)))),
-    ov.superadmin ? el('section', { class: 'card stack' }, el('h2', { text: 'Staff access log' }),
-      el('p', { class: 'small muted', text: 'Every time a superadmin looked at an account (view-only). People are not notified; this is the record.' }),
-      audit.length ? el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['When (UTC)', 'Who', 'What', 'Account'].map((h) => el('th', { text: h })))),
-        el('tbody', {}, audit.slice(0, 30).map((e) => el('tr', {}, el('td', { text: e.at.replace('T', ' ').slice(0, 16) }), el('td', { translate: 'no', text: e.by }), el('td', { text: e.action === 'view-as-start' ? 'started viewing' : 'stopped viewing' }), el('td', { translate: 'no', text: e.target }))))))
+    el('section', { class: 'card stack' }, el('h2', { text: `People (${people.length})` }),
+      el('div', { class: 'tablewrap people' }, el('table', {}, el('thead', {}, el('tr', {}, peopleHead.map((t, i) => el('th', { class: ['Minutes left', 'Used this month', 'Jobs'].includes(t) ? 'num' : '', text: t })))), el('tbody', {}, rows)))),
+    ov.superadmin ? el('section', { class: 'card stack' }, el('h2', { text: 'Audit log' }),
+      el('p', { class: 'small muted', text: 'Everything privileged that an operator did: credits, plans, disabling, settings, storage clean-ups, giving jobs to an account, and every time an account was viewed. It can only be added to, never edited. People are not notified.' }),
+      audit.length ? el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['When (UTC)', 'Who', 'What', 'Account', 'Details'].map((h) => el('th', { text: h })))),
+        el('tbody', {}, audit.slice(0, 50).map((e) => el('tr', {}, el('td', { text: e.at.replace('T', ' ').slice(0, 16) }), el('td', { translate: 'no', text: e.by }), el('td', { text: AUDIT_WORDS[e.action] || e.action }), el('td', { translate: 'no', text: e.target }), el('td', { class: 'small', text: e.note }))))))
         : el('p', { class: 'small muted', text: 'Nobody has looked at an account yet.' })) : null,
     el('section', { class: 'card stack' }, el('h2', { text: 'Recent failures' }),
       ov.recent_failed.length ? el('ul', { class: 'plain' }, ov.recent_failed.map((f) => el('li', {}, el('a', { href: `#/jobs/${f.id}`, text: f.id }), ` ${f.owner}: ${f.error || 'no message'}`)))

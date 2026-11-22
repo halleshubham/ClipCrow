@@ -238,3 +238,6 @@ Operator, People, **View as**: see an account exactly as its owner does, to judg
 **Read-only** for you: every change (upload, delete, retry, settings, account delete) answers 403, and the social connection and posting pages are blocked, so nothing is spent or posted as them.
 It lasts an hour, ends at sign-out or when either account is deleted, and cannot be used on yourself or another superadmin. A red bar shows who you are viewing, with **Stop viewing**.
 Every start and stop is written to the **Staff access log** (Operator page, superadmin only). The privacy page tells people that operators may look at accounts read-only for support and quality.
+
+### Who can do what (superadmin and operators)
+See `docs/superadmin.md`: roles, what is audited, the alerts, and what is still to do (a second factor for superadmins is the main one).

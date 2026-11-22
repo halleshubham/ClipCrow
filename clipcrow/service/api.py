@@ -70,6 +70,7 @@ from ..styles import MAX_REFERENCE_BYTES, StyleError, StyleSettings, derive, mea
 log = logging.getLogger("clipcrow.service")
 STATIC = Path(__file__).parent / "static"
 SESSION_COOKIE = "clipcrow_session"
+SUPERADMIN_SESSION_DAYS = 7          # a superadmin signs in again after a week (everyone else: 30 days)
 LANGUAGES = [{"code": "", "name": "Auto-detect"}, {"code": "mr", "name": "Marathi"}, {"code": "hi", "name": "Hindi"},
              {"code": "en", "name": "English"}]
 CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; "
@@ -140,8 +141,8 @@ class SettingsBody(BaseModel):
 
 
 class AdminCredits(BaseModel):
-    minutes: float = Field(ge=-100000, le=100000)                # added (positive) or removed (negative)
-    note: str = Field(default="", max_length=200)               # why: "paid by UPI ref 123", "goodwill after a failed job" ... kept in the ledger
+    minutes: float = Field(ge=-10000, le=10000)                  # added (positive) or removed (negative), at most 10,000 at a time
+    note: str = Field(min_length=3, max_length=200)             # WHY (required): "paid by UPI ref 123", "goodwill after a failed job" ... kept in the ledger
 
 
 class ClaimJobs(BaseModel):
@@ -513,8 +514,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
 
     # --- accounts -------------------------------------------------------------------------------
     def set_session(resp: JSONResponse, request: Request, user: User) -> JSONResponse:
-        resp.set_cookie(SESSION_COOKIE, accounts.new_session(user.id), httponly=True, samesite="strict",
-                        max_age=30 * 86400, secure=secure_cookie(request))
+        resp.set_cookie(SESSION_COOKIE, accounts.new_session(user.id, days=SUPERADMIN_SESSION_DAYS if user.email in env_admins else None), httponly=True, samesite="strict",
+                        max_age=int((SUPERADMIN_SESSION_DAYS if user.email in env_admins else 30) * 86400), secure=secure_cookie(request))
         return resp
 
     def need_accounts() -> Accounts:
@@ -772,7 +773,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
 
     def settings_view(viewer: Optional[User] = None) -> dict:
         root = bool(viewer and viewer.email in env_admins)
-        view_rows = [{**r, "locked": bool(r.get("superadmin")) and not root} for r in opset.view()]          # a superadmin-only setting is shown, but only a superadmin can change it
+        view_rows = [{**r, "locked": not root} for r in opset.view()]          # every setting is shown to operators, only a superadmin can change one
         return {"groups": [{"id": g, "title": t, "about": a} for g, t, a in opsettings.GROUPS], "settings": view_rows, "services": services(),
                 "history": opset.history(), "accounts": bool(accounts), "billing": bool(razorpay), "superadmin": root}
 
@@ -788,6 +789,20 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
             raise HTTPException(403, "Only a superadmin can do this.")
         return admin
 
+    def audit(request: Request, admin: User, action: str, target: str = "", note: str = "") -> None:
+        """Every privileged action goes into ONE append-only trail (the audit log on the Operator page): who, what, which account, from which address. Written BEFORE the action,
+        so if the trail cannot be written the action does not happen (fail closed)."""
+        ip = request.client.host if request.client else ""
+        accounts.audit(admin.email, action, target, f"{note} · ip {ip}" if ip else note)
+
+    def ops_alert(subject: str, line: str) -> None:
+        """Tell the alert address about a sensitive change (best effort: a mail problem never blocks or undoes the action)."""
+        try:
+            if mailq and alert_to:
+                mailq.send(plain_mail(alert_to, subject, [line], "alert"))
+        except Exception:                                                  # noqa: BLE001
+            log.exception("could not send the operator alert")
+
     def real_superadmin(request: Request) -> User:
         """The signed-in person themselves (never the account being viewed), who must be a superadmin."""
         user = need_accounts().user_for_session(request.cookies.get(SESSION_COOKIE, ""))
@@ -802,8 +817,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         target = admin_target(body.user_id)
         if target.id == admin.id or target.email in env_admins:
             raise HTTPException(422, "Choose someone who is not a superadmin.")
+        audit(request, admin, "view-as-start", target.email)
         accounts.start_impersonation(request.cookies.get(SESSION_COOKIE, ""), target.id)
-        accounts.audit(admin.email, "view-as-start", target.email)
+        ops_alert("ClipCrow: an account is being viewed", "A superadmin started viewing an account read-only. It is in the audit log.")
         return {"email": target.email, "minutes": 60}
 
     @app.delete("/api/admin/impersonate")
@@ -811,7 +827,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         tok = request.cookies.get(SESSION_COOKIE, "")
         target = accounts.impersonation_target(tok)
         if target is not None:
-            accounts.audit(admin.email, "view-as-stop", target.email)
+            audit(request, admin, "view-as-stop", target.email)
         accounts.stop_impersonation(tok)
         return {"ok": True}
 
@@ -831,6 +847,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         for u in users:
             u["jobs_now"] = by_owner.get(u["id"], 0)
             u["is_superadmin"] = u["email"] in env_admins
+            u["left_minutes"] = round(max(catalog.plan(u["plan"]).monthly_minutes - u["used_minutes"], 0) + u["credits"], 1)      # what they can still use: this month's allowance left plus extra minutes
         recent_failed = [{"id": j.id, "owner": next((u["email"] for u in users if u["id"] == j.owner), ""), "error": (j.error or "")[:160], "when": j.created_at}
                          for j in sorted((j for j in jobs if j.status == "failed"), key=lambda j: j.created_at, reverse=True)[:10]]
         owners = {u["id"]: u["email"] for u in users}
@@ -871,22 +888,22 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         return settings_view(admin)
 
     @app.put("/api/admin/settings")
-    def admin_settings_put(body: SettingsBody, admin: User = Depends(admin_only)) -> dict:
-        locked = [k for k in body.values if k in opsettings.BY_KEY and opsettings.BY_KEY[k].superadmin]
-        if locked and admin.email not in env_admins:
-            raise HTTPException(403, "Only a superadmin can change: " + ", ".join(sorted(locked)) + ".")
+    def admin_settings_put(body: SettingsBody, request: Request, admin: User = Depends(superadmin_only)) -> dict:
+        """Settings move money and who may do what (prices, limits, retention, the operator list), so only a superadmin changes them; other operators can read."""
+        audit(request, admin, "settings", "", ", ".join(sorted(body.values))[:150])
         try:
             opset.update(body.values, admin.id)
         except ValueError as e:
             raise HTTPException(422, str(e))
         apply_settings()
         log.info("admin %s changed settings: %s", admin.id[:8], ", ".join(sorted(body.values))[:200])
+        if "extra_admins" in body.values:
+            ops_alert("ClipCrow: the list of operators changed", "A superadmin changed who else can open the Operator page. If that was not you, act now.")
         return settings_view(admin)
 
     @app.delete("/api/admin/settings/{key}")
-    def admin_settings_reset(key: str, admin: User = Depends(admin_only)) -> dict:
-        if key in opsettings.BY_KEY and opsettings.BY_KEY[key].superadmin and admin.email not in env_admins:
-            raise HTTPException(403, "Only a superadmin can change: " + key + ".")
+    def admin_settings_reset(key: str, request: Request, admin: User = Depends(superadmin_only)) -> dict:
+        audit(request, admin, "settings-reset", "", key[:60])
         try:
             opset.reset(key, admin.id)
         except ValueError as e:
@@ -896,15 +913,18 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         return settings_view(admin)
 
     @app.post("/api/admin/users/{user_id}/credits")
-    def admin_credits(user_id: str, body: AdminCredits, admin: User = Depends(superadmin_only)) -> dict:
+    def admin_credits(user_id: str, body: AdminCredits, request: Request, admin: User = Depends(superadmin_only)) -> dict:
         """Add (positive) or remove (negative) extra minutes by hand. Never below zero; every change is written to the person's ledger with who made it and why."""
         user = admin_target(user_id)
         if body.minutes == 0:
             raise HTTPException(422, "Enter a number of minutes to add or remove.")
+        audit(request, admin, "credits", user.email, f"{body.minutes:+g} min: {body.note.strip()[:100]}")
         try:
             balance = accounts.adjust_credits(user.id, body.minutes, admin.email, body.note.strip())
         except AccountError as e:
             raise HTTPException(422, str(e))
+        if abs(body.minutes) >= 1000:
+            ops_alert("ClipCrow: a large credit change", f"{body.minutes:+g} minutes were added or removed on an account ({body.note.strip()[:100]}). It is in the audit log.")
         log.info("superadmin %s changed the credit minutes of %s by %s", admin.id[:8], user.id[:8], body.minutes)
         return {"credit_minutes": round(balance, 1)}
 
@@ -914,21 +934,23 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         return {"balance": round(accounts.get(user.id).credits, 1), "history": accounts.credit_history(user.id)}
 
     @app.post("/api/admin/users/{user_id}/plan")
-    def admin_plan(user_id: str, body: AdminPlan, admin: User = Depends(admin_only)) -> dict:
+    def admin_plan(user_id: str, body: AdminPlan, request: Request, admin: User = Depends(superadmin_only)) -> dict:
         user = admin_target(user_id)
         if body.plan not in catalog.plans:
             raise HTTPException(422, "No such plan.")
+        audit(request, admin, "plan", user.email, f"{user.plan} -> {body.plan}")
         accounts.set_plan(user.id, body.plan, until=None)
         log.info("admin %s set the plan of %s to %s", admin.id[:8], user.id[:8], body.plan)
         return {"plan": body.plan}
 
     @app.post("/api/admin/users/{user_id}/disabled")
-    def admin_disable(user_id: str, body: AdminDisable, admin: User = Depends(admin_only)) -> dict:
+    def admin_disable(user_id: str, body: AdminDisable, request: Request, admin: User = Depends(admin_only)) -> dict:
         user = admin_target(user_id)
         if user.id == admin.id:
             raise HTTPException(422, "You cannot disable your own account.")
         if user.email in env_admins and body.disabled:
             raise HTTPException(422, "A root operator (set in the server's environment) cannot be disabled here.")
+        audit(request, admin, "disable" if body.disabled else "enable", user.email)
         accounts.set_disabled(user.id, body.disabled)
         log.info("admin %s %s %s", admin.id[:8], "disabled" if body.disabled else "enabled", user.id[:8])
         return {"disabled": body.disabled}
@@ -977,10 +999,11 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         return {**storage_report(), "superadmin": admin.email in env_admins}
 
     @app.post("/api/admin/storage/cleanup")
-    def admin_storage_cleanup(admin: User = Depends(superadmin_only)) -> dict:
+    def admin_storage_cleanup(request: Request, admin: User = Depends(superadmin_only)) -> dict:
         """Remove from the server the clip files that have an identical copy in the bucket. Each one is checked with the bucket first (the object must be there, same size)."""
         if not storage:
             raise HTTPException(409, "Object storage is not set up, so there is nothing to rely on: no file was removed.")
+        audit(request, admin, "storage-cleanup")
         if not cleanup_lock.acquire(blocking=False):
             raise HTTPException(409, "A cleanup is already running.")
         try:
@@ -997,13 +1020,14 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         return {"removed": total["removed"], "freed_gb": round(total["bytes"] / 2 ** 30, 2), "kept": total["kept"], "kept_gb": round(total["kept_bytes"] / 2 ** 30, 2)}
 
     @app.post("/api/admin/storage/upload-missing")
-    def admin_storage_upload_missing(admin: User = Depends(superadmin_only)) -> dict:
+    def admin_storage_upload_missing(request: Request, admin: User = Depends(superadmin_only)) -> dict:
         if mirror is None:
             raise HTTPException(409, "Object storage is not set up.")
+        audit(request, admin, "storage-upload-missing")
         return {"queued": mirror.reconcile()}
 
     @app.post("/api/admin/jobs/claim")
-    def admin_claim_jobs(body: ClaimJobs, admin: User = Depends(superadmin_only)) -> dict:
+    def admin_claim_jobs(body: ClaimJobs, request: Request, admin: User = Depends(superadmin_only)) -> dict:
         """Give every job that has no owner (made before accounts) to one account, and keep them for ever: a job that belongs to someone is otherwise expired by that
         plan's retention, which would delete jobs that are older than it."""
         need_accounts()
@@ -1013,6 +1037,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
             who = None
         if who is None:
             raise HTTPException(404, "No account has that address yet. Sign in once with it first.")
+        audit(request, admin, "claim-jobs", who.email)
         n = 0
         for j in store.list():
             if j.owner or j.sample or j.status in ("queued", "running"):

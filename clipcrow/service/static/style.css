@@ -281,6 +281,11 @@ textarea { min-height: 76px; }
 .stat { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); }
 .stat .num { text-align: left; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; } .stat .num.bad { color: var(--bad); }
 .tablewrap { overflow-x: auto; } .tablewrap table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.people .who { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; } .people tr.off td { opacity: .6; }
+.people .num { text-align: right; font-variant-numeric: tabular-nums; } .people td.bad { color: var(--bad); font-weight: 700; }
+.people .acts { display: flex; align-items: center; justify-content: flex-end; gap: 8px; } .people .acts .btn { min-height: 34px; padding: 5px 12px; } .linkbtn.danger { color: var(--bad); }
+@media (max-width: 720px) { .people th, .people td { padding: 8px 6px; } .people td:first-child { white-space: normal; min-width: 150px; max-width: 190px; overflow-wrap: anywhere; } .people .acts { flex-wrap: nowrap; } }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; background: var(--raised); color: var(--muted); border: 1px solid var(--line); } .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 .tablewrap th, .tablewrap td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; } .tablewrap td select, .tablewrap td input { width: auto; min-width: 90px; max-width: 120px; }
 tr.low td { color: var(--warn); }
 ul.plain { margin: 0; padding-left: 18px; }

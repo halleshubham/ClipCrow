@@ -63,7 +63,7 @@ def test_stopping_returns_to_your_own_view_and_start_and_stop_are_in_the_audit_l
     assert boss.get("/api/admin/audit").status_code == 200                                           # the log is readable while viewing (the real person is checked)
     assert boss.delete("/api/admin/impersonate").json() == {"ok": True}
     assert boss.get("/api/config").json()["viewing_as"] is None and jid not in {j["id"] for j in boss.get("/api/jobs").json()}
-    log = boss.get("/api/admin/audit").json()["entries"]
+    log = [e for e in boss.get("/api/admin/audit").json()["entries"] if e["action"].startswith("view-as")]
     assert [(e["by"], e["action"], e["target"]) for e in log] == [("boss@example.com", "view-as-stop", "maya@example.com"), ("boss@example.com", "view-as-start", "maya@example.com")]
     assert all(e["at"] for e in log)
 

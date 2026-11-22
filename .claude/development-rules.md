@@ -205,3 +205,6 @@ A green pipeline closes a task, not the push: after pushing, confirm the commit'
 Superadmin "view as" is read-only and logged: never add a route that lets a viewing session change data, spend minutes, read or use another person's SocioBird/credentials, or hide its own start and stop from `admin_audit`.
 New write routes are safe by default (every non-GET is refused while viewing); a new GET that reaches a person's secrets or their social accounts must be added to `VIEW_ONLY_BLOCKED` in `api.py`.
 
+## Superadmin actions
+A new privileged route: use `superadmin_only` (money, settings, data) or `admin_only` (look, disable), call `audit(request, admin, action, target, note)` BEFORE doing the thing, and add its wording to `AUDIT_WORDS` in `app.js`.
+Never add a way to create a superadmin from the UI; `CLIPCROW_ADMINS` is the only source.

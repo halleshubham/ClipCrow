@@ -133,11 +133,11 @@ def test_the_admin_page_exists_only_for_admins_and_can_adjust_accounts(tmp_path,
     ov = boss.get("/api/admin/overview").json()
     assert {u["email"] for u in ov["users"]} == {"user@example.com", "boss@example.com"} and ov["mail"] == "outbox" and "jobs" in ov
     assert "password" not in str(ov).lower() and "token" not in str(ov).lower()
-    assert boss.post(f"/api/admin/users/{uid}/credits", json={"minutes": 25}).json() == {"credit_minutes": 25.0}
+    assert boss.post(f"/api/admin/users/{uid}/credits", json={"minutes": 25, "note": "welcome gift"}).json() == {"credit_minutes": 25.0}
     assert boss.post(f"/api/admin/users/{uid}/plan", json={"plan": "pro"}).json() == {"plan": "pro"}
     assert boss.post(f"/api/admin/users/{uid}/plan", json={"plan": "nope"}).status_code == 422
     assert c.post(f"/api/admin/users/{uid}/credits", json={"minutes": 1}).status_code == 404                  # a non-admin cannot, and gets "not found"
-    assert boss.post("/api/admin/users/zzz/credits", json={"minutes": 1}).status_code == 404
+    assert boss.post("/api/admin/users/zzz/credits", json={"minutes": 1, "note": "test"}).status_code == 404
     assert boss.post(f"/api/admin/users/{uid}/disabled", json={"disabled": True}).json() == {"disabled": True}
     assert c.get("/api/me").status_code == 401                                                              # their session ended at once
     n = len(app.state.outbox.sent)

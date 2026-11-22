@@ -321,10 +321,10 @@ class Accounts:
         self._q("DELETE FROM users WHERE id=?", (user_id,))                # sessions, usage and posts go with it (cascade)
 
     # --- sessions -------------------------------------------------------------------------------
-    def new_session(self, user_id: str) -> str:
+    def new_session(self, user_id: str, days: Optional[float] = None) -> str:
         token = secrets.token_urlsafe(32)
         self._q("INSERT INTO sessions VALUES (?,?,?,?)", (hashlib.sha256(token.encode()).hexdigest(), user_id, _now(),
-                                                          time.time() + SESSION_DAYS * 86400))
+                                                          time.time() + (days or SESSION_DAYS) * 86400))
         self._q("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
         return token
 
