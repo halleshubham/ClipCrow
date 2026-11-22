@@ -147,9 +147,12 @@ def main(argv: list[str] | None = None) -> int:
             accounts = None
             if a.accounts:
                 from .service.accounts import Accounts
-                url = os.environ.get("DATABASE_URL", "").strip()
-                accounts = Accounts(url or Path(a.data) / "clipcrow.db", secret_file=Path(a.data) / "clipcrow.secret")
+                from .service.dbchoice import choose
+                picked = choose(a.data)
+                accounts = picked.accounts
                 print(f"accounts database: {accounts.describe()}", file=sys.stderr)
+                if picked.note:
+                    print(f"WARNING: {picked.note}", file=sys.stderr)
                 if a.host not in ("127.0.0.1", "::1", "localhost"):
                     print("note: accounts use cookies: serve this behind TLS (a reverse proxy)", file=sys.stderr)
             if a.host not in ("127.0.0.1", "::1", "localhost") and not accounts and not a.insecure:
@@ -183,9 +186,11 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "migrate-db":
             from .service.accounts import Accounts
             from .service.dbmigrate import migrate
-            url = os.environ.get("DATABASE_URL", "")
+            from .service.dbchoice import target_url
+            url = target_url()
             if not url.startswith(("postgres://", "postgresql://")):
-                raise ValueError("set DATABASE_URL to the PostgreSQL address first (it holds a password, so it is read from the environment, never from the command line)")
+                raise ValueError("set DATABASE_URL to the PostgreSQL address first (it holds a password, so it is read from the environment, never from the command line); "
+                                 "with the bundled database from docker-compose.yml nothing needs setting")
             src = a.sqlite or str(Path(a.data) / "clipcrow.db")
             target = Accounts(url, secret_file=Path(a.data) / "clipcrow.secret")
             report = migrate(src, target)
@@ -196,8 +201,8 @@ def main(argv: list[str] | None = None) -> int:
             from .service.accounts import Accounts
             from .service.docstore import DocStore
             from .service import storemigrate
-            url = os.environ.get("DATABASE_URL", "").strip()
-            target = Accounts(url or Path(a.data) / "clipcrow.db", secret_file=Path(a.data) / "clipcrow.secret")      # the same database the accounts use
+            from .service.dbchoice import choose
+            target = choose(a.data).accounts                                                                      # the same database the accounts use
             docs = DocStore(target.db)
             from .service.jobrows import JobRows
             rows = JobRows(target.db)

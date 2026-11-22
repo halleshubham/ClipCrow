@@ -73,13 +73,23 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
 4. **Deploy.** The first start takes a minute (health check `start_period` is 90 s). Then, in the container terminal:
    `clipcrow selftest` should print `ok` for every line, ending with a real render.
 
-## PostgreSQL for the accounts (recommended for a public launch)
-The accounts, minutes, payments and SocioBird connections live in one database. By default it is the SQLite file `/data/clipcrow.db`; with `DATABASE_URL=postgresql://user:password@host:5432/clipcrow` (add `?sslmode=require` for a remote host) the same code runs on PostgreSQL 14 or newer. Jobs, uploads and brand files are still files on `/data` (and R2): PostgreSQL does not hold them yet (`docs/roadmap.md`, I1).
-1. **Create the database.** Easiest in Coolify: Resources, New, Database, PostgreSQL, with scheduled backups to your R2 bucket switched on. Or run it in the same stack with `docker-compose.postgres.yml`. Copy its internal address into a secret variable `DATABASE_URL` on the ClipCrow service (do not deploy yet).
-2. **Move the data once** (it is safe to repeat, and the SQLite file is never changed): in the ClipCrow container terminal, with `DATABASE_URL` set, run `clipcrow migrate-db --data /data`. It copies people, signed-in sessions, the minutes ledger, the handled payment-event ids and SocioBird connections, then prints counts only. Keep `/data/clipcrow.secret` (or the same `CLIPCROW_SECRET_KEY`): the stored SocioBird keys can only be read with it.
-3. **Deploy.** The server tells you which database it uses at start (`accounts database: PostgreSQL host/db`, never the password). If something is wrong, remove `DATABASE_URL` and redeploy: the SQLite file is exactly as it was before the move (but it will not have anything made since).
-4. **Backups.** PostgreSQL is not copied by ClipCrow (the daily file copy is SQLite's). Use the database service's scheduled backups, keep one copy off the machine, and do a restore drill (`docs/operations.md`). The pool size is `CLIPCROW_DB_POOL` (default 10).
-5. **Tests.** CI runs the accounts tests on both engines. Locally: `CLIPCROW_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/clipcrow_test pytest -q` puts every test's accounts in a private schema of that database.
+## PostgreSQL, part of the stack
+`docker-compose.yml` (and `docker-compose.gpu.yml`) start a PostgreSQL 16 container beside ClipCrow with its own volume (`clipcrow-pg`) and tell ClipCrow its address (`CLIPCROW_BUNDLED_DB`). Nothing to configure: **Coolify creates the password itself** (`SERVICE_PASSWORD_POSTGRES`); with plain `docker compose` set `POSTGRES_PASSWORD` (letters and digits only, it sits inside the address).
+
+Which database the accounts use, in this order:
+1. **`DATABASE_URL` set** (your own or a managed PostgreSQL): that one. If it is EMPTY while the SQLite file in `/data` still has people, the server refuses to start and tells you to move them (`clipcrow migrate-db --data /data`), because an empty database makes every account look deleted. `CLIPCROW_ALLOW_EMPTY_DB=1` says you really want a fresh one.
+2. **Otherwise the bundled PostgreSQL.** On a running installation whose people are still in the SQLite file, the server keeps using the SQLite file and prints a warning at start (`WARNING: the bundled PostgreSQL is empty and the SQLite file has N people ...`), so adding the service can never lose anyone. Move them once, in the ClipCrow container terminal: `clipcrow migrate-db --data /data` (safe to repeat; the SQLite file is never changed; it copies people, signed-in sessions, the minutes ledger, the handled payment ids and SocioBird connections, counts only), then restart. A fresh install simply starts on PostgreSQL.
+3. **Neither** (running without the compose file): the SQLite file `/data/clipcrow.db`.
+
+Keep `/data/clipcrow.secret` (or the same `CLIPCROW_SECRET_KEY`): stored SocioBird keys can only be read with it. The server logs which database it uses at start (`accounts database: PostgreSQL host/db`, never the password); `CLIPCROW_DB_POOL` sets the pool (default 10).
+
+**Backups.** The database lives in the `clipcrow-pg` volume on the same machine as everything else. ClipCrow does not copy it (the daily copy is SQLite's). Schedule `pg_dump` (Coolify can back up its database resources to R2; a plain stack needs a cron job on the host: `docker compose exec -T postgres pg_dump -U clipcrow clipcrow | gzip > ...`), keep one copy off the machine, and do a restore drill (`docs/operations.md`).
+
+**Records beyond the accounts.** Jobs, brands, styles and the rest can also live in this database: `docs/postgres-migration.md` (`CLIPCROW_STORE=both`, then `db`). That is a separate, reversible step.
+
+**Using a database somewhere else** (managed PostgreSQL, or a Coolify database resource): set `DATABASE_URL=postgresql://user:password@host:5432/clipcrow` (`?sslmode=require` for a remote host) as a secret variable; the bundled service then sits unused and can be removed from the file.
+
+**Tests.** CI runs the accounts, service and record-store tests on both engines. Locally: `CLIPCROW_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/clipcrow_test pytest -q` puts every test's accounts in a private schema of that database.
 
 ## 3. Cloudflare R2 (optional, recommended when disk is limited)
 

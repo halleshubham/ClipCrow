@@ -2,9 +2,28 @@
 # Coolify: new resource > Docker Compose > this file; add a registry credential for ghcr.io (a token with read:packages)
 # because the package is private; set the variables below in the Coolify UI. See docs/deploy.md.
 services:
+  # PostgreSQL for the accounts (and, once you switch them on, the job and brand records: docs/postgres-migration.md). It starts beside ClipCrow; nothing to configure.
+  # Coolify creates the password (SERVICE_PASSWORD_POSTGRES); elsewhere set POSTGRES_PASSWORD (letters and digits only: it sits inside the address below).
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=clipcrow
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES:-${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (or let Coolify create SERVICE_PASSWORD_POSTGRES)}}
+      - POSTGRES_DB=clipcrow
+    volumes:
+      - clipcrow-pg:/var/lib/postgresql/data       # the accounts, minutes and payments: back this up (pg_dump daily, and keep a copy off this machine)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clipcrow -d clipcrow"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
   clipcrow:
     image: ghcr.io/halleshubham/clipcrow:${CLIPCROW_TAG:-cpu}
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     shm_size: "2gb"                 # headless Chrome crashes on Docker's default 64 MB /dev/shm
     stop_grace_period: 90s          # must stay above DRAIN_TIMEOUT_SECONDS (45) + the server's own 20 s shutdown wait
     environment:
@@ -48,8 +67,12 @@ services:
       - CLIPCROW_WORKER_PICKUP_SECONDS=${CLIPCROW_WORKER_PICKUP_SECONDS:-120}
       - CLIPCROW_WORKER_MAX_UPLOAD_MB=${CLIPCROW_WORKER_MAX_UPLOAD_MB:-300}      # the biggest clip a worker may send back
       - CLIPCROW_WORKER_MAX_CLIP_SECONDS=${CLIPCROW_WORKER_MAX_CLIP_SECONDS:-60}      # longer clips need a worker that sends the MP4 to the bucket (no proxy cap); otherwise they render on the server; 0 = no limit
-      # --- accounts database: empty = the SQLite file in /data; a postgresql:// address = PostgreSQL (docs/deploy.md). It holds a password: keep it a secret variable.
+      # --- accounts database: empty = the PostgreSQL service in this file; a postgresql:// address = another PostgreSQL (docs/deploy.md). It holds a password: keep it a secret variable.
       - DATABASE_URL=${DATABASE_URL:-}
+      # the PostgreSQL service above. Used unless DATABASE_URL names another one; if the SQLite file still holds your people it keeps being used (with a warning) until you run
+      # clipcrow migrate-db, so adding this service to a running installation cannot lose anyone.
+      - CLIPCROW_BUNDLED_DB=postgresql://clipcrow:${SERVICE_PASSWORD_POSTGRES:-${POSTGRES_PASSWORD}}@postgres:5432/clipcrow
+      - CLIPCROW_ALLOW_EMPTY_DB=${CLIPCROW_ALLOW_EMPTY_DB:-}   # 1 = start on an empty DATABASE_URL although the SQLite file has people (a deliberate fresh start)
       - CLIPCROW_DB_POOL=${CLIPCROW_DB_POOL:-}              # PostgreSQL connections kept ready (default 10)
       - CLIPCROW_SECRET_KEY=${CLIPCROW_SECRET_KEY:-}        # keys sign-in codes and seals stored credentials; empty = a random one in /data/clipcrow.secret (back it up)
       # --- email (sign-in is by emailed code): Resend by default, or SMTP; see docs/deploy.md
@@ -90,5 +113,6 @@ services:
       start_period: 90s
 
 volumes:
+  clipcrow-pg:
   clipcrow-data:
   clipcrow-models:

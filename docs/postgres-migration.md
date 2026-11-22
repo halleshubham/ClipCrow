@@ -12,7 +12,7 @@ The switch is `CLIPCROW_STORE_<NAME>` for `jobs`, `uploads`, `brand`, `style`, `
 (written to the files AND the database, read from the files) or `db` (the database only; the files stay untouched). It needs the accounts database (`DATABASE_URL`); a
 single-user install without accounts always uses files.
 
-1. Deploy the code and confirm `DATABASE_URL` is set (accounts already use it).
+1. Deploy the code. The accounts must already be on PostgreSQL: the bundled one from the compose file, or your own (`docs/deploy.md`, "PostgreSQL, part of the stack").
 2. Set `CLIPCROW_STORE=both` and redeploy. From now on every write goes to both places, and reads still come from the files, so nothing can be lost.
 3. In the service's terminal: `clipcrow migrate-stores --data /data` copies what was written before step 2 (read-only on the files, safe to run twice), then
    `clipcrow migrate-stores --data /data --verify` must print `different 0, only in files 0, only in the database 0` (a job that is running at that instant may differ once;
