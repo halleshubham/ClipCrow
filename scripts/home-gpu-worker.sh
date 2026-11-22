@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Run (or update) the ClipCrow GPU worker on your own machine, from the published image.
 #
-#   CLIPCROW_WORKER_TOKEN=... ./home-gpu-worker.sh            # token is the only thing you must give
+#   ./home-gpu-worker.sh                                      # first run asks for the token (hidden) and can save it; later runs just start
 #   SERVER=https://clipcrow.shackyapps.in NAME=home-gpu PARALLEL=2 CLIPCROW_WORKER_TOKEN=... ./home-gpu-worker.sh
 #   ./home-gpu-worker.sh stop | logs | status
 #
-# Every setting is an environment variable with a default. The token is read from the environment and passed on by NAME (never written on the
-# command line, so it does not show in `ps` or shell history when you export it first).
+# Every setting is an environment variable with a default. The token is passed to docker by NAME (never written on the command line, so it does not show in `ps`).
 set -euo pipefail
 
 SERVER="${SERVER:-https://clipcrow.shackyapps.in}"      # your ClipCrow address
@@ -31,11 +30,24 @@ case "$cmd" in
   *)      echo "usage: $0 [start|stop|logs|status]" >&2; exit 2 ;;
 esac
 
-if [ -z "${CLIPCROW_WORKER_TOKEN:-}" ]; then
-  echo "Set CLIPCROW_WORKER_TOKEN (the same value as on the server). Do not put it on the command line:" >&2
-  echo "  read -rs CLIPCROW_WORKER_TOKEN && export CLIPCROW_WORKER_TOKEN" >&2
-  exit 1
+# The token (the same value as CLIPCROW_WORKER_TOKEN in Coolify). Where it comes from, in this order: the environment, the private file below, a hidden prompt (then it offers to
+# save it to the file, mode 600, so the next start does not ask). It is never put on a command line, in the script, or in a log.
+TOKEN_FILE="${TOKEN_FILE:-$HOME/.config/clipcrow/worker.env}"
+if [ -z "${CLIPCROW_WORKER_TOKEN:-}" ] && [ -f "$TOKEN_FILE" ]; then
+  if [ "$(stat -c %a "$TOKEN_FILE" 2>/dev/null || stat -f %Lp "$TOKEN_FILE")" != "600" ]; then chmod 600 "$TOKEN_FILE"; fi
+  CLIPCROW_WORKER_TOKEN="$(sed -n 's/^CLIPCROW_WORKER_TOKEN=//p' "$TOKEN_FILE" | head -n1)"
 fi
+if [ -z "${CLIPCROW_WORKER_TOKEN:-}" ]; then
+  [ -t 0 ] || { echo "No token. Set CLIPCROW_WORKER_TOKEN, or run this once in a terminal to enter it." >&2; exit 1; }
+  read -rsp "Worker token (same as CLIPCROW_WORKER_TOKEN in Coolify; typing is hidden): " CLIPCROW_WORKER_TOKEN; echo
+  read -rp "Save it to $TOKEN_FILE (readable only by you) so you are not asked again? [Y/n] " save
+  if [ "${save:-Y}" != "n" ] && [ "${save:-Y}" != "N" ]; then
+    mkdir -p "$(dirname "$TOKEN_FILE")"; umask 077
+    printf 'CLIPCROW_WORKER_TOKEN=%s\n' "$CLIPCROW_WORKER_TOKEN" > "$TOKEN_FILE"; chmod 600 "$TOKEN_FILE"
+    echo "saved. To forget it: rm $TOKEN_FILE"
+  fi
+fi
+export CLIPCROW_WORKER_TOKEN
 if [ "${#CLIPCROW_WORKER_TOKEN}" -lt 16 ]; then echo "the token must be at least 16 characters" >&2; exit 1; fi
 command -v docker >/dev/null || { echo "docker is not installed" >&2; exit 1; }
 docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L >/dev/null 2>&1 \
