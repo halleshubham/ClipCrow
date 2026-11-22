@@ -30,13 +30,13 @@ CHANNELS = {KEY_A: [Channel("a-yt", "A's YouTube", "youtube", "")], KEY_B: [Chan
             "operator-key-value": [Channel("op-yt", "Operator YouTube", "youtube", "")]}
 
 
-def build(tmp_path, shared=False, operator=False):
+def build(tmp_path, operator=False):
     a = Accounts(tmp_path / "data" / "clipcrow.db")
     cat = Catalog(plans={"free": Plan("free", "Free", 100, 7, 3)})
     state = {"refuse": set()}
     factory = lambda key: FakeSB(key, CHANNELS, refuse=key in state["refuse"])
     app = create_app(tmp_path / "data", FakePipeline(), accounts=a, mailer=Outbox(), catalog=cat, sociobird_factory=factory,
-                     sociobird=FakeSB("operator-key-value", CHANNELS) if operator else None, sociobird_shared=shared)
+                     sociobird=FakeSB("operator-key-value", CHANNELS) if operator else None)
     ca, cb = TestClient(app), TestClient(app)
     sign_up(ca, "a@example.com")
     sign_up(cb, "b@example.com")
@@ -45,7 +45,7 @@ def build(tmp_path, shared=False, operator=False):
 
 def test_a_person_pastes_their_key_it_is_tried_first_and_stored_encrypted_and_never_shown_again(tmp_path):
     ca, cb, a, app, _ = build(tmp_path)
-    assert ca.get("/api/sociobird").json() == {"connected": False, "kind": "", "label": "", "since": "", "last_error": "", "shared": False, "oauth": False}
+    assert ca.get("/api/sociobird").json() == {"connected": False, "kind": "", "label": "", "since": "", "last_error": "", "oauth": False}
     assert ca.get("/api/publish/channels").status_code == 409                                    # nothing connected yet
     r = ca.post("/api/sociobird/key", json={"key": f"  {KEY_A}  "})
     assert r.status_code == 200 and r.json()["connected"] is True and r.json()["kind"] == "key" and r.json()["label"] == "1 channel"
@@ -66,7 +66,7 @@ def test_a_key_that_socioBird_refuses_is_not_stored_and_odd_keys_are_refused(tmp
 
 
 def test_every_person_uses_only_their_own_connection_and_never_the_operators(tmp_path):
-    ca, cb, a, app, _ = build(tmp_path, shared=False, operator=True)
+    ca, cb, a, app, _ = build(tmp_path, operator=True)
     ca.post("/api/sociobird/key", json={"key": KEY_A})
     cb.post("/api/sociobird/key", json={"key": KEY_B})
     assert [c["id"] for c in ca.get("/api/publish/channels").json()] == ["a-yt"]
@@ -77,11 +77,16 @@ def test_every_person_uses_only_their_own_connection_and_never_the_operators(tmp
     assert [c["id"] for c in ca.get("/api/publish/channels").json()] == ["a-yt"]                  # and A is untouched
 
 
-def test_shared_posting_is_still_there_for_people_without_their_own(tmp_path):
-    ca, cb, _, _, _ = build(tmp_path, shared=True, operator=True)
-    assert [c["id"] for c in cb.get("/api/publish/channels").json()] == ["op-yt"] and ca.get("/api/sociobird").json()["shared"] is True
+def test_there_is_no_shared_mode_the_operators_channels_are_never_shown_to_anyone_even_with_the_old_setting(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLIPCROW_SOCIOBIRD_SHARED", "1")                                           # the setting that once leaked the operator's channels to every account
+    ca, cb, _, _, _ = build(tmp_path, operator=True)
+    for c in (ca, cb):
+        r = c.get("/api/publish/channels")
+        assert r.status_code == 409 and "op-yt" not in r.text and "Operator" not in r.text         # nobody has their own connection yet: nothing is shown
+        assert "shared" not in c.get("/api/sociobird").json()
     ca.post("/api/sociobird/key", json={"key": KEY_A})
-    assert [c["id"] for c in ca.get("/api/publish/channels").json()] == ["a-yt"]                  # their own beats the shared one
+    assert [c["id"] for c in ca.get("/api/publish/channels").json()] == ["a-yt"]                    # only their own
+    assert cb.get("/api/publish/channels").status_code == 409                                      # and B still sees nothing
 
 
 def test_a_refused_key_at_use_time_says_reconnect_and_is_remembered(tmp_path):

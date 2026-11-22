@@ -276,7 +276,7 @@ def _opt_float(v, default: float) -> float:
 def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int = 4096,
                demo: bool = False, start_runner: bool = True, accounts: Accounts | None = None,
                catalog: Catalog | None = None, allow_signup: bool = True, razorpay: Razorpay | None = None,
-               sociobird: SocioBird | None = None, sociobird_shared: bool = False, storage: S3Storage | None = None,
+               sociobird: SocioBird | None = None, storage: S3Storage | None = None,
                storage_redirect: bool = False, backup_source: bool = False, local_clip_days: Optional[float] = None,
                worker_token: str | None = None, worker_pickup_seconds: float = 120.0, worker_lease_seconds: float = 90.0,
                mailer: Mailer | None = None, public_url: str = "", limits: Limits | None = None, alert_email: str = "", sample_dir: str = "", sociobird_factory: Callable[[str], SocioBird] | None = None,
@@ -1032,15 +1032,13 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
     NOT_CONNECTED = "Connect your SocioBird account first: open your Account page and add it under Posting."
 
     def need_publishing(request: Request) -> SocioBird:
-        """The SocioBird client for THIS person. With accounts on it is built from their own stored key (never the operator's, unless the operator chose shared
-        posting); without accounts it is the server's one client."""
+        """The SocioBird client for THIS person: built from their own connection (OAuth, or a key they pasted), never from the server's key. With accounts on there is no
+        shared fallback of any kind, so nobody ever sees or posts to anyone else's channels. Without accounts (this machine only) it is the server's one client."""
         user = getattr(request.state, "user", None)
-        if accounts and user is not None:
-            key = accounts.link_token(user.id)
+        if accounts:
+            key = accounts.link_token(user.id) if user is not None else None
             if key:
                 return make_sociobird(key)
-            if sociobird and sociobird_shared:
-                return sociobird
             raise HTTPException(409, NOT_CONNECTED)
         if not sociobird:
             raise HTTPException(404, "Posting to social channels is not set up on this server.")
@@ -1055,7 +1053,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
     def sociobird_status(user: User) -> dict:
         link = accounts.get_link(user.id) if accounts else None
         return {"connected": bool(link), "kind": link["kind"] if link else "", "label": link["label"] if link else "", "since": link["connected_at"] if link else "",
-                "last_error": link["last_error"] if link else "", "shared": bool(sociobird and sociobird_shared), "oauth": bool(oauth_id)}
+                "last_error": link["last_error"] if link else "", "oauth": bool(oauth_id)}
 
     @app.get("/api/sociobird", dependencies=[Depends(authed)])
     def sociobird_get(request: Request) -> dict:

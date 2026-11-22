@@ -137,6 +137,8 @@ def main(argv: list[str] | None = None) -> int:
             from .service.demo import DemoPipeline
             from .service.publish import SocioBird
             from .service.pipelines import RealPipeline
+            if os.environ.get("CLIPCROW_SOCIOBIRD_SHARED"):
+                print("note: CLIPCROW_SOCIOBIRD_SHARED is no longer used: with accounts on, everyone posts only to their OWN connected SocioBird (SOCIOBIRD_API_KEY is ignored).", file=sys.stderr)
             if os.environ.get("CLIPCROW_TOKEN"):
                 print("note: CLIPCROW_TOKEN is no longer used. Sign-in is by emailed code only: set CLIPCROW_ACCOUNTS=1 (and email, see docs/deploy.md).", file=sys.stderr)
             accounts = None
@@ -163,11 +165,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"object storage: bucket {storage.bucket} at {storage.host}", file=sys.stderr)
             app = create_app(a.data, DemoPipeline() if a.demo else RealPipeline(),
                              max_upload_mb=a.max_upload_mb, demo=a.demo, accounts=accounts, allow_signup=not a.no_signup,
-                             razorpay=Razorpay.from_env() if accounts else None, sociobird=SocioBird.from_env(),
+                             razorpay=Razorpay.from_env() if accounts else None, sociobird=None if accounts else SocioBird.from_env(),
                              storage=storage, storage_redirect=os.environ.get("CLIPCROW_R2_REDIRECT") == "1",
                              backup_source=os.environ.get("CLIPCROW_R2_BACKUP_SOURCE") == "1",
                              local_clip_days=local_clip_days_from_env(os.environ.get("CLIPCROW_LOCAL_CLIP_DAYS", ""), storage is not None),
-                             sociobird_shared=os.environ.get("CLIPCROW_SOCIOBIRD_SHARED") == "1",
                              mailer=mailer, public_url=os.environ.get("CLIPCROW_PUBLIC_URL", ""),
                              worker_token=os.environ.get("CLIPCROW_WORKER_TOKEN") or None,
                              worker_pickup_seconds=float(os.environ.get("CLIPCROW_WORKER_PICKUP_SECONDS", "120") or 120))

@@ -7,9 +7,8 @@ shapes follow the Postiz-style public API that those tools mirror (``GET /public
 function, so the tests use a fake and a mismatch would be fixed in this one file.
 
 Scope and safety:
-  * The API key belongs to the OPERATOR's SocioBird workspace, so it is single-tenant. With accounts turned on, posting
-    stays off unless the operator opts in (``CLIPCROW_SOCIOBIRD_SHARED=1``: everyone who can sign in may post to those
-    channels). Per-user keys are future work.
+  * With accounts turned on, each person posts only through THEIR OWN SocioBird connection (OAuth, or a key they paste); the server's own
+    key is never used for them and there is no shared mode (it once leaked the operator's channels to everyone).
   * Only platforms whose required settings were checked are allowed (``SUPPORTED``).
   * Captions are plain text from a person: they are escaped and wrapped in ``<p>`` here, never passed through as HTML.
   * If a clip includes AI-generated media the person must confirm they will label it; TikTok's own AI label is set for them.
@@ -33,10 +32,10 @@ from ..httpsafe import https_or_loopback
 
 # Only platforms whose post settings were read from SocioBird's own schema (integrationSchema) are allowed. Left out on purpose: dev.to and
 # the others are articles, botsab is a WhatsApp group bot (no schema was checked for either).
-SUPPORTED = ("youtube", "instagram", "instagram-standalone", "tiktok", "facebook", "x", "linkedin", "linkedin-page", "telegram")
+SUPPORTED = ("youtube", "instagram", "instagram-standalone", "tiktok", "facebook", "x", "linkedin", "linkedin-page", "telegram", "threads")
 MAX_UPLOAD = 250 * 1024 * 1024
 LIMITS = {"youtube": 5000, "instagram": 2200, "instagram-standalone": 2200, "tiktok": 2000, "facebook": 63206, "x": 280,
-          "linkedin": 3000, "linkedin-page": 3000, "telegram": 4096}
+          "linkedin": 3000, "linkedin-page": 3000, "telegram": 4096, "threads": 500}
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
@@ -83,8 +82,8 @@ def settings_for(platform: str, *, title: str, privacy: str = "public", made_for
         return {"__type": platform, "who_can_reply_post": "everyone", "made_with_ai": bool(ai_generated)}
     if platform in ("linkedin", "linkedin-page"):
         return {"__type": platform, "post_as_images_carousel": False}
-    if platform == "telegram":
-        return {"__type": platform}                                              # "No additional settings required"
+    if platform in ("telegram", "threads"):
+        return {"__type": platform}                                              # SocioBird's schema: "No additional settings required" (Threads: at most 500 characters)
     raise PublishError("That platform is not supported yet.")
 
 

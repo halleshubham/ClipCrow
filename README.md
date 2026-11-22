@@ -114,8 +114,8 @@ involvement).
 - **Posting (SocioBird)**: `SOCIOBIRD_API_URL`, `SOCIOBIRD_API_KEY`. YouTube, Instagram (Reels) and TikTok; the
   per-platform settings are exactly what SocioBird's published schemas require (TikTok's AI label is switched on for clips
   with AI-generated pictures, and the person must confirm they will label it elsewhere). One upload, one post per channel,
-  scheduling supported, per-channel results. The key is the **operator's** workspace, so with accounts on, posting is off
-  unless `CLIPCROW_SOCIOBIRD_SHARED=1` (everyone who can sign in may post to those channels); per-user keys are future work.
+  scheduling supported, per-channel results. With accounts on, each person posts only through
+  THEIR OWN SocioBird connection (OAuth, or a key they paste); there is no shared mode and the server's own key is never used for them.
   The request shapes follow the Postiz-style public API SocioBird's tools mirror; **not tried against the live service**.
 - **Object storage (Cloudflare R2 or any S3-compatible store)**: `pip install 'clipcrow[storage]'` and set `R2_ACCOUNT_ID`
   (or `R2_ENDPOINT`, e.g. the EU jurisdiction), `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, optional `R2_PREFIX`.

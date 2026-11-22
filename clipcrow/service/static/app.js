@@ -498,7 +498,7 @@ async function postingCard() {
     body.push(el('p', { class: 'small muted', style: { margin: 0 }, text: 'Your clips are posted to the channels in your own SocioBird, never anyone else’s. Posts already scheduled stay in SocioBird after you disconnect.' }),
       el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Disconnect SocioBird', onclick: () => { if (confirm('Disconnect SocioBird? We forget your key. Posts already scheduled stay in SocioBird.')) done(() => api('/sociobird', { method: 'DELETE' })); } })));
   } else {
-    body.push(el('p', { class: 'small muted', style: { margin: 0 }, text: st.shared ? 'Until you connect your own SocioBird, posts go to the channels this site shares. Connect yours to post to your own channels.' : 'Connect your SocioBird account to post your clips to your own channels.' }));
+    body.push(el('p', { class: 'small muted', style: { margin: 0 }, text: 'Connect your own SocioBird account to post your clips to your own channels. Only you can see your channels.' }));
   }
   const key = el('input', { id: 'sb-key', type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste your SocioBird API key' });
   const go = el('button', { class: st.oauth ? 'btn' : 'btn primary', type: 'button', text: st.connected ? 'Replace key' : 'Connect with a key' });
@@ -1947,7 +1947,7 @@ async function brandView(bid) {
 // ---- sharing ---------------------------------------------------------------------------------------
 
 const STATUS_WORD = { queued: 'Waiting…', sent: 'Posted', scheduled: 'Scheduled', failed: 'Failed' };
-const PLATFORM_WORD = { youtube: 'YouTube', instagram: 'Instagram', 'instagram-standalone': 'Instagram', tiktok: 'TikTok', facebook: 'Facebook', x: 'X', linkedin: 'LinkedIn', 'linkedin-page': 'LinkedIn', telegram: 'Telegram' };
+const PLATFORM_WORD = { youtube: 'YouTube', instagram: 'Instagram', 'instagram-standalone': 'Instagram', tiktok: 'TikTok', facebook: 'Facebook', x: 'X', linkedin: 'LinkedIn', 'linkedin-page': 'LinkedIn', telegram: 'Telegram', threads: 'Threads' };
 const YT_SHORTS_SECONDS = 180;               // YouTube's help page: vertical videos up to 3 minutes are Shorts (checked 2026-11; other platforms' limits are not known reliably, so only this one is mentioned)
 const MAX_CHANNELS = 6;                      // the server accepts at most this many channels in one post
 

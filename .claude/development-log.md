@@ -322,3 +322,10 @@ presigned-URL redirect that already existed. Originals are not removed by the cl
 and either account, expires after an hour). `authed()` swaps in the viewed account only for a superadmin, refuses every non-GET with 403 and blocks `/api/sociobird*` and `/api/publish*`; `/api/config`
 reports `viewing_as` so the UI shows the bar. Silent for the owner by design, but every start and stop is in `admin_audit`; the privacy page discloses it. Cannot target yourself or a superadmin. The Jobs
 table now scrolls inside its card at 360 px (it overflowed before). Tests: `tests/test_impersonation.py`.
+
+## 2026-11-22 - Fix: the operator's SocioBird channels were shown to every account
+Production had `CLIPCROW_SOCIOBIRD_SHARED=1`, so anyone without their own connection fell back to the operator's key and saw (and could post to) the operator's channels. The shared mode is gone: with accounts on,
+`need_publishing` uses only the person's own stored connection (OAuth or a pasted key) and answers 409 "connect" otherwise; `SOCIOBIRD_API_KEY` is not even loaded when accounts are on; the env variable is ignored with a
+notice. `/api/sociobird` no longer reports `shared`. Tests: `tests/test_sociobird_user.py` (a server key and the old env value never expose channels). The production flag was set to `0` in Coolify first (needs a restart to apply).
+
+Threads added to the posting platforms (`publish.SUPPORTED`): SocioBird's schema for it needs no extra settings and allows 500 characters. A Threads channel only appears for a person whose OWN SocioBird has one connected.

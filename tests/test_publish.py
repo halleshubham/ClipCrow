@@ -259,27 +259,21 @@ def test_posting_needs_a_finished_clip_a_login_and_a_configured_server(tmp_path,
     assert locked.get("/api/publish/channels").status_code == 401
 
 
-def test_with_accounts_posting_needs_the_persons_own_connection_unless_the_operator_shares_the_channels(tmp_path, video_bytes):
+def test_with_accounts_posting_needs_the_persons_own_connection_never_the_operators(tmp_path, video_bytes):
     cat = Catalog(plans={"free": Plan("free", "Free", 100, 7, 3)})
 
-    def build(root, shared):
-        a = Accounts(root / "data" / "x.db")
-        app = create_app(root / "data", FakePipeline(), accounts=a, mailer=Outbox(), catalog=cat, sociobird=FakeSB(), sociobird_shared=shared)
-        c = TestClient(app)
-        sign_up(c, "a@example.com")
-        return c, app
-    c, app = build(tmp_path / "off", False)
+    a = Accounts(tmp_path / "data" / "x.db")
+    app = create_app(tmp_path / "data", FakePipeline(), accounts=a, mailer=Outbox(), catalog=cat, sociobird=FakeSB())          # the server HAS a key; it must never be used for a person
+    c = TestClient(app)
+    sign_up(c, "a@example.com")
     r = c.get("/api/publish/channels")                                                                  # people connect their OWN SocioBird; the operator's is not used
     assert c.get("/api/config").json()["publishing"] is True and r.status_code == 409 and "Connect your SocioBird" in r.json()["detail"]
-    c, app = build(tmp_path / "on", True)
-    assert c.get("/api/config").json()["publishing"] is True
     jid = wait(c, upload(c, video_bytes).json()["id"])["id"]
     cid = c.get(f"/api/jobs/{jid}").json()["clips"][0]["id"]
-    assert c.post(f"/api/jobs/{jid}/clips/{cid}/publish", json={"channels": ["ch-yt"]}).status_code == 202
-    posts_when_done(c, jid, cid)
+    assert c.post(f"/api/jobs/{jid}/clips/{cid}/publish", json={"channels": ["ch-yt"]}).status_code == 409        # no connection: nothing is posted, to anyone's channels
     other = TestClient(app)
     sign_up(other, "b@example.com")
-    assert other.post(f"/api/jobs/{jid}/clips/{cid}/publish", json={"channels": ["ch-yt"]}).status_code == 404
+    assert other.post(f"/api/jobs/{jid}/clips/{cid}/publish", json={"channels": ["ch-yt"]}).status_code == 409     # B has no connection either: "connect first", whatever the job id
     assert other.get(f"/api/jobs/{jid}/clips/{cid}/posts").status_code == 404
 
 
@@ -343,3 +337,16 @@ def test_the_channel_list_carries_brand_and_limit(tmp_path, video_bytes):
     rows = c.get("/api/publish/channels").json()
     x = next(r for r in rows if r["platform"] == "x")
     assert x["brand"] == "Thet Marathi" and x["limit"] == 280 and next(r for r in rows if r["platform"] == "youtube")["brand"] == ""
+
+
+def test_threads_channels_are_listed_get_no_extra_settings_and_a_500_character_limit():
+    from clipcrow.service.publish import LIMITS, SUPPORTED
+    raw = [{"id": "th1", "name": "Shubham on Threads", "identifier": "threads", "disabled": False},
+           {"id": "dv1", "name": "dev", "identifier": "devto", "disabled": False}]
+    sb = SocioBird("https://api.sociobird.example/", "KEY", request=lambda m, p, **kw: raw)
+    assert [(c.id, c.platform) for c in sb.channels()] == [("th1", "threads")]                       # Threads is in, dev.to is still out
+    assert "threads" in SUPPORTED and LIMITS["threads"] == 500
+    assert settings_for("threads", title="ignored") == {"__type": "threads"}
+    assert caption_html("a" * 900, "threads").count("a") == 500
+    js = (__import__("pathlib").Path(__file__).resolve().parent.parent / "clipcrow" / "service" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "threads: 'Threads'" in js

@@ -68,7 +68,7 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
      connection must be made again**) and is never shown or logged. Nobody posts through someone else's SocioBird. For OAuth: in SocioBird's Developer settings create the ClipCrow app with the redirect URL
      `https://<your domain>/api/sociobird/callback`, then set `SOCIOBIRD_OAUTH_CLIENT_ID` and `SOCIOBIRD_OAUTH_CLIENT_SECRET` (optionally `SOCIOBIRD_OAUTH_URL`, default `https://go.sociobird.app`, and `SOCIOBIRD_OAUTH_TOKEN_URL`).
      **The OAuth path follows SocioBird's source code and is not yet tried against the live service**: do the manual round trip with a second SocioBird account first (`docs/sociobird-per-user-task.md`, step 0). The pasted key path needs none of this.
-   - *Posting, shared (optional):* `SOCIOBIRD_API_URL` (the API root, `https://go.sociobird.app/api`: ClipCrow adds `/public/v1/...`), `SOCIOBIRD_API_KEY` (and `CLIPCROW_SOCIOBIRD_SHARED=1` if accounts are on).
+   - *Posting:* with accounts on, every person connects their OWN SocioBird (OAuth, or a key they paste) and sees only their own channels. There is no shared mode: `SOCIOBIRD_API_KEY` and `CLIPCROW_SOCIOBIRD_SHARED` are ignored with accounts on (delete them from the environment). `SOCIOBIRD_API_URL` is the API root (`https://go.sociobird.app/api`).
    - *R2:* see section 3.
 4. **Deploy.** The first start takes a minute (health check `start_period` is 90 s). Then, in the container terminal:
    `clipcrow selftest` should print `ok` for every line, ending with a real render.
