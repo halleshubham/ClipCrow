@@ -49,9 +49,11 @@ def clean_name(name: str) -> str:
 
 
 class StyleStore:
-    def __init__(self, data_dir: str | Path):
+    def __init__(self, data_dir: str | Path, docs=None, mode: str = "files"):
+        """``docs``/``mode``: where the records live (see ``docstore``): the files (default), both (files are read), or the database only."""
         self.root = Path(data_dir) / "styles"
         self._lock = threading.RLock()
+        self.docs, self.mode = (docs, mode) if docs is not None else (None, "files")
 
     def _dir(self, owner: str) -> Path:
         if not OWNER.match(owner):
@@ -64,25 +66,46 @@ class StyleStore:
         return self._dir(owner) / f"{style_id}.json"
 
     def _write(self, owner: str, rec: StyleRecord) -> None:
-        d = self._dir(owner)
-        d.mkdir(parents=True, exist_ok=True)
-        tmp = d / f"{rec.id}.tmp"
-        tmp.write_text(rec.model_dump_json(), "utf-8")
-        os.replace(tmp, self._path(owner, rec.id))
+        self._dir(owner)                                    # validates the owner
+        text = rec.model_dump_json()
+        if self.mode != "db":
+            d = self._dir(owner)
+            d.mkdir(parents=True, exist_ok=True)
+            tmp = d / f"{rec.id}.tmp"
+            tmp.write_text(text, "utf-8")
+            os.replace(tmp, self._path(owner, rec.id))
+        if self.mode != "files":
+            self.docs.put("style", owner, rec.id, text)
 
     def list(self, owner: str) -> list[StyleRecord]:
         d = self._dir(owner)
         out = []
-        for p in sorted(d.glob("*.json")) if d.is_dir() else []:
+        if self.mode == "db":
+            texts = [t for _, t in self.docs.items("style", owner)]
+        else:
+            texts = []
+            for p in sorted(d.glob("*.json")) if d.is_dir() else []:
+                try:
+                    texts.append(p.read_text("utf-8"))
+                except OSError:
+                    continue
+        for t in texts:
             try:
-                out.append(StyleRecord.model_validate_json(p.read_text("utf-8")))
-            except (OSError, ValueError):
+                out.append(StyleRecord.model_validate_json(t))
+            except ValueError:
                 continue                               # a damaged record is skipped, not fatal
         return sorted(out, key=lambda r: r.created_at, reverse=True)
 
     def get(self, owner: str, style_id: str) -> StyleRecord:
+        self._path(owner, style_id)                         # validates both ids
         try:
-            return StyleRecord.model_validate_json(self._path(owner, style_id).read_text("utf-8"))
+            if self.mode == "db":
+                text = self.docs.text("style", owner, style_id)
+                if text is None:
+                    raise KeyError(style_id)
+            else:
+                text = self._path(owner, style_id).read_text("utf-8")
+            return StyleRecord.model_validate_json(text)
         except (OSError, ValueError):
             raise KeyError(style_id)
 
@@ -131,17 +154,23 @@ class StyleStore:
 
     def delete(self, owner: str, style_id: str) -> None:
         with self._lock:
-            self._path(owner, style_id).unlink(missing_ok=True)
+            self._path(owner, style_id)                      # validates both ids
+            if self.mode != "db":
+                self._path(owner, style_id).unlink(missing_ok=True)
+            if self.mode != "files":
+                self.docs.delete("style", owner, style_id)
 
     def delete_all(self, owner: str) -> None:
         """Account erasure."""
         shutil.rmtree(self._dir(owner), ignore_errors=True)
+        if self.mode != "files":
+            self.docs.delete("style", owner)
 
     def stale_analyzing(self) -> list[tuple[str, StyleRecord]]:
         """Records left ``analyzing`` by a restart: nothing is measuring them any more."""
         out = []
-        if self.root.is_dir():
-            for d in self.root.iterdir():
-                if OWNER.match(d.name):
-                    out += [(d.name, r) for r in self.list(d.name) if r.status == "analyzing"]
+        owners = [o for o in self.docs.owners("style") if OWNER.match(o)] if self.mode == "db" else \
+            [d.name for d in self.root.iterdir() if OWNER.match(d.name)] if self.root.is_dir() else []
+        for o in owners:
+            out += [(o, r) for r in self.list(o) if r.status == "analyzing"]
         return out

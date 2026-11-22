@@ -49,6 +49,7 @@ from . import settings as opsettings
 from .ops import Limits, Snapshot, Watchdog, admin_emails, disk_snapshot, is_throwaway, job_refusal, jobs_since, RateLimiter
 from .mailer import MailQueue, Mailer, Message, Outbox, billing_mail, job_done_mail, plain_mail, sign_in_code_mail, welcome_mail
 from .billing import BillingError, Razorpay, apply_event
+from .docstore import DocStore, store_mode
 from .brand import MAX_LOGO_BYTES, MAX_OVERLAY_BYTES, MAX_MUSIC_BYTES, MAX_OUTRO_BYTES, TRACK_ID, BrandStore, track_path
 from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
@@ -315,10 +316,14 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         csp = csp.replace("connect-src 'self'", f"connect-src 'self' {storage.origin}")
     uploads = UploadStore(data_dir) if direct else None
     runner.storage = storage
-    brands = BrandStore(data_dir)
+    docs = DocStore(accounts.db) if accounts else None                      # records that can live in the database (CLIPCROW_STORE_<NAME>); only a server with accounts has one
+    modes = {n: store_mode(n, has_db=docs is not None) for n in ('brand', 'style', 'schedule', 'settings')}
+    if any(m != 'files' for m in modes.values()):
+        log.info('record stores: %s', ', '.join(f'{k}={v}' for k, v in modes.items()))
+    brands = BrandStore(data_dir, docs, modes['brand'])
     pictures = PictureStore(data_dir)
     runner.brands = brands
-    styles = StyleStore(data_dir)
+    styles = StyleStore(data_dir, docs, modes['style'])
     hub = WorkerHub(worker_token, pool_tokens={k: v for k, v in (('rented', os.environ.get('CLIPCROW_WORKER_TOKEN_RENTED', '').strip()),) if v}, pickup_seconds=worker_pickup_seconds, lease_seconds=worker_lease_seconds, render_pin=HYPERFRAMES_VERSION, render_build=render_build(),
                     disabled=frozenset(x.strip() for x in (os.environ.get("CLIPCROW_WORKER_DISABLED") or "").split(",") if x.strip()),
                     widen=(os.environ.get("CLIPCROW_GPU_FALLBACK") or "any").strip().lower() != "strict",
@@ -724,7 +729,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         "model": env_start.get("CLIPCROW_MODEL") or DEFAULT_MODEL, "framing_threads": int(envnum("CLIPCROW_FRAMING_THREADS", min(4, os.cpu_count() or 2))),
     }
     opsettings.cross_check(base_values)
-    opset = opsettings.SettingsStore(Path(data_dir) / "settings.json", base_values)
+    opset = opsettings.SettingsStore(Path(data_dir) / "settings.json", base_values, docs, modes['settings'])
 
     def apply_settings() -> None:
         """Put the current settings to work: the live objects change, so no restart is needed."""
@@ -1200,7 +1205,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
             raise HTTPException(404, "The plan for this clip is not on disk.")
         return info, path, ai_media
 
-    schedule_prefs = SchedulePrefs(data_dir)
+    schedule_prefs = SchedulePrefs(data_dir, docs, modes['schedule'])
 
     @app.get("/api/publish/schedule/prefs", dependencies=[Depends(authed)])
     def schedule_prefs_get(request: Request) -> dict:

@@ -139,9 +139,10 @@ def plan(clips: list[str], channels: list[Chan], per_day: int, start: date, tz: 
 class SchedulePrefs:
     """A person's time zone and best times per platform: ``<data>/schedule/<owner>.json`` (``shared`` without accounts)."""
 
-    def __init__(self, data_dir: str | Path):
+    def __init__(self, data_dir: str | Path, docs=None, mode: str = "files"):
         self.root = Path(data_dir) / "schedule"
         self._lock = threading.Lock()
+        self.docs, self.mode = (docs, mode) if docs is not None else (None, "files")
 
     def _path(self, owner: str) -> Path:
         if owner != "shared" and not _OWNER.match(owner):
@@ -150,7 +151,9 @@ class SchedulePrefs:
 
     def get(self, owner: str) -> dict:
         try:
-            saved = json.loads(self._path(owner).read_text(encoding="utf-8"))
+            self._path(owner)                                # validates the owner
+            text = self.docs.text("schedule", owner, "prefs") if self.mode == "db" else self._path(owner).read_text(encoding="utf-8")
+            saved = json.loads(text) if text else {}
         except (OSError, ValueError):
             saved = {}
         tz = saved.get("timezone") if isinstance(saved, dict) else None
@@ -175,10 +178,16 @@ class SchedulePrefs:
             if k not in BEST_TIMES:
                 raise ScheduleError("That platform is not supported.")
             clean[k] = clean_times(v, k)
+        text = json.dumps({"timezone": tz, "times": clean})
         with self._lock:
-            self.root.mkdir(parents=True, exist_ok=True)
-            self._path(owner).write_text(json.dumps({"timezone": tz, "times": clean}), encoding="utf-8")
+            if self.mode != "db":
+                self.root.mkdir(parents=True, exist_ok=True)
+                self._path(owner).write_text(text, encoding="utf-8")
+            if self.mode != "files":
+                self.docs.put("schedule", owner, "prefs", text)
         return self.get(owner)
 
     def delete_all(self, owner: str) -> None:
         self._path(owner).unlink(missing_ok=True)
+        if self.mode != "files":
+            self.docs.delete("schedule", owner)

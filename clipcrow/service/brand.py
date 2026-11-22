@@ -131,9 +131,35 @@ def _has_transparent_area(png: Path) -> bool:
 
 
 class BrandStore:
-    def __init__(self, data_dir: str | Path):
+    def __init__(self, data_dir: str | Path, docs=None, mode: str = "files"):
+        """The records (the list of brands, each brand's settings and overlay facts) live in the files, in both, or in the database only (see ``docstore``). The
+        brand's FILES (logo, overlay picture, ending video, music) are always files."""
         self.root = Path(data_dir) / "brand"
         self._lock = threading.RLock()
+        self.docs, self.mode = (docs, mode) if docs is not None else (None, "files")
+
+    def _rec_read(self, kind: str, owner: str, key: str, path: Path) -> str | None:
+        if self.mode == "db":
+            return self.docs.text(kind, owner, key)
+        try:
+            return path.read_text("utf-8")
+        except OSError:
+            return None
+
+    def _rec_write(self, kind: str, owner: str, key: str, path: Path, text: str) -> None:
+        if self.mode != "db":
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(text, "utf-8")
+            os.replace(tmp, path)
+        if self.mode != "files":
+            self.docs.put(kind, owner, key, text)
+
+    def _rec_delete(self, kind: str, owner: str, key: str, path: Path) -> None:
+        if self.mode != "db":
+            path.unlink(missing_ok=True)
+        if self.mode != "files":
+            self.docs.delete(kind, owner, key)
 
     # --- the brands of an owner ---------------------------------------------------------------------
     # <data>/brand/<owner>/brands.json  {"default": id, "brands": [{"id", "name", "created"}]}  and one folder per brand: <owner>/<id>/ (logo, outro, music, settings).
@@ -148,10 +174,11 @@ class BrandStore:
         reg = d / "brands.json"
         with self._lock:
             try:
-                data = json.loads(reg.read_text("utf-8"))
+                text = self._rec_read("brand_registry", owner, "registry", reg)
+                data = json.loads(text) if text else None
                 if isinstance(data, dict) and isinstance(data.get("brands"), list) and data["brands"]:
                     return data
-            except (OSError, ValueError):
+            except ValueError:
                 pass
             d.mkdir(parents=True, exist_ok=True)
             bid = uuid.uuid4().hex[:12]
@@ -161,14 +188,11 @@ class BrandStore:
                 if legacy.is_file():
                     shutil.move(str(legacy), bd / legacy.name)
             data = {"default": bid, "brands": [{"id": bid, "name": "My brand", "created": _now()}]}
-            self._write_registry(d, data)
+            self._write_registry(owner, data)
             return data
 
-    @staticmethod
-    def _write_registry(d: Path, data: dict) -> None:
-        tmp = d / "brands.tmp"
-        tmp.write_text(json.dumps(data), "utf-8")
-        os.replace(tmp, d / "brands.json")
+    def _write_registry(self, owner: str, data: dict) -> None:
+        self._rec_write("brand_registry", owner, "registry", self._owner_dir(owner) / "brands.json", json.dumps(data))
 
     def _dir(self, owner: str, brand: str | None = None) -> Path:
         reg = self._registry(owner)
@@ -196,7 +220,7 @@ class BrandStore:
             bid = uuid.uuid4().hex[:12]
             (self._owner_dir(owner) / bid).mkdir(parents=True)
             reg["brands"].append({"id": bid, "name": name, "created": _now()})
-            self._write_registry(self._owner_dir(owner), reg)
+            self._write_registry(owner, reg)
         return {"id": bid, "name": name, "default": False}
 
     def rename(self, owner: str, brand: str, name: str) -> None:
@@ -207,7 +231,7 @@ class BrandStore:
             raise KeyError(brand)
         with self._lock:
             row["name"] = name
-            self._write_registry(self._owner_dir(owner), reg)
+            self._write_registry(owner, reg)
 
     def set_default(self, owner: str, brand: str) -> None:
         reg = self._registry(owner)
@@ -215,7 +239,7 @@ class BrandStore:
             raise KeyError(brand)
         with self._lock:
             reg["default"] = brand
-            self._write_registry(self._owner_dir(owner), reg)
+            self._write_registry(owner, reg)
 
     def remove(self, owner: str, brand: str) -> None:
         """Delete a brand and its files. The last brand cannot go; deleting the default makes the oldest remaining one the default. A job that used it keeps the copies it made."""
@@ -228,14 +252,19 @@ class BrandStore:
             reg["brands"] = [b for b in reg["brands"] if b["id"] != brand]
             if reg["default"] == brand:
                 reg["default"] = reg["brands"][0]["id"]
-            self._write_registry(self._owner_dir(owner), reg)
+            self._write_registry(owner, reg)
             shutil.rmtree(self._owner_dir(owner) / brand, ignore_errors=True)
+            if self.mode != "files":
+                self.docs.delete("brand_settings", owner, brand)
+                self.docs.delete("brand_overlay", owner, brand)
 
     # --- settings ---------------------------------------------------------------------------------
     def settings(self, owner: str, brand: str | None = None) -> dict:
+        d = self._dir(owner, brand)
         try:
-            raw = json.loads((self._dir(owner, brand) / "settings.json").read_text("utf-8"))
-        except (OSError, ValueError):
+            text = self._rec_read("brand_settings", owner, d.name, d / "settings.json")
+            raw = json.loads(text) if text else {}
+        except ValueError:
             raw = {}
         out = dict(DEFAULTS)
         for k, default in DEFAULTS.items():
@@ -311,9 +340,7 @@ class BrandStore:
             cur[k] = v
         d = self._dir(owner, brand)
         d.mkdir(parents=True, exist_ok=True)
-        tmp = d / "settings.tmp"
-        tmp.write_text(json.dumps(cur), "utf-8")
-        os.replace(tmp, d / "settings.json")
+        self._rec_write("brand_settings", owner, d.name, d / "settings.json", json.dumps(cur))
         return cur
 
     # --- files ------------------------------------------------------------------------------------
@@ -327,9 +354,13 @@ class BrandStore:
 
     def overlay_info(self, owner: str, brand: str | None = None) -> dict:
         """What we found when the overlay was uploaded: its size, and whether it has a transparent area (a frame without one would hide the video)."""
+        d = self._dir(owner, brand)
         try:
-            raw = json.loads((self._dir(owner, brand) / "overlay.json").read_text("utf-8"))
-        except (OSError, ValueError):
+            text = self._rec_read("brand_overlay", owner, d.name, d / "overlay.json")
+            raw = json.loads(text) if text else {}
+        except ValueError:
+            return {}
+        if not raw:
             return {}
         return {"transparent": bool(raw.get("transparent")), "width": int(raw.get("width") or 0), "height": int(raw.get("height") or 0)} if isinstance(raw, dict) else {}
 
@@ -360,7 +391,7 @@ class BrandStore:
             size = probe_media(out)
             with self._lock:
                 shutil.move(str(out), d / "overlay.png")
-                (d / "overlay.json").write_text(json.dumps({"transparent": transparent, "width": size["width"], "height": size["height"]}), "utf-8")
+                self._rec_write("brand_overlay", owner, d.name, d / "overlay.json", json.dumps({"transparent": transparent, "width": size["width"], "height": size["height"]}))
         if not transparent and self.settings(owner, brand)["overlay_fit"] == "frame":
             self.set_settings(owner, {"overlay_fit": "placed"}, brand)
         return self.describe(owner, brand)
@@ -463,7 +494,7 @@ class BrandStore:
                     p.unlink()
             elif what == "overlay":
                 (d / "overlay.png").unlink(missing_ok=True)
-                (d / "overlay.json").unlink(missing_ok=True)
+                self._rec_delete("brand_overlay", owner, d.name, d / "overlay.json")
             elif what == "outro":
                 (d / "outro.mp4").unlink(missing_ok=True)
             elif what == "music":
@@ -475,6 +506,9 @@ class BrandStore:
     def delete_all(self, owner: str) -> None:
         """Account erasure."""
         shutil.rmtree(self._owner_dir(owner), ignore_errors=True)
+        if self.mode != "files":
+            for kind in ("brand_registry", "brand_settings", "brand_overlay"):
+                self.docs.delete(kind, owner)
 
     # --- views ------------------------------------------------------------------------------------
     def describe(self, owner: str, brand: str | None = None) -> dict:

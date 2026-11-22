@@ -87,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
     md = sub.add_parser("migrate-db", help="copy the accounts from the old SQLite file into PostgreSQL (the address is DATABASE_URL)")
     md.add_argument("--data", default="data", help="the service's data folder (holds clipcrow.db and clipcrow.secret)")
     md.add_argument("--sqlite", default=None, help="the SQLite file to read (default: <data>/clipcrow.db)")
+    ms = sub.add_parser("migrate-stores", help="copy the records that live in files (brands, styles, settings, ...) into the database, or check the two agree with --verify")
+    ms.add_argument("--data", default="data", help="the service's data folder")
+    ms.add_argument("--verify", action="store_true", help="only compare the files with the database; change nothing")
     rc = sub.add_parser("r2-cors", help="set (or show) the bucket's CORS rule that lets browsers upload straight to R2")
     rc.add_argument("--origin", action="append", default=[], help="the site's address, e.g. https://clips.example.com (repeat for several)")
     rc.add_argument("--show", action="store_true", help="print the current rule instead of changing it")
@@ -188,6 +191,23 @@ def main(argv: list[str] | None = None) -> int:
             report = migrate(src, target)
             print("copied:", ", ".join(f"{k} {v}" for k, v in report.items()))
             print(f"target: {target.describe()}. Now set DATABASE_URL on the service and redeploy.")
+            return 0
+        if a.cmd == "migrate-stores":
+            from .service.accounts import Accounts
+            from .service.docstore import DocStore
+            from .service import storemigrate
+            url = os.environ.get("DATABASE_URL", "").strip()
+            target = Accounts(url or Path(a.data) / "clipcrow.db", secret_file=Path(a.data) / "clipcrow.secret")      # the same database the accounts use
+            docs = DocStore(target.db)
+            if a.verify:
+                rep = storemigrate.verify(a.data, docs)
+                print(f"files {rep['files']}, same {rep['same']}, different {len(rep['different'])}, only in files {len(rep['only_in_files'])}, only in the database {len(rep['only_in_db'])}")
+                for name in rep["different"][:20] + rep["only_in_files"][:20] + rep["only_in_db"][:20]:
+                    print("  -", name)
+                return 0 if not (rep["different"] or rep["only_in_files"] or rep["only_in_db"]) else 1
+            rep = storemigrate.migrate(a.data, docs)
+            print("copied:", ", ".join(f"{k} {v}" for k, v in rep.items()))
+            print(f"target: {target.describe()}. Check with: clipcrow migrate-stores --verify")
             return 0
         if a.cmd == "export-sample":
             from .service.jobs import JobStore

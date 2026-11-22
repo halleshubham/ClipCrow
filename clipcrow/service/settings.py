@@ -179,12 +179,15 @@ def cross_check(values: dict) -> None:
 class SettingsStore:
     """The operator's overrides, on disk. ``base`` is what the server started with (environment, plans.json, defaults), by key."""
 
-    def __init__(self, path: str | Path, base: dict):
+    def __init__(self, path: str | Path, base: dict, docs=None, mode: str = "files"):
+        """``docs``/``mode``: where the record lives (see ``docstore``): the file (default), both (the file is read), or the database only."""
         self.path, self.base = Path(path), dict(base)
+        self.docs, self.mode = (docs, mode) if docs is not None else (None, "files")
         self._lock = threading.RLock()
         self._data = {"values": {}, "history": []}
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            text = self.docs.text("operator_settings", "", "current") if self.mode == "db" else self.path.read_text(encoding="utf-8")
+            data = json.loads(text) if text else {}
             for k, v in (data.get("values") or {}).items():
                 if k in BY_KEY:
                     try:
@@ -208,12 +211,15 @@ class SettingsStore:
             return list(reversed(self._data["history"]))[:20]
 
     def _save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), prefix=".settings-", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, ensure_ascii=False, indent=1)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self.path)
+        if self.mode != "db":
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), prefix=".settings-", suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, ensure_ascii=False, indent=1)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.path)
+        if self.mode != "files":
+            self.docs.put("operator_settings", "", "current", json.dumps(self._data, ensure_ascii=False))
 
     def update(self, changes: dict, who: str) -> dict:
         """Validate every change and the result as a whole; save only if all of it is good. Returns the values after."""
