@@ -23,7 +23,7 @@ def test_serve_refuses_a_public_address_without_any_login(monkeypatch, capsys, t
     for k in ("CLIPCROW_TOKEN", "CLIPCROW_ACCOUNTS"):
         monkeypatch.delenv(k, raising=False)
     assert main(["serve", "--host", "0.0.0.0", "--data", str(tmp_path)]) != 0
-    assert "CLIPCROW_TOKEN" in capsys.readouterr().err
+    assert "CLIPCROW_ACCOUNTS" in capsys.readouterr().err
 
 
 def test_serve_reads_its_switches_from_the_environment(monkeypatch):

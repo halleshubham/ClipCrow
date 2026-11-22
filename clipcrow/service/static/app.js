@@ -141,7 +141,7 @@ class SignInNeeded extends Error {}
 
 async function api(path, opts = {}) {
   const res = await fetch('/api' + path, { credentials: 'same-origin', ...opts });
-  if (res.status === 401 && path !== '/login' && path !== '/auth/verify') {
+  if (res.status === 401 && path !== '/auth/verify') {
     state.config.signed_in = false;
     throw new SignInNeeded('Sign in first.');
   }
@@ -184,25 +184,9 @@ function authLogo() {
   return el('img', { class: 'auth-logo', src: '/logo.png', alt: 'ClipCrow', width: 240, height: 200 });
 }
 
+// there is one way in: the emailed 6-digit code (no password, no shared token)
 function loginView() {
-  if (state.config.accounts) return accountLoginView();
-  const err = el('div', { class: 'alert', role: 'alert', hidden: true });
-  const input = el('input', { id: 'token', type: 'password', autocomplete: 'current-password', required: true });
-  const form = el('form', { class: 'card stack', style: { maxWidth: '420px' }, onsubmit: async (e) => {
-    e.preventDefault();
-    err.hidden = true;
-    try {
-      await api('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: input.value }) });
-      state.config.signed_in = true;
-      route();
-    } catch (ex) { err.textContent = ex.message; err.hidden = false; }
-  } },
-    authLogo(),
-    el('h1', { text: 'Sign in' }),
-    el('div', {}, el('label', { class: 'field', for: 'token', text: 'Access token' }), input),
-    err,
-    el('button', { class: 'btn dark', type: 'submit', text: 'Sign in' }));
-  app.replaceChildren(el('div', { class: 'authwrap' }, form));
+  return accountLoginView();
 }
 
 function accountLoginView() {

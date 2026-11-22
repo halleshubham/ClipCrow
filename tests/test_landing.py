@@ -53,7 +53,7 @@ def test_the_dashboard_is_the_app_and_the_old_addresses_still_work(tmp_path):
     assert c.get("/landing/landing.css").status_code == 200 and c.get("/landing/landing.js").status_code == 200        # the page's own files
     js = (STATIC / "landing" / "landing.js").read_text(encoding="utf-8")
     assert "location.replace('/dashboard'" in js and "hashchange" in js                                                                  # an old /#/jobs/... link goes to the app
-    assert c.get("/api/health").json() == {"ok": True} and c.get("/api/config").status_code == 200
+    assert c.get("/api/health").json() == {"ok": True, "busy": False} and c.get("/api/config").status_code == 200
 
 
 def test_every_file_the_ui_serves_is_in_the_installed_package():

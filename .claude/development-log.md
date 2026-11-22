@@ -303,3 +303,9 @@ amounts, reason, ledger), locked settings. Checked at 360 px in both themes. Tes
 `package-data` listed `static/*`, which does not reach `static/landing/`, so the installed package (what the image runs) had no landing.css/js: the page showed as plain HTML. Tests run from the source tree, so
 they never saw it. Fixed in pyproject; guard test `test_every_file_the_ui_serves_is_in_the_installed_package` (setuptools-style globs, fails on the old setting); the image smoke test now fetches
 the landing CSS/JS and the app files and fails on a non-200; the asset URLs carry `?v=2` because Cloudflare served the 404 with a 4-hour browser cache.
+
+## 2026-11-22 - No shared token, no password: the emailed code is the only way in
+Removed the `CLIPCROW_TOKEN` login: the `/api/login` route, the token branch of `authed`, the `token` parameter of `create_app`, the "Access token" screen in the UI, the token cookie in `BodyGuard`, and the
+compose variable. `clipcrow serve` on a public address now needs `CLIPCROW_ACCOUNTS=1` (or `--insecure`); `CLIPCROW_TOKEN` is ignored with a notice. Without accounts the app is open and meant for this
+machine only. `/api/health` now also says `busy` (true while a job runs or waits) for deploy checks, since a bearer token can no longer list jobs. `scripts/job_costs.py` takes `CLIPCROW_SESSION` (the
+`clipcrow_session` cookie) instead of the token. The image smoke test starts the container with `CLIPCROW_ACCOUNTS=1`. The only password-typed input left is the masked SocioBird API key field (not a login).

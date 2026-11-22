@@ -19,7 +19,6 @@ services:
       # Coolify: gives the service a domain and routes it (a "magic" variable; Coolify fills it in)
       - SERVICE_FQDN_CLIPCROW_8000
       # --- who may use it: set ONE of these. Without either the server refuses to start on a public address.
-      - CLIPCROW_TOKEN=${CLIPCROW_TOKEN:-}                  # single user / small team behind one shared token
       - CLIPCROW_ACCOUNTS=${CLIPCROW_ACCOUNTS:-}            # 1 = sign-up and per-user jobs (see CLIPCROW_SIGNUP, CLIPCROW_PLANS)
       - CLIPCROW_SIGNUP=${CLIPCROW_SIGNUP:-}                # 0 = close registration
       - CLIPCROW_PLANS=${CLIPCROW_PLANS:-}                  # e.g. /data/plans.json (plans, credit packs; no prices live in the code)

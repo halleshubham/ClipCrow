@@ -24,10 +24,10 @@ fi
 
 say "refuses to listen publicly without any login"
 if out="$(docker run --rm "$IMG" 2>&1)"; then echo "it started without a login"; exit 1; fi
-grep -q "CLIPCROW_TOKEN" <<<"$out"          # (no pipes into grep -q: with pipefail its early exit breaks the writer)
+grep -q "CLIPCROW_ACCOUNTS" <<<"$out"          # (no pipes into grep -q: with pipefail its early exit breaks the writer)
 
 say "starts, answers its health check, serves the UI, and stops cleanly on SIGTERM (shutdown handlers run)"
-cid="$(docker run -d --shm-size=1g -e CLIPCROW_TOKEN=smoke-token -e ANTHROPIC_API_KEY=smoke -p 18000:8000 "$IMG")"
+cid="$(docker run -d --shm-size=1g -e CLIPCROW_ACCOUNTS=1 -e ANTHROPIC_API_KEY=smoke -p 18000:8000 "$IMG")"
 trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
 for i in $(seq 1 90); do curl -fsS http://127.0.0.1:18000/api/config >/tmp/config.json 2>/dev/null && break || sleep 1; done
 cat /tmp/config.json; echo

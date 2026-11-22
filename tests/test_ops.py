@@ -73,7 +73,7 @@ def test_the_watchdog_tells_once_an_hour_and_again_when_it_clears():
 
 def test_health_is_public_and_says_nothing_else(tmp_path, monkeypatch):
     c, _, _ = client(tmp_path, monkeypatch)
-    assert c.get("/api/health").json() == {"ok": True}
+    assert c.get("/api/health").json() == {"ok": True, "busy": False}
 
 
 def test_a_person_cannot_start_more_jobs_than_the_daily_limit_and_nothing_is_taken(tmp_path, monkeypatch, video_bytes):

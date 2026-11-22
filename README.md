@@ -40,7 +40,7 @@ on stop the app drains (finishes the job or requeues it).
 ```bash
 pip install -e '.[service]'
 clipcrow serve --demo                 # try it: built-in Marathi transcript + recorded model answers, no key, no Whisper
-CLIPCROW_TOKEN=... clipcrow serve     # real: needs '.[asr,llm,vision]', ANTHROPIC_API_KEY, Node 22 + FFmpeg + Chrome
+CLIPCROW_ACCOUNTS=1 clipcrow serve   # real (sign-in by emailed code; needs email, see docs/deploy.md): needs '.[asr,llm,vision]', ANTHROPIC_API_KEY, Node 22 + FFmpeg + Chrome
 ```
 Open http://127.0.0.1:8000. **New job** (upload, language, clip count/length, spread, speaker card, text behind the
 speaker) → the **job page** (four stages, live log, queue position, cancel) → **clips as they finish**: a timeline of
@@ -50,7 +50,7 @@ involvement).
 - **Single worker**: jobs run one at a time in a background thread; state is on disk (`--data`), so a restart keeps
   history, requeues waiting jobs and marks interrupted ones failed.
 - **Security (v1: one trusted user or a small team)**: binds to 127.0.0.1; it refuses another address without
-  `CLIPCROW_TOKEN` (login cookie: HttpOnly, SameSite=Strict) unless you pass `--insecure`. Ids in URLs are strict hex and
+  `CLIPCROW_ACCOUNTS=1` (sign-in by emailed code, no password; session cookie: HttpOnly, SameSite=Strict) unless you pass `--insecure`. Ids in URLs are strict hex and
   resolved inside the job's directory; uploads are size-capped, extension-checked and probed; errors shown to the
   browser never contain server internals; strict CSP, no third-party requests, and the UI inserts every job value as
   text (a test guards that). Put it behind TLS if it leaves localhost.

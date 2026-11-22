@@ -152,9 +152,11 @@ def test_a_wrong_or_missing_token_is_refused_and_a_right_one_polls(tmp_path):
 
 
 def test_a_workers_token_is_not_a_login_and_a_login_is_not_a_worker_token(tmp_path):
-    c, _ = app_with_worker(tmp_path, token="login-token-1234")
+    from clipcrow.service.accounts import Accounts
+    from tests.mailhelp import Outbox
+    c, _ = app_with_worker(tmp_path, accounts=Accounts(tmp_path / "data" / "clipcrow.db"), mailer=Outbox())
     assert c.get("/api/jobs", headers=AUTH).status_code == 401                      # the worker secret does not open the app
-    assert c.post("/api/worker/poll", json={"worker": "w", "wait": 0}, headers={"Authorization": "Bearer login-token-1234"}).status_code == 401
+    assert c.post("/api/worker/poll", json={"worker": "w", "wait": 0}, headers={"Authorization": "Bearer not-the-worker-token-1234"}).status_code == 401
 
 
 def test_what_a_worker_sends_is_bounded(tmp_path):

@@ -255,7 +255,7 @@ def test_posting_needs_a_finished_clip_a_login_and_a_configured_server(tmp_path,
     plain = TestClient(create_app(tmp_path / "other", FakePipeline()))
     assert plain.get("/api/config").json()["publishing"] is False
     assert plain.get("/api/publish/channels").status_code == 404
-    locked = TestClient(create_app(tmp_path / "locked", FakePipeline(), token="tok", sociobird=FakeSB()))
+    locked = TestClient(create_app(tmp_path / "locked", FakePipeline(), accounts=Accounts(tmp_path / "locked" / "x.db"), mailer=Outbox(), sociobird=FakeSB()))
     assert locked.get("/api/publish/channels").status_code == 401
 
 

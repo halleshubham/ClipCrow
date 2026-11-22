@@ -242,7 +242,11 @@ def test_editing_needs_a_finished_job_a_real_clip_and_a_login(tmp_path, video_by
     wait(c, jid)
     assert c.put(f"/api/jobs/{jid}/clips/c99", json={"title": "x"}).status_code == 404
     assert c.put(f"/api/jobs/{jid}/clips/..%2f", json={"title": "x"}).status_code in (404, 405, 422)
-    c2, _ = client(tmp_path / "t", FakePipeline(), token="s3cret")
+    from fastapi.testclient import TestClient
+    from clipcrow.service.accounts import Accounts
+    from clipcrow.service.api import create_app
+    from tests.mailhelp import Outbox
+    c2 = TestClient(create_app(tmp_path / "t", FakePipeline(), accounts=Accounts(tmp_path / "t" / "clipcrow.db"), mailer=Outbox()))
     assert c2.put("/api/jobs/aaaaaaaaaaaa/clips/c1", json={"title": "x"}).status_code == 401
 
 

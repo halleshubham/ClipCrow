@@ -13,7 +13,7 @@ import json
 from typing import Callable
 
 MB = 1024 * 1024
-EXEMPT = ("/api/auth/", "/api/login", "/api/billing/razorpay/webhook", "/api/sociobird/callback", "/api/worker/")
+EXEMPT = ("/api/auth/", "/api/billing/razorpay/webhook", "/api/sociobird/callback", "/api/worker/")
 METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 

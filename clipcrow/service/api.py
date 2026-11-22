@@ -1,8 +1,8 @@
 """The HTTP API and the static web UI.
 
 Security model (v1): built for one trusted user or a small team on a private network. Bind to 127.0.0.1
-(the default) or put it behind a reverse proxy with TLS. Set CLIPCROW_TOKEN to require a login (cookie,
-HttpOnly + SameSite=Strict). Every id in a URL is checked against a strict pattern and resolved inside the
+(the default) or put it behind a reverse proxy with TLS. Public use needs accounts (CLIPCROW_ACCOUNTS=1): sign-in is by an
+emailed code only, with no password and no shared token (session cookie: HttpOnly + SameSite=Strict). Every id in a URL is checked against a strict pattern and resolved inside the
 job's own directory; uploads are size-capped, extension-checked and probed with ffprobe; error messages shown
 to the browser never contain server internals; responses carry a strict Content-Security-Policy.
 """
@@ -69,7 +69,6 @@ from ..styles import MAX_REFERENCE_BYTES, StyleError, StyleSettings, derive, mea
 
 log = logging.getLogger("clipcrow.service")
 STATIC = Path(__file__).parent / "static"
-COOKIE = "clipcrow_token"
 SESSION_COOKIE = "clipcrow_session"
 LANGUAGES = [{"code": "", "name": "Auto-detect"}, {"code": "mr", "name": "Marathi"}, {"code": "hi", "name": "Hindi"},
              {"code": "en", "name": "English"}]
@@ -117,10 +116,6 @@ class BrandPatch(BaseModel):
 
 class CleanupReview(BaseModel):
     applied: list[int] = Field(max_length=2000)             # the numbers of the cuts that must be cut (all the others stay in)
-
-
-class Login(BaseModel):
-    token: str
 
 
 class CodeRequest(BaseModel):
@@ -270,7 +265,7 @@ def _opt_float(v, default: float) -> float:
     return float(v) if v not in (None, "") else default
 
 
-def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = None, max_upload_mb: int = 4096,
+def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int = 4096,
                demo: bool = False, start_runner: bool = True, accounts: Accounts | None = None,
                catalog: Catalog | None = None, allow_signup: bool = True, razorpay: Razorpay | None = None,
                sociobird: SocioBird | None = None, sociobird_shared: bool = False, storage: S3Storage | None = None,
@@ -278,8 +273,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                worker_token: str | None = None, worker_pickup_seconds: float = 120.0, worker_lease_seconds: float = 90.0,
                mailer: Mailer | None = None, public_url: str = "", limits: Limits | None = None, alert_email: str = "", sample_dir: str = "", sociobird_factory: Callable[[str], SocioBird] | None = None,
                sociobird_oauth_exchange: Callable[[str], str] | None = None) -> FastAPI:
-    """``accounts``: multi-user mode (sign-up, per-user jobs, minutes metered against the plan). Without it the app is
-    single-user, optionally behind ``token``."""
+    """``accounts``: multi-user mode (sign-up by emailed code, per-user jobs, minutes metered against the plan). Without it the app is open and single-user: only for
+    this machine (the CLI refuses a public address without accounts). There is no password and no shared token: the emailed code is the only way in."""
     store = JobStore(data_dir)
     catalog = catalog or load_catalog()
     runner = JobRunner(store, pipeline)
@@ -363,7 +358,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     from .bodyguard import BodyGuard
     from .compress import TextGzip
     app.add_middleware(TextGzip)
-    app.add_middleware(BodyGuard, upload_mb=max_upload_mb, session_cookies=(SESSION_COOKIE, COOKIE), require_sign_in=bool(accounts) or bool(token))
+    app.add_middleware(BodyGuard, upload_mb=max_upload_mb, session_cookies=(SESSION_COOKIE,), require_sign_in=bool(accounts))
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -391,15 +386,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
                 raise HTTPException(401, "Sign in first.")
             request.state.user = user
             return user
-        request.state.user = None
-        if not token:
-            return None
-        given = request.cookies.get(COOKIE, "")
-        header = request.headers.get("authorization", "")
-        if header.lower().startswith("bearer "):
-            given = given or header[7:]
-        if not hmac.compare_digest(given.encode(), token.encode()):
-            raise HTTPException(401, "Sign in first.")
+        request.state.user = None                                    # no accounts: the app is open (this machine only)
         return None
 
     def job_or_404(job_id: str, request: Request) -> Job:
@@ -493,25 +480,14 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
                 "pricing": catalog.payg.view() if catalog.payg else None, "signup": bool(accounts) and allow_signup, "signup_paused": bool(accounts) and allow_signup and accounts.signups_today() >= limits.signups_per_day,
                 "email": email, "admin": bool(email and email in admins), "mail": bool(mailer), "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(accounts) or bool(sociobird),
-                "needs_login": bool(token) or bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready() if (signed_in or not (accounts or token)) else None,
+                "needs_login": bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready() if (signed_in or not accounts) else None,
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
                 "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online()),
                                "render": bool(hub and hub.online("render")),
                                # the numbers behind the cost estimate and the pod's spend are for people who are signed in / the operator, not for the open internet
-                               **({"stale": hub.stale_workers()} if (is_admin or not (accounts or token)) and hub and hub.stale_workers() else {}),
+                               **({"stale": hub.stale_workers()} if (is_admin or not accounts) and hub and hub.stale_workers() else {}),
                                **({"estimate": estimate_numbers(load_rates(), pod.hourly if pod is not None else None)} if signed_in else {}),
                                **({"pod": pod.status() if is_admin else {"state": pod.state}} if pod is not None and signed_in else {})}}
-
-    @app.post("/api/login")
-    def login(body: Login, request: Request) -> JSONResponse:
-        if accounts:                                                    # with accounts on, the only way in is the emailed code: this route does not exist
-            raise HTTPException(404, "Not found.")
-        if not token or not hmac.compare_digest(body.token.encode(), token.encode()):
-            raise HTTPException(401, "That token is not right.")
-        resp = JSONResponse({"ok": True})
-        resp.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=30 * 86400,
-                        secure=secure_cookie(request))
-        return resp
 
     # --- accounts -------------------------------------------------------------------------------
     def set_session(resp: JSONResponse, request: Request, user: User) -> JSONResponse:
@@ -641,8 +617,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, token: str | None = 
     # --- the operator: health, alerts and the admin view --------------------------------------------------
     @app.get("/api/health")
     def health() -> dict:
-        """A plain "is it up" answer for an uptime monitor: nothing about jobs, people or the machine."""
-        return {"ok": True}
+        """A plain "is it up" answer for an uptime monitor and for a deploy check: ``busy`` is only whether a job is running or waiting (no counts, no names)."""
+        return {"ok": True, "busy": any(b.status in ("queued", "running") for b in store.briefs())}
 
     def snapshot() -> Snapshot:
         free_gb, free_pct = disk_snapshot(str(Path(data_dir)))

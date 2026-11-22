@@ -29,8 +29,8 @@ The package is **private** (GSAP and a GPL FFmpeg build are inside). Keep it tha
    Coolify at this repository with the compose path. There is no `build:` key, so Coolify only pulls.
 2. Pick the server. Set the **domain** on the `clipcrow` service (port 8000); Coolify's proxy handles TLS.
 3. **Environment variables** (the compose file lists them all; empty means off):
-   - *Access:* set `CLIPCROW_TOKEN` (one shared token) **or** `CLIPCROW_ACCOUNTS=1` (sign-up and per-user jobs). Without either
-     the container refuses to start on a public address, on purpose.
+   - *Access:* set `CLIPCROW_ACCOUNTS=1` (sign-up and per-user jobs). Sign-in is by an **emailed 6-digit code only**: there is no password and no shared token
+     (`CLIPCROW_TOKEN` is no longer read). Without accounts the container refuses to start on a public address, on purpose.
    - *Planner:* `ANTHROPIC_API_KEY`. For Marathi and Hindi also `CLIPCROW_INDIC_MODEL=large-v3`.
    - *Pricing (one plan, pay as you go):* the built-in catalogue is ONE plan, "Pay as you go": a prepaid balance in minutes of video, recharged with any amount; one minute of video uploaded
      uses one minute of balance (at least `min_job_minutes` a job); minutes never expire; a failed or cancelled job gives its minutes back. The numbers are in `plans.json` (`CLIPCROW_PLANS`), key `payg`, and can be overridden by the environment (`CLIPCROW_PRICE_PER_MINUTE` in rupees, `CLIPCROW_MIN_JOB_MINUTES`, `CLIPCROW_SIGNUP_BONUS_MINUTES`):

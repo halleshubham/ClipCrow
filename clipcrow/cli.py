@@ -53,12 +53,12 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--speaker-name"); mk.add_argument("--speaker-title", default="")
     mk.add_argument("--model"); mk.add_argument("--score-model"); mk.add_argument("--gsap")
     mk.add_argument("--workers", type=int); mk.add_argument("--no-render", action="store_true")
-    sv = sub.add_parser("serve", help="run the web service (set CLIPCROW_TOKEN to require a login)")
+    sv = sub.add_parser("serve", help="run the web service (sign-in is by emailed code: set CLIPCROW_ACCOUNTS=1)")
     sv.add_argument("--data", default="data", help="where jobs and clips are stored")
     sv.add_argument("--host", default="127.0.0.1"); sv.add_argument("--port", type=int, default=8000)
     sv.add_argument("--max-upload-mb", type=int, default=4096)
     sv.add_argument("--demo", action="store_true", help="built-in Marathi transcript and recorded answers: no Whisper, no API key")
-    sv.add_argument("--insecure", action="store_true", help="allow a non-local address without CLIPCROW_TOKEN")
+    sv.add_argument("--insecure", action="store_true", help="allow a non-local address without accounts (no login at all: only on a network you trust)")
     sv.add_argument("--accounts", action="store_true", default=os.environ.get("CLIPCROW_ACCOUNTS") == "1", help="multi-user: sign-up, per-user jobs, minutes metered against a plan, retention")
     sv.add_argument("--no-signup", action="store_true", default=os.environ.get("CLIPCROW_SIGNUP") == "0", help="with --accounts: do not let new people register")
     es = sub.add_parser("export-sample", help="save a finished job as the sample every new account starts with (set CLIPCROW_SAMPLE_DIR to the folder)")
@@ -118,7 +118,8 @@ def main(argv: list[str] | None = None) -> int:
             from .service.demo import DemoPipeline
             from .service.publish import SocioBird
             from .service.pipelines import RealPipeline
-            token = os.environ.get("CLIPCROW_TOKEN") or None
+            if os.environ.get("CLIPCROW_TOKEN"):
+                print("note: CLIPCROW_TOKEN is no longer used. Sign-in is by emailed code only: set CLIPCROW_ACCOUNTS=1 (and email, see docs/deploy.md).", file=sys.stderr)
             accounts = None
             if a.accounts:
                 from .service.accounts import Accounts
@@ -127,8 +128,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"accounts database: {accounts.describe()}", file=sys.stderr)
                 if a.host not in ("127.0.0.1", "::1", "localhost"):
                     print("note: accounts use cookies: serve this behind TLS (a reverse proxy)", file=sys.stderr)
-            if a.host not in ("127.0.0.1", "::1", "localhost") and not token and not accounts and not a.insecure:
-                raise ValueError(f"refusing to listen on {a.host} without a login: set CLIPCROW_TOKEN "
+            if a.host not in ("127.0.0.1", "::1", "localhost") and not accounts and not a.insecure:
+                raise ValueError(f"refusing to listen on {a.host} without a login: set CLIPCROW_ACCOUNTS=1 (sign-in by emailed code) "
                                  f"(or pass --insecure on a network you trust)")
             from .service import mailer as mailer_mod
             mailer = mailer_mod.from_env()
@@ -141,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
             storage = S3Storage.from_env()
             if storage:
                 print(f"object storage: bucket {storage.bucket} at {storage.host}", file=sys.stderr)
-            app = create_app(a.data, DemoPipeline() if a.demo else RealPipeline(), token=token,
+            app = create_app(a.data, DemoPipeline() if a.demo else RealPipeline(),
                              max_upload_mb=a.max_upload_mb, demo=a.demo, accounts=accounts, allow_signup=not a.no_signup,
                              razorpay=Razorpay.from_env() if accounts else None, sociobird=SocioBird.from_env(),
                              storage=storage, storage_redirect=os.environ.get("CLIPCROW_R2_REDIRECT") == "1",

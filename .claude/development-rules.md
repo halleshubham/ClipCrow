@@ -190,7 +190,7 @@ History, incidents and open items are in `development-log.md`: add an entry ther
 ## Deploying
 - Push to `main`; deploy only after CI and the Image workflow are green (a commit that changes only tests has no Image run: the previous image has the same code). Never restart while a job is
   `running` or `queued` (a drain requeues it, but wait anyway). Coolify: `POST $COOLIFY_URL/api/v1/services/<uuid>/restart?latest=true` (it is POST now; `COOLIFY_URL` has no scheme).
-  The app token is the service env `CLIPCROW_TOKEN`: read it, never print or paste it. A restart WITHOUT `?latest=true` restarts the OLD image. Confirm the new code is live by a route that only the new code has (never say "deployed" before).
+  Sign-in is by emailed code only (no shared token): check for running jobs with `GET /api/health` (`busy`: true while a job runs or waits). A restart WITHOUT `?latest=true` restarts the OLD image. Confirm the new code is live by a route that only the new code has (never say "deployed" before).
 - The GPU worker runs the `:latest` image on the operator's PC: a new worker feature needs `docker pull` there; deploy the SERVER first (an older server rejects new poll fields).
 
 ## CI

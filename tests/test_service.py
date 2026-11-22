@@ -188,24 +188,24 @@ def test_clip_ids_cannot_escape_the_job_directory(tmp_path, video_bytes):
 
 # --- auth --------------------------------------------------------------------------------------
 
-def test_with_a_token_the_api_needs_a_login(tmp_path, video_bytes):
-    c, _ = client(tmp_path, token="s3cret-token")
+def test_with_accounts_the_api_needs_a_signed_in_session_and_there_is_no_shared_token_login(tmp_path, video_bytes):
+    from clipcrow.service.accounts import Accounts
+    from tests.mailhelp import Outbox, sign_up
+    c = TestClient(create_app(tmp_path / "data", FakePipeline(), accounts=Accounts(tmp_path / "data" / "clipcrow.db"), mailer=Outbox()))
     assert c.get("/api/jobs").status_code == 401
     cfg = c.get("/api/config").json()
     assert cfg["needs_login"] is True and cfg["signed_in"] is False
-    assert c.post("/api/login", json={"token": "wrong"}).status_code == 401
-    ok = c.post("/api/login", json={"token": "s3cret-token"})
-    assert ok.status_code == 200 and "httponly" in ok.headers["set-cookie"].lower()
-    assert "samesite=strict" in ok.headers["set-cookie"].lower()
+    assert c.post("/api/login", json={"token": "anything"}).status_code in (401, 404, 405)   # no password, no shared token: there is no such route
+    assert upload(c, video_bytes).status_code == 401                                          # uploads are protected too (before the body is read)
+    r = sign_up(c, "a@example.com")
+    assert r.status_code == 200 and "httponly" in r.headers["set-cookie"].lower() and "samesite=strict" in r.headers["set-cookie"].lower()
     assert c.get("/api/jobs").status_code == 200 and c.get("/api/config").json()["signed_in"] is True
-    c.cookies.clear()
-    assert c.get("/api/jobs", headers={"Authorization": "Bearer s3cret-token"}).status_code == 200
-    assert upload(c, video_bytes).status_code == 401                                   # uploads are protected too
 
 
-def test_without_a_token_the_login_endpoint_does_not_pretend(tmp_path):
+def test_without_accounts_the_app_is_open_and_has_no_login_route(tmp_path):
     c, _ = client(tmp_path)
-    assert c.post("/api/login", json={"token": ""}).status_code == 401
+    assert c.get("/api/config").json()["needs_login"] is False
+    assert c.post("/api/login", json={"token": ""}).status_code in (404, 405)
 
 
 # --- running, cancelling, failing ---------------------------------------------------------------

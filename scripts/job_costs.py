@@ -2,7 +2,7 @@
 """What did finished jobs cost to make? Reads the AI usage (tokens, at the model's price) and the metered GPU time of every finished job from a running server
 and prints rupees per job and per minute of video, so the price per minute (`plans.json`, `payg`) can be set from evidence.
 
-    CLIPCROW_URL=https://clipcrow.example CLIPCROW_TOKEN=... python scripts/job_costs.py [--usd-inr 88] [--margin 100] [--price 8] [--min-minutes 3]
+    CLIPCROW_URL=https://clipcrow.example CLIPCROW_SESSION=<your clipcrow_session cookie> python scripts/job_costs.py [--usd-inr 88] [--margin 100] [--price 8] [--min-minutes 3]
 
 The token is read from the environment (never printed). In accounts mode use an operator's session instead: this script is for the single-token mode or a copy of
 the data. Not counted: the server's own CPU, storage and bandwidth, Razorpay's fee (about 2% plus GST on the fee), failed or repeated runs.
@@ -16,8 +16,8 @@ import statistics
 import urllib.request
 
 
-def get(base: str, token: str, path: str):
-    req = urllib.request.Request(base + path, headers={"Authorization": f"Bearer {token}", "User-Agent": "clipcrow-job-costs/1"})
+def get(base: str, session: str, path: str):
+    req = urllib.request.Request(base + path, headers={"Cookie": f"clipcrow_session={session}", "User-Agent": "clipcrow-job-costs/1"})
     with urllib.request.urlopen(req, timeout=60) as r:          # noqa: S310 (the operator's own server)
         return json.loads(r.read())
 
@@ -29,9 +29,9 @@ def main() -> int:
     ap.add_argument("--price", type=float, default=8.0, help="the price per minute now, in rupees")
     ap.add_argument("--min-minutes", type=int, default=3, help="the minimum charge now, in minutes")
     a = ap.parse_args()
-    base, token = os.environ.get("CLIPCROW_URL", "").rstrip("/"), os.environ.get("CLIPCROW_TOKEN", "")
+    base, token = os.environ.get("CLIPCROW_URL", "").rstrip("/"), os.environ.get("CLIPCROW_SESSION", "")
     if not base or not token:
-        raise SystemExit("set CLIPCROW_URL and CLIPCROW_TOKEN")
+        raise SystemExit("set CLIPCROW_URL and CLIPCROW_SESSION (the value of your clipcrow_session cookie: browser dev tools, Application, Cookies)")
     jobs = get(base, token, "/api/jobs")
     rows = []
     for j in jobs:
