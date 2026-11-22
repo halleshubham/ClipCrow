@@ -260,6 +260,8 @@ function renderAcct() {
   const box = document.getElementById('acct');
   box.replaceChildren();
   const c = state.config;
+  const navAccount = document.getElementById('nav-account');                   // the Account tab: for anyone signed in to an account (not on a single-user install)
+  if (navAccount) navAccount.hidden = !(c && c.accounts && c.signed_in);
   if (!c || !c.accounts || !c.signed_in) return;
   box.append(...(c.admin ? [el('a', { href: '#/admin', text: 'Operator' })] : []), el('a', { href: '#/account', text: c.email, translate: 'no' }),
     el('button', { class: 'btn', type: 'button', text: 'Sign out', onclick: async () => {
@@ -2358,7 +2360,7 @@ async function route() {
   const hash = location.hash || '#/';
   renderAcct();
   document.querySelectorAll('nav a').forEach((a) => {
-    const on = (a.dataset.nav === 'new' && (hash === '#/' || hash === '#' || hash === '#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs')) || (a.dataset.nav === 'brand' && hash.startsWith('#/brand')) || (a.dataset.nav === 'styles' && hash === '#/styles');
+    const on = (a.dataset.nav === 'new' && (hash === '#/' || hash === '#' || hash === '#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs')) || (a.dataset.nav === 'brand' && hash.startsWith('#/brand')) || (a.dataset.nav === 'styles' && hash === '#/styles') || (a.dataset.nav === 'account' && hash === '#/account');
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   try {

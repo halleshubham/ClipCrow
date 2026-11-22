@@ -70,3 +70,11 @@ def test_every_file_the_ui_serves_is_in_the_installed_package():
     missing = [str(p.relative_to(base)) for p in (base / "static").rglob("*") if p.is_file() and "__pycache__" not in p.parts
                and not any(covered(p.relative_to(base).as_posix(), pat) for pat in patterns)]
     assert missing == []
+
+
+def test_a_signed_in_person_has_an_account_tab_in_the_nav():
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "clipcrow" / "service" / "static"
+    html, js = (root / "dashboard.html").read_text(encoding="utf-8"), (root / "app.js").read_text(encoding="utf-8")
+    assert 'data-nav="account"' in html and 'href="#/account"' in html and 'id="nav-account"' in html
+    assert "nav-account" in js and "dataset.nav === 'account'" in js
