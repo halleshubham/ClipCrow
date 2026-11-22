@@ -24,6 +24,7 @@ READ_BASE, READ_WPS = 3.0, 3.0               # a picture of the person's own: se
 READ_MIN, READ_MAX = 4.5, 9.0
 LEAD_IN = 0.3                                # it appears a moment before the word it is about
 PROMPT_MIN, PROMPT_MAX = 8, 300
+SOURCE_MAX = 30            # the longest site or platform name shown as a label
 
 
 @dataclass
@@ -36,6 +37,7 @@ class BeatPlan:
     caption: str
     picture: Optional[int] = None    # kind "upload": the index of the person's picture
     crop: Optional[tuple] = None     # kind "upload": the part to show, (x0, y0, x1, y1) as fractions of the picture
+    source: str = ""                 # kind "upload": the site or platform the picture comes from, shown as a small label when the crop left it out
 
 
 def clean_crop(raw) -> Optional[tuple]:
@@ -47,6 +49,49 @@ def clean_crop(raw) -> Optional[tuple]:
     if not all(0.0 <= v <= 1.0 for v in (x0, y0, x1, y1)) or x1 - x0 < 0.1 or y1 - y0 < 0.05 or (x1 - x0) * (y1 - y0) > 0.97:
         return None
     return (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3))
+
+
+def clean_box(raw) -> Optional[tuple]:
+    """The model's box around a source mark (a URL bar, a logo): four numbers inside 0..1, small allowed (a logo is small), never most of the picture."""
+    try:
+        x0, y0, x1, y1 = (float(v) for v in raw)
+    except (TypeError, ValueError):
+        return None
+    if not all(0.0 <= v <= 1.0 for v in (x0, y0, x1, y1)) or x1 - x0 < 0.03 or y1 - y0 < 0.008 or (x1 - x0) * (y1 - y0) > 0.4:
+        return None
+    return (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3))
+
+
+_NO_SOURCE = {"", "none", "null", "n/a", "na", "unknown", "no", "-", "nil"}
+
+
+def clean_source_name(raw) -> str:
+    """A site or platform name from the model: short plain text, one line, no markup; "" when it is empty or says there is none. It is shown on screen, so the code bounds it."""
+    t = clean_text(str(raw or ""), SOURCE_MAX)
+    if t.lower() in _NO_SOURCE or any(ch in t for ch in "<>{}\\"):
+        return ""
+    return t
+
+
+MAX_WITH_SOURCE_AREA = 0.55      # keeping the source in the crop may not make the crop more than this share of the picture ...
+WIDEN_LIMIT = 2.0                # ... nor more than this many times the part that matters (it has to stay readable on a phone)
+
+
+def with_source(crop: Optional[tuple], box: Optional[tuple], name: str) -> tuple[Optional[tuple], str]:
+    """(crop, label). The part that matters is cut out of a screenshot, and that often cuts off where it came from. If the picture shows its source: widen the crop to take
+    the source in when that keeps the crop reasonable; otherwise keep the crop and label it with the site's name. A whole picture (no crop) already has its source."""
+    if crop is None:
+        return None, ""
+    x0, y0, x1, y1 = crop
+    if box is not None:
+        bx0, by0, bx1, by1 = box
+        if bx0 >= x0 - 0.005 and by0 >= y0 - 0.005 and bx1 <= x1 + 0.005 and by1 <= y1 + 0.005:
+            return crop, ""                                     # it is already inside
+        u = (min(x0, bx0), min(y0, by0), max(x1, bx1), max(y1, by1))
+        ua, ca = (u[2] - u[0]) * (u[3] - u[1]), (x1 - x0) * (y1 - y0)
+        if ua <= MAX_WITH_SOURCE_AREA and ua <= WIDEN_LIMIT * ca:
+            return clean_crop(u) or crop, ""
+    return crop, name
 
 
 def hold_seconds(read_words: int, to_sentence_end: float = 0.0) -> float:
@@ -146,8 +191,9 @@ def plan_beats(llm: LLM, sentences: list[Sentence], clip_start: float, clip_dura
             d = min(hold_seconds(b.read_words, s.end - clip_start - t0), clip_duration - t0 - 0.3)
             if d < 3.0:
                 continue
-            crop = clean_crop(b.crop)
+            crop, source = with_source(clean_crop(b.crop), clean_box(b.source), clean_source_name(b.source_name))
         else:
+            source = ""
             t0 = max(s.start - clip_start, 0.0)
             if t0 < busy_until + GAP:
                 continue
@@ -157,7 +203,7 @@ def plan_beats(llm: LLM, sentences: list[Sentence], clip_start: float, clip_dura
         caption = clean_text(b.caption, 80)
         if caption and wrong_script(caption, language):
             caption = ""
-        out.append(BeatPlan(round(t0, 2), round(d, 2), kind, link, prompt, caption, picture, crop))
+        out.append(BeatPlan(round(t0, 2), round(d, 2), kind, link, prompt, caption, picture, crop, source))
         if link is not None:
             used_links.add(link)
         if picture is not None:

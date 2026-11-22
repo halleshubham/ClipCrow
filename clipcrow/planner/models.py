@@ -58,6 +58,8 @@ class Beat(BaseModel):
     cue: str = ""            # for "picture": one word copied from the sentence, where the picture should appear
     crop: Optional[list[float]] = None   # for "picture": the part that matters, [x0, y0, x1, y1] as fractions (0 to 1) of the picture; None = all of it
     read_words: int = 0      # for "picture": how many words a viewer has to read in that part (0 for a photo)
+    source: Optional[list[float]] = None   # for "picture": where the picture itself shows where it comes from (address bar, site logo or name, masthead, account header, watermark), [x0, y0, x1, y1]
+    source_name: str = ""    # for "picture": the name of that site or platform as the picture shows it ("X", "The Hindu"), "" when none is visible
 
 
 class BeatsResult(BaseModel):

@@ -348,6 +348,8 @@ def _add_pictures(clips: list[dict], picked: list[PlannedClip], tr: Transcript, 
                 placed.add(b.picture)
                 if b.crop:
                     placement = {**placement, "crop": list(b.crop)}
+                if b.source:
+                    placement = {**placement, "source": b.source}
             d["overlays"].append({"kind": "media", "id": f"pic{k + 1}", "t_in": b.t, "duration": b.duration,
                                   "asset": aid, "caption": b.caption, **placement})
         if plans:

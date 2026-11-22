@@ -23,7 +23,7 @@ History, incidents and open items are in `development-log.md`: add an entry ther
 - Branding: the cover is the TOP scene (z9) and shows from frame 0 with no fade-in; its words are the hook (else the title),
   never a new model call (replay tests key on the prompt hash). Cover/logo/outro files are COPIED into `<out>/brand/` and
   named by assets `brand-logo` / `brand-outro`; the EDL never points outside the job folder. Logos are PNG/JPEG/WebP only,
-  sniffed by magic bytes (no SVG). The outro is joined after the render (`branding.append_outro`); a join failure delivers
+  sniffed by magic bytes (no SVG). The brand PNG overlay (`Clip.brand_overlay`, asset `brand-overlay`) is PNG-only, decoded and re-encoded to RGBA by `put_overlay`; the compile layer is `pngoverlay` (z5, under captions and logo). The outro is joined after the render (`branding.append_outro`); a join failure delivers
   the clip without it and a warning. `render_one` must move `cN.new.cover.png` to `cN.cover.png`. Editor toggles flip
   `enabled`, they never drop the style.
 - Explainer pictures: the PERSON supplies them (web: `POST /api/pictures`, `service/pictures.py`; the service never opens a web page, so there is no capture or SSRF

@@ -59,6 +59,7 @@ class Params(_M):
     clean_take: Literal["last", "best"] = "last"     # which take of a repeated passage stays: the last one, or the one the AI judges best
     cover: bool = False                     # a bold title for the first ~250 ms (and a cover PNG)
     logo: bool = False                      # the account's logo in a corner
+    overlay: bool = False                   # the brand's PNG overlay on the video
     banner: bool = False                    # the brand's "watch the full video" banner
     outro: bool = False                     # the account's ending video after each clip
     transition: Literal["none", "flash", "blur", "dip", "whip"] = "none"     # a short effect on every hard cut (a jump cut, a speaker change)

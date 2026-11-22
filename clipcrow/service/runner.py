@@ -251,7 +251,7 @@ class JobRunner:
             kit = self.brands.kit(job.owner or "shared", p.brand) if self.brands else BrandKit()
         except KeyError:                                           # the brand was deleted after the job was made: its caption look is gone, the rest was copied into the job
             kit = BrandKit()
-        choice = BrandingChoice(cover=p.cover, logo=p.logo, banner=p.banner, outro=p.outro, music=p.music, captions=bool(kit.captions or kit.caption_font_latin) and p.style is None)
+        choice = BrandingChoice(cover=p.cover, logo=p.logo, overlay=p.overlay, banner=p.banner, outro=p.outro, music=p.music, captions=bool(kit.captions or kit.caption_font_latin) and p.style is None)
         if choice.any():
             hooks.choice, hooks.brand = choice, kit
         try:

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .edl import EDL, Asset, Banner, Clip, Cover, Logo, Music, Outro
+from .edl import EDL, Asset, Banner, Clip, Cover, FrameOverlay, Logo, Music, Outro
 
 CANVAS_FPS = 30
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -38,6 +38,14 @@ class BrandKit:
     logo_size_pct: int = 18
     logo_opacity: float = 0.9
     logo_margin_px: int = 60
+    overlay: Optional[Path] = None                      # the PNG laid over the picture (and how: see the overlay_* fields)
+    overlay_fit: str = "frame"
+    overlay_position: str = "br"
+    overlay_size_pct: int = 30
+    overlay_opacity: float = 1.0
+    overlay_margin_px: int = 40
+    overlay_show: str = "always"
+    overlay_seconds: float = 5.0
     cover_ms: int = 250
     cover_background: str = "frame"
     cover_color: str = "#FFFFFF"
@@ -60,13 +68,14 @@ class BrandKit:
 class BrandingChoice:
     cover: bool = False
     logo: bool = False
+    overlay: bool = False                               # the brand's PNG overlay
     outro: bool = False
     music: bool = False
     captions: bool = False                              # the brand's caption look (not when a reference style already set it)
     banner: bool = False                                # the "watch the full video" banner
 
     def any(self) -> bool:
-        return self.cover or self.logo or self.outro or self.music or self.captions or self.banner
+        return self.cover or self.logo or self.overlay or self.outro or self.music or self.captions or self.banner
 
 
 def cover_text(clip: Clip) -> str:
@@ -169,7 +178,7 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
     assets = [a for a in edl.assets if not a.id.startswith("brand-")]
     folder = out / "brand"
     new_assets: list[Asset] = []
-    for what, src, kind, key in (("logo", kit.logo, "image", "brand-logo"), ("outro", kit.outro, "video", "brand-outro"),
+    for what, src, kind, key in (("logo", kit.logo, "image", "brand-logo"), ("overlay", kit.overlay, "image", "brand-overlay"), ("outro", kit.outro, "video", "brand-outro"),
                                  ("music", kit.music, "audio", "brand-music")):
         if src is None or not Path(src).is_file():
             continue
@@ -184,6 +193,8 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
     have = {a.id for a in new_assets}
     if choice.logo and "brand-logo" not in have:
         raise BrandError("No logo has been uploaded yet.")
+    if choice.overlay and "brand-overlay" not in have:
+        raise BrandError("No overlay has been uploaded yet.")
     if choice.outro and "brand-outro" not in have:
         raise BrandError("No ending video has been uploaded yet.")
     if choice.music and "brand-music" not in have:
@@ -203,6 +214,9 @@ def apply_brand(edl: EDL, kit: BrandKit, choice: BrandingChoice, out: str | Path
             cap = c.captions
             upd["logo"] = fit_logo(lg, c.layout.face_zone, cap.top_px if cap.enabled else None, logo_aspect(kit.logo) if kit.logo else 1.0, edl.render.width, edl.render.height,
                            upd["banner"].top_px if upd.get("banner") else None)
+        if choice.overlay:
+            upd["brand_overlay"] = FrameOverlay(asset="brand-overlay", fit=kit.overlay_fit, position=kit.overlay_position, size_pct=kit.overlay_size_pct,
+                                                opacity=kit.overlay_opacity, margin_px=kit.overlay_margin_px, show=kit.overlay_show, seconds=kit.overlay_seconds)
         if choice.outro:
             upd["outro"] = Outro(asset="brand-outro", max_seconds=kit.outro_max_seconds, gap_ms=kit.outro_gap_ms)
         if choice.music:

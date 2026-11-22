@@ -19,7 +19,7 @@ METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 def caps(upload_mb: int) -> dict[str, int]:
     """Largest body (bytes) per upload route; every other route is JSON and gets 2 MB."""
-    return {"/api/jobs": (upload_mb + 8) * MB, "/api/pictures": 12 * MB, "/api/brand/logo": 4 * MB, "/api/brand/outro": 95 * MB, "/api/brand/music": 35 * MB,
+    return {"/api/jobs": (upload_mb + 8) * MB, "/api/pictures": 12 * MB, "/api/brand/logo": 4 * MB, "/api/brand/overlay": 10 * MB, "/api/brand/outro": 95 * MB, "/api/brand/music": 35 * MB,
             "/api/styles": 210 * MB}
 
 

@@ -44,11 +44,19 @@ MAX_BRANDS = 20
 CAPTION_ANIMATIONS = ("pop", "fade", "slide", "karaoke")
 SNIFF = ((b"\x89PNG\r\n\x1a\n", ".png"), (b"\xff\xd8\xff", ".jpg"))
 POSITIONS = ("tl", "tr", "bl", "br")
+OVERLAY_FITS = ("frame", "placed")
+OVERLAY_POSITIONS = ("tl", "tc", "tr", "cl", "cc", "cr", "bl", "bc", "br")
+OVERLAY_SHOWS = ("always", "first", "last")
+MAX_OVERLAY_BYTES = 8 * 1024 * 1024
+MAX_OVERLAY_SIDE = 4096
 BACKGROUNDS = ("frame", "color")
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}\Z")
 
 DEFAULTS = {
     "logo_position": "tr", "logo_size_pct": 18, "logo_opacity": 0.9, "logo_margin_px": 60,
+    # the brand's PNG overlay (a frame over the whole picture, or a graphic placed in it)
+    "overlay_fit": "frame", "overlay_position": "br", "overlay_size_pct": 30, "overlay_opacity": 1.0, "overlay_margin_px": 40, "overlay_show": "always", "overlay_seconds": 5.0,
+    "default_overlay": False,
     "cover_ms": 250, "cover_background": "frame", "cover_color": "#FFFFFF", "cover_accent": "#FFD54A",
     "cover_bg_color": "#111111", "outro_max_seconds": 6.0, "outro_gap_ms": 400,
     # what a new job ticks by default
@@ -60,6 +68,7 @@ DEFAULTS = {
     "banner_text": "", "banner_handle": "", "banner_platform": "youtube", "banner_top_px": 1440, "banner_seconds": 0.0, "default_banner": False,
 }
 _RANGES = {"logo_size_pct": (5, 40, int), "logo_opacity": (0.1, 1.0, float), "logo_margin_px": (0, 300, int),
+           "overlay_size_pct": (5, 100, int), "overlay_opacity": (0.1, 1.0, float), "overlay_margin_px": (0, 300, int), "overlay_seconds": (0.5, 60.0, float),
            "cover_ms": (100, 1500, int), "outro_max_seconds": (1.0, 30.0, float), "outro_gap_ms": (0, 1500, int),
            "caption_words": (0, 8, int), "caption_top_px": (0, 1800, int), "banner_top_px": (0, 1800, int), "banner_seconds": (0.0, 60.0, float)}
 
@@ -109,6 +118,16 @@ def sniff_image(head: bytes) -> str | None:
     if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return ".webp"
     return None
+
+
+def _has_transparent_area(png: Path) -> bool:
+    """Does this PNG have a real transparent area (at least 1% of it clearly see-through)? Looked at on a 48x48 copy of its alpha channel (ffmpeg, no extra library)."""
+    r = subprocess.run(["ffmpeg", "-v", "error", "-i", str(png), "-vf", "format=rgba,scale=48:48:flags=area,format=rgba,alphaextract", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                       capture_output=True, timeout=30)
+    if r.returncode != 0 or len(r.stdout) < 48 * 48:
+        return False
+    px = r.stdout[: 48 * 48]
+    return sum(1 for b in px if b < 245) >= len(px) * 0.01
 
 
 class BrandStore:
@@ -273,6 +292,17 @@ class BrandStore:
             elif k == "logo_position":
                 if v not in POSITIONS:
                     raise BrandError("Choose a corner: tl, tr, bl or br.")
+            elif k == "overlay_fit":
+                if v not in OVERLAY_FITS:
+                    raise BrandError("Choose frame (over the whole picture) or placed (a graphic at one spot).")
+                if v == "frame" and self.overlay_path(owner, brand) is not None and not self.overlay_info(owner, brand).get("transparent", True):
+                    raise BrandError("Your overlay has no transparent area, so over the whole frame it would hide the video. Use a PNG with transparency, or choose placed.")
+            elif k == "overlay_position":
+                if v not in OVERLAY_POSITIONS:
+                    raise BrandError("Choose one of the nine spots: tl, tc, tr, cl, cc, cr, bl, bc, br.")
+            elif k == "overlay_show":
+                if v not in OVERLAY_SHOWS:
+                    raise BrandError("Choose always, first or last.")
             elif k == "cover_background":
                 if v not in BACKGROUNDS:
                     raise BrandError("Choose frame or color.")
@@ -290,6 +320,50 @@ class BrandStore:
     def logo_path(self, owner: str, brand: str | None = None) -> Path | None:
         return next((p for p in sorted(self._dir(owner, brand).glob("logo.*")) if p.suffix in (".png", ".jpg", ".webp")), None) \
             if self._dir(owner, brand).is_dir() else None
+
+    def overlay_path(self, owner: str, brand: str | None = None) -> Path | None:
+        p = self._dir(owner, brand) / "overlay.png"
+        return p if p.is_file() else None
+
+    def overlay_info(self, owner: str, brand: str | None = None) -> dict:
+        """What we found when the overlay was uploaded: its size, and whether it has a transparent area (a frame without one would hide the video)."""
+        try:
+            raw = json.loads((self._dir(owner, brand) / "overlay.json").read_text("utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return {"transparent": bool(raw.get("transparent")), "width": int(raw.get("width") or 0), "height": int(raw.get("height") or 0)} if isinstance(raw, dict) else {}
+
+    def put_overlay(self, owner: str, data: bytes, brand: str | None = None) -> dict:
+        """A PNG to lay over the video. Only a real PNG is taken; it is decoded and written again (alpha kept, no metadata, at most 3840 px on the long side), so what is stored is
+        what we made. A picture with no transparent area cannot be a whole-frame overlay: the setting goes to ``placed`` for it."""
+        if not data:
+            raise BrandError("That file is empty.")
+        if len(data) > MAX_OVERLAY_BYTES:
+            raise BrandError(f"The overlay can be at most {MAX_OVERLAY_BYTES // (1024 * 1024)} MB.")
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise BrandError("Upload a PNG (with a transparent background) for the overlay.")
+        d = self._dir(owner, brand)
+        d.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=d) as tmp:
+            src = Path(tmp) / "in.png"
+            src.write_bytes(data)
+            info = probe_media(src)
+            if not info["has_video"] or not 16 <= info["width"] <= MAX_OVERLAY_SIDE or not 16 <= info["height"] <= MAX_OVERLAY_SIDE:
+                raise BrandError(f"The overlay must be between 16 and {MAX_OVERLAY_SIDE} pixels on each side.")
+            out = Path(tmp) / "overlay.png"
+            r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-protocol_whitelist", "file,pipe", "-i", str(src), "-frames:v", "1", "-map_metadata", "-1",
+                                "-vf", "scale='min(2160,iw)':'min(3840,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", "-pix_fmt", "rgba", str(out)],
+                               capture_output=True, text=True, timeout=60)
+            if r.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
+                raise BrandError("That overlay could not be read.")
+            transparent = _has_transparent_area(out)
+            size = probe_media(out)
+            with self._lock:
+                shutil.move(str(out), d / "overlay.png")
+                (d / "overlay.json").write_text(json.dumps({"transparent": transparent, "width": size["width"], "height": size["height"]}), "utf-8")
+        if not transparent and self.settings(owner, brand)["overlay_fit"] == "frame":
+            self.set_settings(owner, {"overlay_fit": "placed"}, brand)
+        return self.describe(owner, brand)
 
     def outro_path(self, owner: str, brand: str | None = None) -> Path | None:
         p = self._dir(owner, brand) / "outro.mp4"
@@ -387,6 +461,9 @@ class BrandStore:
             if what == "logo":
                 for p in d.glob("logo.*"):
                     p.unlink()
+            elif what == "overlay":
+                (d / "overlay.png").unlink(missing_ok=True)
+                (d / "overlay.json").unlink(missing_ok=True)
             elif what == "outro":
                 (d / "outro.mp4").unlink(missing_ok=True)
             elif what == "music":
@@ -410,7 +487,8 @@ class BrandStore:
         reg = self._registry(owner)
         bid = brand or reg["default"]
         return {"id": bid, "name": next((b["name"] for b in reg["brands"] if b["id"] == bid), ""), "is_default": bid == reg["default"], "brands": self.list(owner),
-                "logo": self.logo_path(owner, brand) is not None, "outro": outro is not None, "music": music is not None,
+                "logo": self.logo_path(owner, brand) is not None, "overlay": self.overlay_path(owner, brand) is not None, "overlay_info": self.overlay_info(owner, brand),
+                "outro": outro is not None, "music": music is not None,
                 "music_seconds": round(probe_media(music)["duration"], 1) if music else 0, "music_name": name,
                 "uploaded_music": self.uploaded_music(owner, brand) is not None,
                 "tracks": [{"id": k, "title": v.get("title", k), "mood": v.get("mood", ""), "seconds": v.get("seconds", 0)} for k, v in sorted(lib.items())],
@@ -422,6 +500,8 @@ class BrandStore:
     def kit(self, owner: str, brand: str | None = None) -> BrandKit:
         s = self.settings(owner, brand)
         return BrandKit(logo=self.logo_path(owner, brand), outro=self.outro_path(owner, brand), music=self.music_path(owner, brand), logo_position=s["logo_position"],
+                        overlay=self.overlay_path(owner, brand), overlay_fit=s["overlay_fit"], overlay_position=s["overlay_position"], overlay_size_pct=int(s["overlay_size_pct"]),
+                        overlay_opacity=float(s["overlay_opacity"]), overlay_margin_px=int(s["overlay_margin_px"]), overlay_show=s["overlay_show"], overlay_seconds=float(s["overlay_seconds"]),
                         logo_size_pct=s["logo_size_pct"], logo_opacity=float(s["logo_opacity"]), logo_margin_px=s["logo_margin_px"],
                         cover_ms=s["cover_ms"], cover_background=s["cover_background"], cover_color=s["cover_color"],
                         cover_accent=s["cover_accent"], cover_bg_color=s["cover_bg_color"],

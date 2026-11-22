@@ -922,7 +922,7 @@ async function newJobView() {
       multi: $('multi').value, graphics: $('graphics').checked ? 'true' : '', whole: whole ? 'true' : '', clean: $('clean').checked ? 'true' : '', gpu: $('gpu') ? $('gpu').value : '', clean_pace: $('clean_pace').value, clean_take: $('clean_take').value, fresh_transcript: $('fresh_transcript').checked ? 'true' : '', brand: $('brand') ? $('brand').value : '', speaker_name: $('speaker').value, speaker_title: $('role').value,
       cutout: $('cutout').checked ? 'true' : '', immersive: $('immersive').checked ? 'true' : '',
       explainer: $('explainer').checked ? 'true' : '', pictures: pics.ids(), ai_images: $('ai_images').checked ? 'true' : '',
-      cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', banner: $('show_banner').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '', music: $('music').checked ? 'true' : '', transition: $('transition').value,
+      cover: $('cover').checked ? 'true' : '', logo: $('logo').checked ? 'true' : '', overlay: $('overlay').checked ? 'true' : '', banner: $('show_banner').checked ? 'true' : '', outro: $('outro').checked ? 'true' : '', sounds: $('sounds').checked ? 'true' : '', music: $('music').checked ? 'true' : '', transition: $('transition').value,
     };
     submit.disabled = true;
     progress.hidden = false;
@@ -973,6 +973,7 @@ async function newJobView() {
         brand.brands && brand.brands.length > 1 && el('select', { id: 'brand', class: 'brand-pick' }, brand.brands.map((b) => el('option', { value: b.id, text: b.name + (b.default ? ' (default)' : '') }))),
         el('div', { class: 'chips' },
           chip('logo', 'badge-check', 'Logo', 'Your logo in a corner of every clip.'),
+          chip('overlay', 'layers', 'Overlay', 'Your PNG overlay (a frame or a graphic) on top of the video.'),
           chip('cover', 'type', 'Cover title', 'A bold title (the hook line) for the first quarter-second, so the poster frame says what the clip is about. You also get it as a picture. Platforms choose their own thumbnail, so this raises the odds, it cannot force it.'),
           chip('show_banner', 'megaphone', 'Full-video banner', 'A “watch the full video” line with your channel name.'),
           chip('outro', 'film', 'Ending video', 'Your branding video, added at the end of each clip.')),
@@ -1059,6 +1060,7 @@ async function newJobView() {
       if (!have) missing.push(what);
     };
     chipSet('logo', b.logo, b.settings.default_logo, 'logo', 'Your logo in a corner of every clip.');
+    chipSet('overlay', b.overlay, b.settings.default_overlay, 'overlay', 'Your PNG overlay on top of every clip.');
     chipSet('show_banner', !!b.settings.banner_handle, b.settings.default_banner, 'channel name', b.settings.banner_handle ? `A “watch the full video” line with your channel: ${b.settings.banner_handle}.` : '');
     chipSet('outro', b.outro, b.settings.default_outro, 'ending video', b.outro ? `Your branding video (${b.outro_seconds} s), added at the end of each clip.` : '');
     $('cover').checked = !!b.settings.default_cover;
@@ -1749,6 +1751,8 @@ async function brandView(bid) {
       } })));
 
   const logoIn = el('input', { type: 'file', id: 'logo_file', accept: 'image/png,image/jpeg,image/webp' });
+  const overlayIn = el('input', { type: 'file', id: 'overlay_file', accept: 'image/png' });
+  overlayIn.addEventListener('change', () => { if (overlayIn.files[0]) send('/brand/overlay', overlayIn, 'an overlay'); });
   const outroIn = el('input', { type: 'file', id: 'outro_file', accept: 'video/*' });
   const musicIn = el('input', { type: 'file', id: 'music_file', accept: 'audio/*' });
   logoIn.addEventListener('change', () => { if (logoIn.files[0]) send('/brand/logo', logoIn, 'a logo'); });
@@ -1759,6 +1763,13 @@ async function brandView(bid) {
     el('div', {}, el('label', { class: 'field', for: 'logo_file' }, 'PNG, JPEG or WebP · up to 3 MB', tip('A transparent PNG looks best. SVG is not accepted.', 'the logo file')), logoIn),
     el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.logo ? 'Replace logo' : 'Upload logo', onclick: () => send('/brand/logo', logoIn, 'a logo') }),
       brand.logo && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('logo') })));
+  const overlayBox = el('section', { class: 'card stack' }, el('h2', { text: 'Overlay' }),
+    brand.overlay ? el('img', { src: `/api/brand/overlay/file${q}&v=${Date.now()}`, alt: 'Your overlay', class: 'logo-preview overlay-preview' })
+      : el('p', { class: 'small muted', text: 'No overlay yet.' }),
+    brand.overlay && brand.overlay_info && !brand.overlay_info.transparent && el('p', { class: 'small muted', text: 'This picture has no transparent area, so it is placed as a graphic rather than laid over the whole frame.' }),
+    el('div', {}, el('label', { class: 'field', for: 'overlay_file' }, 'PNG with a transparent background · up to 8 MB', tip('A frame, a lower-third or a sticker laid over the video. Drawn above the picture and below the captions and logo. 1080×1920 works best for a frame.', 'the overlay file')), overlayIn),
+    el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'button', text: brand.overlay ? 'Replace overlay' : 'Upload overlay', onclick: () => send('/brand/overlay', overlayIn, 'an overlay') }),
+      brand.overlay && el('button', { class: 'btn', type: 'button', text: 'Remove', onclick: () => remove('overlay') })));
   const trackSel = el('select', { id: 'music_track' }, [['', brand.uploaded_music ? 'Your upload' : 'None'], ...brand.tracks.map((t) => [t.id, `${t.title} (${t.mood})`])]
     .map(([v, t]) => el('option', { value: v, text: t })));
   trackSel.value = brand.settings.music_track || '';
@@ -1803,6 +1814,15 @@ async function brandView(bid) {
     f[id] = el('input', { id, type: 'number', min: String(min), max: String(max), step: String(step), value: value ? String(value) : '', placeholder, inputmode: 'numeric' });
     return el('div', {}, el('label', { class: 'field', for: id, text: label }), f[id]);
   };
+  const overlayPlacement = group('Overlay', 'How your PNG overlay sits on every clip. “Whole frame” stretches a PNG with transparency over the full picture; “A graphic” puts it at one spot.',
+    el('div', { class: 'grid2', style: { marginTop: 0 } },
+      opt('overlay_fit', 'Use as', [['frame', 'Whole frame'], ['placed', 'A graphic at one spot']], s.overlay_fit),
+      opt('overlay_position', 'Spot (for a graphic)', [['tl', 'Top left'], ['tc', 'Top middle'], ['tr', 'Top right'], ['cl', 'Middle left'], ['cc', 'Centre'], ['cr', 'Middle right'], ['bl', 'Bottom left'], ['bc', 'Bottom middle'], ['br', 'Bottom right']], s.overlay_position),
+      num('overlay_size_pct', 'Width (% of the screen)', 5, 100, 1, s.overlay_size_pct),
+      num('overlay_opacity', 'Opacity (%)', 10, 100, 5, Math.round(s.overlay_opacity * 100)),
+      num('overlay_margin_px', 'Margin from the edge (px)', 0, 300, 10, s.overlay_margin_px),
+      opt('overlay_show', 'Shown', [['always', 'The whole clip'], ['first', 'At the start'], ['last', 'At the end']], s.overlay_show),
+      num('overlay_seconds', 'Seconds (start or end)', 0.5, 60, 0.5, s.overlay_seconds)));
   const coverBg = color('cover_bg_color', 'Cover solid colour', s.cover_bg_color);
   const logoPlacement = group('Logo placement', 'Where the logo sits on every clip. When a face or the captions would be covered, a clip moves it down the side, or keeps its size and makes it more transparent; the preview shows the same.',
     el('div', { class: 'grid2', style: { marginTop: 0 } },
@@ -1853,7 +1873,7 @@ async function brandView(bid) {
       colourField('caption_color', 'Colour', s.caption_color, brand.caption_base.color),
       colourField('caption_highlight', 'Highlight colour', s.caption_highlight, brand.caption_base.highlight)));
   const defaultsGroup = group('Ticked by default on a new job', '',
-    tick('default_cover', 'Cover title', s.default_cover), tick('default_logo', 'Logo', s.default_logo), tick('default_banner', 'Watch-full-video banner', s.default_banner),
+    tick('default_cover', 'Cover title', s.default_cover), tick('default_logo', 'Logo', s.default_logo), tick('default_overlay', 'Overlay', s.default_overlay), tick('default_banner', 'Watch-full-video banner', s.default_banner),
     tick('default_outro', 'Ending video', s.default_outro), tick('default_music', 'Background music', s.default_music));
 
   async function save(quiet) {                                   // returns whether it was saved
@@ -1861,7 +1881,9 @@ async function brandView(bid) {
     const n = (id) => Number(f[id].value);
     const orNone = (id) => (f[id].value.trim() === '' ? 0 : Number(f[id].value));
     const body = { logo_position: f.logo_position.value, logo_size_pct: n('logo_size_pct'), logo_opacity: n('logo_opacity') / 100,
-      logo_margin_px: n('logo_margin_px'), cover_ms: n('cover_ms'), cover_background: f.cover_background.value,
+      logo_margin_px: n('logo_margin_px'),
+      overlay_fit: f.overlay_fit.value, overlay_position: f.overlay_position.value, overlay_size_pct: n('overlay_size_pct'), overlay_opacity: n('overlay_opacity') / 100,
+      overlay_margin_px: n('overlay_margin_px'), overlay_show: f.overlay_show.value, overlay_seconds: n('overlay_seconds'), cover_ms: n('cover_ms'), cover_background: f.cover_background.value,
       cover_color: f.cover_color.value.toUpperCase(), cover_accent: f.cover_accent.value.toUpperCase(), cover_bg_color: f.cover_bg_color.value.toUpperCase(),
       outro_max_seconds: n('outro_max_seconds'), outro_gap_ms: n('outro_gap_ms'),
       speaker_name: f.speaker_name.value, speaker_title: f.speaker_title.value, caption_font: f.caption_font.value, caption_font_latin: f.caption_font_latin.value, caption_animation: f.caption_animation.value,
@@ -1869,7 +1891,7 @@ async function brandView(bid) {
       caption_color: f.caption_color_on.checked ? f.caption_color.value.toUpperCase() : '', caption_highlight: f.caption_highlight_on.checked ? f.caption_highlight.value.toUpperCase() : '',
       banner_handle: f.banner_handle.value, banner_text: f.banner_text.value, banner_platform: f.banner_platform.value, banner_seconds: orNone('banner_seconds'), banner_top_px: n('banner_top_px'),
       music_track: trackSel.value,
-      default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_banner: f.default_banner.checked, default_outro: f.default_outro.checked, default_music: f.default_music.checked };
+      default_cover: f.default_cover.checked, default_logo: f.default_logo.checked, default_overlay: f.default_overlay.checked, default_banner: f.default_banner.checked, default_outro: f.default_outro.checked, default_music: f.default_music.checked };
     try { await api('/brand' + q, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); if (!quiet) note.textContent = 'Saved. New jobs use this.'; return true; }
     catch (e) { fail(e); return false; }
   }
@@ -1959,7 +1981,7 @@ async function brandView(bid) {
   app.replaceChildren(el('div', { class: 'stack' },
     el('div', {}, el('h1', { text: 'Brand' }), el('p', { class: 'small muted' }, 'Added to clips when you tick them on a new job.', tip('Clips already made keep the copy they were made with.', 'the brand page'))),
     switcher,
-    el('div', { class: 'layout' }, el('div', { class: 'stack' }, el('div', { class: 'pair' }, logoBox, outroBox), logoPlacement, banner, coverGroup, endingGroup, speakerGroup, captionsGroup, musicBox, defaultsGroup,
+    el('div', { class: 'layout' }, el('div', { class: 'stack' }, el('div', { class: 'pair' }, logoBox, outroBox), logoPlacement, el('div', { class: 'pair' }, overlayBox), overlayPlacement, banner, coverGroup, endingGroup, speakerGroup, captionsGroup, musicBox, defaultsGroup,
       el('div', { class: 'actionbar' }, err, el('div', { class: 'row' }, note, saveBtn))), el('div', { class: 'aside first-on-phone' }, preview))));
 }
 

@@ -96,7 +96,11 @@ def beats_prompt(sentences: list[Sentence], links: list[str], *, allow_images: b
                     "- crop: for kind picture only: the part of the picture that matters, as [x0, y0, x1, y1], fractions from 0 to 1 of its width and height "
                     "(0,0 is the top left). A screenshot of a page or phone usually has menus, ads and other articles: crop to the headline, paragraph, table or figure "
                     "being discussed, big enough to read on a phone (not more than about a third of a tall page). null when the whole picture matters (a photo, a chart).\n"
-                    "- read_words: for kind picture only: how many words a viewer has to read in that part (0 for a photo with no text).\n" if pictures else "")
+                    "- read_words: for kind picture only: how many words a viewer has to read in that part (0 for a photo with no text).\n"
+                    "- source: for kind picture only: if the picture itself shows where it comes from (a browser address bar, a website's name or logo, a newspaper masthead, "
+                    "a social platform's header with the account name, a watermark), the box around that, as [x0, y0, x1, y1] like crop; null when nothing like that is visible.\n"
+                    "- source_name: for kind picture only: the name of that site or platform exactly as the picture shows it, short (for example X, Facebook, The Hindu, "
+                    "lokmat.com); empty when it shows none. Never guess a name that is not in the picture.\n" if pictures else "")
     image_rule = ("- prompt: for kind image only: one plain sentence describing the picture (a scene, object or diagram "
                   "idea). No real people, no brands, no text in the picture, at most 200 characters.\n" if allow_images else "")
     link_rule = ("- link: for kind screenshot only: the number of the link (as in [L1]) that matches what the sentence talks about. "

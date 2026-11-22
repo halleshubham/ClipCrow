@@ -648,3 +648,78 @@ def test_neon_scene_has_grid_and_no_css_transform_on_moved_elements():
     html = _media_scene([(o, 1.0, 4.0)], {"a": "assets/media/a.png"}, '"Noto Sans"', "", 1080, 1920, {"p": ("neon", (60, 170, 960, 1180))}, True)
     assert 'class="grid"' in html and "mg-p" in html and "#00f0ff" in html
     assert "transform" not in html.split("<style>")[-1].split("</style>")[0] if "<style>" in html else True
+
+
+def test_captions_move_out_from_under_a_screenshot_while_it_is_shown(tmp_path, gsap, fonts_available):
+    import re
+    lavfi(tmp_path / "src.mp4")
+    (tmp_path / "out" / "assets").mkdir(parents=True)
+    _png(tmp_path / "out" / "assets" / "p1.png", "1170x2532")                      # a phone screenshot: shown big over the neon grid, down to just above the captions
+    edl = explainer_edl(placement="auto", motion="none")
+    edl = edl.model_copy(update={"source": edl.source.model_copy(update={"duration": 3, "width": 1280, "height": 720}),
+                                 "clips": [edl.clips[0].model_copy(update={"source_out": 4.0})]})
+    compile_clip(edl, edl.clips[0], tmp_path / "p", media_root=tmp_path, gsap_js=gsap, asset_root=tmp_path / "out")
+    caps = (tmp_path / "p" / "compositions" / "captions.html").read_text()
+    media = (tmp_path / "p" / "compositions" / "media.html").read_text()
+    assert "neon" in media
+    groups = re.findall(r'<div id="g\d+" class="grp clip" data-start="([\d.]+)" data-duration="([\d.]+)" style="([^"]*)"', caps)
+    assert groups
+    for start, dur, style in groups:
+        covered = float(start) < 3.5 and float(start) + float(dur) > 1.0           # the picture is up from 1.0 to 3.5 s
+        assert ("top:" in style) == covered, (start, dur, style)
+    moved = [int(re.search(r"top:(\d+)px", s).group(1)) for _, _, s in groups if "top:" in s]
+    assert moved and all(y >= 1350 for y in moved)                                # below the picture, not over it
+
+
+# --- a cropped screenshot keeps (or names) where it came from -----------------------------------------------------------------
+
+from clipcrow.planner.explainer import clean_box, clean_source_name, with_source
+
+
+def test_a_source_box_is_a_small_real_box_and_a_source_name_is_plain_short_text():
+    assert clean_box([0.0, 0.0, 1.0, 0.06]) == (0.0, 0.0, 1.0, 0.06) and clean_box([0.4, 0.01, 0.7, 0.03]) == (0.4, 0.01, 0.7, 0.03)      # an address bar, a logo
+    for bad in ([0, 0, 0.01, 0.5], [0.5, 0.5, 0.4, 0.6], [0, 0, 1, 1], [0, 0, 1.2, 0.1], "x", None, [0, 0, 0.5]):
+        assert clean_box(bad) is None
+    assert clean_source_name("  The Hindu ") == "The Hindu" and clean_source_name("x.com\n") == "x.com"
+    assert clean_source_name("<b>X</b>") == "" and clean_source_name("None") == "" and clean_source_name(None) == "" and clean_source_name("unknown") == ""
+    assert len(clean_source_name("a" * 200)) <= 30
+
+
+def test_the_crop_is_widened_to_take_the_source_in_when_that_stays_reasonable():
+    crop, label = with_source((0.1, 0.30, 0.9, 0.45), (0.1, 0.20, 0.9, 0.25), "The Hindu")        # the masthead sits just above the headline
+    assert crop == (0.1, 0.2, 0.9, 0.45) and label == ""                                           # one taller crop, no label needed
+    assert with_source((0.1, 0.3, 0.9, 0.45), (0.2, 0.32, 0.4, 0.34), "X") == ((0.1, 0.3, 0.9, 0.45), "")          # already inside
+    assert with_source(None, (0.1, 0.2, 0.9, 0.25), "X") == (None, "")                           # the whole picture is shown: it has its source
+
+
+def test_when_the_source_is_too_far_the_crop_stays_and_the_name_becomes_a_label():
+    crop, label = with_source((0.1, 0.70, 0.9, 0.80), (0.1, 0.00, 0.9, 0.05), "Facebook")          # address bar at the very top, the post far below
+    assert crop == (0.1, 0.7, 0.9, 0.8) and label == "Facebook"
+    assert with_source((0.1, 0.7, 0.9, 0.8), None, "X") == ((0.1, 0.7, 0.9, 0.8), "X")           # only the name is known: label it
+    assert with_source((0.1, 0.7, 0.9, 0.8), (0.1, 0.0, 0.9, 0.05), "") == ((0.1, 0.7, 0.9, 0.8), "")       # nothing to say, nothing invented
+
+
+def test_the_planner_asks_for_the_source_and_uses_it(tmp_path):
+    sents = [Sentence(id=i, text=f"वाक्य {i}", start=100.0 + i * 10, end=110.0 + i * 10, first=i * 5, last=i * 5 + 4) for i in range(4)]
+    near = dict(pic_beat(1, 0, crop=[0.1, 0.30, 0.9, 0.45]), source=[0.1, 0.20, 0.9, 0.25], source_name="The Hindu")
+    far = dict(pic_beat(3, 1, crop=[0.1, 0.70, 0.9, 0.80]), source=[0.1, 0.0, 0.9, 0.05], source_name="Facebook")
+    llm = beats_llm([near, far])
+    plans, _ = plan_beats(llm, sents, 100.0, 40.0, [], allow_images=False, language="mr", hook_end=2.8, purpose="b", pictures=[b"a", b"b"], words=[])
+    assert plans[0].crop == (0.1, 0.2, 0.9, 0.45) and plans[0].source == ""                       # widened: the masthead is in the picture now
+    assert plans[1].crop == (0.1, 0.7, 0.9, 0.8) and plans[1].source == "Facebook"                # too far: a label
+    prompt = llm.calls[0][1][-1]["text"]
+    assert "source:" in prompt and "source_name:" in prompt and "Never guess a name" in prompt
+
+
+def test_the_edl_carries_a_short_source_label_and_the_page_shows_it_in_the_clips_script():
+    assert card(source="The Hindu").source == "The Hindu" and card().source == ""
+    with pytest.raises(ValidationError):
+        card(source="x" * 41)
+    o = card(source="<b>X</b>", placement="panel")
+    html = _media_scene([(o, 1.0, 3.0)], {o.asset: "assets/media/p.png"}, '"Noto Sans"', "", 1080, 1920, {o.id: ("panel", (60, 240, 960, 1000))}, True, "mr")
+    assert 'class="src"' in html and "&lt;b&gt;X&lt;/b&gt;" in html and "<b>X</b>" not in html       # escaped, never markup
+    assert "स्रोत: " in html                                                                       # Marathi clip: Devanagari "Source"
+    en = _media_scene([(o, 1.0, 3.0)], {o.asset: "assets/media/p.png"}, '"Noto Sans"', "", 1080, 1920, {o.id: ("panel", (60, 240, 960, 1000))}, True, "en")
+    assert "Source: " in en and "left:18px;top:18px" in en
+    neon = _media_scene([(o, 1.0, 3.0)], {o.asset: "assets/media/p.png"}, '"Noto Sans"', "", 1080, 1920, {o.id: ("neon", (100, 200, 880, 1100))}, True, "en")
+    assert "left:118px;top:218px" in neon                                                          # the corner of the picture inside the full-screen page

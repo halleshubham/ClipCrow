@@ -28,7 +28,7 @@ from typing import Callable, Optional
 from . import fonts
 from .captions import CaptionGroup, clip_words, group_words
 from .transitions import hard_cuts
-from .edl import EDL, Clip, Cover, EDLError, Hook, Logo, LowerThird, MediaCard, StatPill, TextBehind
+from .edl import EDL, Clip, Cover, EDLError, FrameOverlay, Hook, Logo, LowerThird, MediaCard, StatPill, TextBehind
 
 GSAP_HINT = "run scripts/fetch_gsap.sh, or pass gsap_js=<path to gsap.min.js>"
 
@@ -192,8 +192,44 @@ def _caption_size(chars: int, scale: float = 1.0) -> int:
     return int(max(36, min(120, base * scale)))
 
 
+CAPTION_SAFE_TOP = 170          # below the platform's top bar
+CAPTION_SAFE_BOTTOM = 240       # above the platform's description and buttons
+CAPTION_GAP = 24
+
+
+def _caption_height(chars: int, scale: float = 1.0) -> int:
+    """About how tall one caption group is (its font size, 1.25 line height, one line or two): used to find it a free band."""
+    size = _caption_size(chars, scale)
+    lines = max(1, -(-int(chars * 0.62 * size) // 900))
+    return int(size * 1.25 * lines) + 12
+
+
+def caption_tops(groups: list[CaptionGroup], blockers: list[tuple[float, float, int, int]], default_top: int, h: int, scale: float = 1.0,
+                 face_band: Optional[tuple[int, int]] = None) -> dict[int, int]:
+    """Where a caption group has to move because a picture is on screen at the same time and would sit behind its words. ``blockers`` are the pictures:
+    (from second, to second, top px, bottom px) of what each covers. A group whose usual band is free stays where it is (not in the result); one that is covered
+    goes just BELOW the picture when there is room above the platform's own buttons, else just ABOVE it (not over the face), else stays (a full-frame cutaway
+    has no free space: the words stay over it). Pure numbers, so a re-render never moves them differently."""
+    out: dict[int, int] = {}
+    for n, g in enumerate(groups):
+        chars = sum(len(_shown(x.text)) for x in g.words) + len(g.words) - 1
+        ch = _caption_height(chars, scale)
+        live = [(y0, y1) for (a, b, y0, y1) in blockers if a < g.end and b > g.start]
+        if not live or not any(y0 < default_top + ch and y1 > default_top for y0, y1 in live):
+            continue
+        low, high = min(y0 for y0, _ in live), max(y1 for _, y1 in live)
+        below = high + CAPTION_GAP
+        if below + ch <= h - CAPTION_SAFE_BOTTOM:
+            out[n] = below
+            continue
+        above = low - CAPTION_GAP - ch
+        if above >= CAPTION_SAFE_TOP and not (face_band and above < face_band[1] and above + ch > face_band[0]):
+            out[n] = above
+    return out
+
+
 def _captions_scene(clip: Clip, groups: list[CaptionGroup], family: str, face: str,
-                    w: int, h: int) -> str:
+                    w: int, h: int, tops: Optional[dict[int, int]] = None) -> str:
     st = clip.captions
     emph = set(st.emphasis_words)
     css = f"""    {face}
@@ -209,7 +245,8 @@ def _captions_scene(clip: Clip, groups: list[CaptionGroup], family: str, face: s
             f'<span class="w{" hot" if x.index in emph else ""}" id="g{n}w{m}">{_esc(_shown(x.text))}</span>'
             for m, x in enumerate(g.words))
         body.append(f'    <div id="g{n}" class="grp clip" data-start="{_num(g.start)}" '
-                    f'data-duration="{_num(g.end - g.start)}" style="font-size:{_caption_size(chars, st.size_scale)}px">{spans}</div>')
+                    f'data-duration="{_num(g.end - g.start)}" style="font-size:{_caption_size(chars, st.size_scale)}px'
+                    f'{";top:" + str(int(tops[n])) + "px" if tops and n in tops else ""}">{spans}</div>')
         timeline.append([f"g{n}", round(g.start, 3), round(g.end, 3), [round(x.start, 3) for x in g.words]])
     script = _caption_script(st.animation, timeline, st.color, st.highlight_color, [[x.index in emph for x in g.words] for g in groups])
     return _scene("captions", w, h, css, "\n".join(body), script)
@@ -410,7 +447,15 @@ def _crop_picture(src: Path, dest: Path, crop: tuple[float, float, float, float]
         raise EDLError("a picture could not be cropped")
 
 
-def _media_scene(items, files: dict[str, str], stack: str, face: str, w: int, h: int, boxes: Optional[dict] = None, captions_on: bool = False) -> str:
+SOURCE_WORD = {"mr": "स्रोत", "hi": "स्रोत", "ne": "स्रोत", "sa": "स्रोत"}
+
+
+def source_label(language: str, name: str) -> str:
+    """"Source: X" in the clip's own script (Devanagari for Marathi and Hindi)."""
+    return f"{SOURCE_WORD.get(language, 'Source')}: {name}"
+
+
+def _media_scene(items, files: dict[str, str], stack: str, face: str, w: int, h: int, boxes: Optional[dict] = None, captions_on: bool = False, language: str = "en") -> str:
     """Pictures shown over the footage: a full-frame cutaway or a rounded panel, with a slow move and a fade. The panel's own caption is left out when the
     spoken captions are on (two lines of text one above the other)."""
     css = f"""    {face}
@@ -426,6 +471,8 @@ def _media_scene(items, files: dict[str, str], stack: str, face: str, w: int, h:
       box-shadow: 0 0 0 3px #00f0ff, 0 0 36px 6px rgba(0,240,255,.55), 0 0 90px 14px rgba(255,0,200,.35); }}
     .mc img {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
     .mc.full img {{ object-fit: cover; }} .mc.panel img, .mc.band img {{ object-fit: contain; }}
+    .mc .src {{ position: absolute; z-index: 2; max-width: 60%; padding: 8px 18px; border-radius: 999px; background: rgba(0,0,0,.72); color: #fff;
+      font-family: {stack}, sans-serif; font-weight: 600; font-size: 30px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
     .mc .cap {{ position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 36px; text-align: center;
       font-family: {stack}, sans-serif; font-weight: 700; font-size: 42px; line-height: 1.3; color: #fff;
       background: linear-gradient(transparent, rgba(0,0,0,.72)); }}"""
@@ -435,14 +482,23 @@ def _media_scene(items, files: dict[str, str], stack: str, face: str, w: int, h:
         g = f"left:{box[0]}px;top:{box[1]}px;width:{box[2]}px;height:{box[3]}px" if box else ""
         geom = (g or f"top:{o.top_px}px;height:{o.height_px}px") if mode in ("panel", "band") else ""
         cap = f'<div class="cap">{_esc(o.caption)}</div>' if o.caption and not captions_on and mode != "neon" else ""
+        chip = ""
+        if o.source:                                     # where the screenshot comes from, when the crop cut it off: a small label on the picture's own top-left corner
+            if mode == "neon":                           # the page is full-screen here; the picture sits at ``box`` inside it
+                at = f"left:{box[0] + 18}px;top:{box[1] + 18}px" if box else "left:24px;top:200px"
+            elif mode in ("panel", "band"):              # the card is its own box: the corner of the card
+                at = "left:18px;top:18px"
+            else:                                        # a full-frame cutaway: below the platform's top bar
+                at = "left:24px;top:200px"
+            chip = f'<div class="src" style="{at}">{_esc(source_label(language, o.source))}</div>'
         if mode == "neon":
             body.append(f'    <div id="m-{o.id}" class="mc neon clip" data-start="{_num(t0)}" data-duration="{_num(d)}">'
                         f'<div id="mg-{o.id}" class="grid"></div><div class="glow"></div>'
-                        f'<img id="mi-{o.id}" class="pic" src="{files[o.asset]}" alt="" style="{g}"></div>')
+                        f'<img id="mi-{o.id}" class="pic" src="{files[o.asset]}" alt="" style="{g}">{chip}</div>')
             script.append(f'    tl.fromTo("#mg-{o.id}", {{ y: 0 }}, {{ y: 90, duration: {_num(d)}, ease: "none" }}, {_num(t0)});')
         else:
             body.append(f'    <div id="m-{o.id}" class="mc {mode} clip" data-start="{_num(t0)}" '
-                        f'data-duration="{_num(d)}" style="{geom}"><img id="mi-{o.id}" src="{files[o.asset]}" alt="">{cap}</div>')
+                        f'data-duration="{_num(d)}" style="{geom}"><img id="mi-{o.id}" src="{files[o.asset]}" alt="">{chip}{cap}</div>')
         move = {"zoom_in": '{ scale: 1.12 }', "pan_left": '{ x: -70, scale: 1.1 }', "pan_right": '{ x: 70, scale: 1.1 }'}.get(o.motion)
         script.append(f'    tl.fromTo("#m-{o.id}", {{ opacity: 0 }}, {{ opacity: 1, duration: 0.25, ease: "power1.out" }}, {_num(t0)});')
         if move:
@@ -498,6 +554,47 @@ def _logo_scene(lg: Logo, src: str, start: float, dur: float, w: int, h: int) ->
     return _scene("logo", w, h, css, body, script)
 
 
+def overlay_window(ov: FrameOverlay, duration: float) -> tuple[float, float]:
+    """(start, length) of the overlay inside the clip: all of it, or the first or last ``seconds`` (never longer than the clip)."""
+    if ov.show == "always" or ov.seconds >= duration:
+        return 0.0, duration
+    return (0.0, ov.seconds) if ov.show == "first" else (duration - ov.seconds, ov.seconds)
+
+
+def _overlay_scene(ov: FrameOverlay, src: str, start: float, dur: float, w: int, h: int) -> str:
+    """The brand's PNG over the picture. ``frame``: the whole canvas (the picture covers it, keeping its shape); ``placed``: a graphic of ``size_pct`` of the width at one of nine
+    spots, inside the platform's safe areas. Pure numbers; the file is the account's own re-encoded PNG."""
+    if ov.fit == "frame":
+        css = f"""    #ovl {{ position: absolute; left: 0; top: 0; width: {w}px; height: {h}px; }}
+    #ovl img {{ display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; }}"""
+    else:
+        width = round(w * ov.size_pct / 100)
+        m = ov.margin_px
+        vert, horiz = ov.position[0], ov.position[1]                   # t|c|b and l|c|r: tl tc tr / cl cc cr / bl bc br
+        place, move = [], []
+        if vert == "t":
+            place.append(f"top:{_LOGO_TOP_SAFE + m}px")
+        elif vert == "b":
+            place.append(f"bottom:{_LOGO_BOTTOM_SAFE + m}px")
+        else:
+            place.append("top:50%")
+            move.append("translateY(-50%)")
+        if horiz == "l":
+            place.append(f"left:{m}px")
+        elif horiz == "r":
+            place.append(f"right:{m}px")
+        else:
+            place.append("left:50%")
+            move.append("translateX(-50%)")
+        v, s, tr = place[0], place[1], (f"transform:{' '.join(move)}" if move else "")
+        css = f"""    #ovl {{ position: absolute; {v}; {s}; {tr + ";" if tr else ""} width: {width}px; }}
+    #ovl img {{ display: block; width: 100%; height: auto; opacity: 0; }}"""
+    body = f'    <div id="ovl" class="clip" data-start="{_num(start)}" data-duration="{_num(dur)}"><img id="ovl-img" src="{src}" alt=""></div>'
+    script = (f'    tl.to("#ovl-img", {{ opacity: {_num(ov.opacity)}, duration: 0.2, ease: "power1.out" }}, {_num(start)});\n'
+              f'    tl.to("#ovl-img", {{ opacity: 0, duration: 0.2, ease: "power1.in" }}, {_num(max(start, start + dur - 0.2))});')
+    return _scene("pngoverlay", w, h, css, body, script)
+
+
 BANNER_TEXT = {"mr": "पूर्ण व्हिडीओ पहा:", "hi": "पूरा वीडियो देखें:"}
 
 
@@ -543,6 +640,8 @@ def _index(duration: float, w: int, h: int, lang: str, scenes: set[str], cutout:
                      f'data-layout-allow-occlusion style="z-index:3"></video>')
     if "media" in scenes:                       # above the cutout: a cutaway must hide the person too
         parts.append(host("media", 4, 5, "graphics"))
+    if "pngoverlay" in scenes:                  # over the footage and any picture, under the captions (same layer, earlier in the page, so the words stay on top)
+        parts.append(host("pngoverlay", 5, 11, "graphics"))
     if "captions" in scenes:
         parts.append(host("captions", 5, 3, "captions"))
     if "cards" in scenes:
@@ -646,7 +745,7 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
     if cover:
         texts.append(cover.text)
     for o, _, _ in overlays:
-        texts += [getattr(o, a) for a in ("text", "title", "subtitle", "caption") if hasattr(o, a)]
+        texts += [getattr(o, a) for a in ("text", "title", "subtitle", "caption", "source") if hasattr(o, a)]
     if clip.banner and clip.banner.enabled:
         texts += [banner_words(clip.banner, edl.language.primary), clip.banner.handle]      # the banner's letters need a font too
     family = fonts.effective_family(clip.captions.font_family, texts)
@@ -697,14 +796,38 @@ def compile_clip(edl: EDL, clip: Clip, project_dir: str | Path, *, media_root: s
                     shutil.copyfile(src, project / files[o.asset])
     scenes: list[str] = []
     if media:
-        (project / "compositions" / "media.html").write_text(_media_scene(media, files, stack, face, w, h, boxes, bool(clip.captions.enabled)), "utf-8")
+        (project / "compositions" / "media.html").write_text(_media_scene(media, files, stack, face, w, h, boxes, bool(clip.captions.enabled), edl.language.primary), "utf-8")
         scenes.append("media")
     if behind:
         (project / "compositions" / "behind.html").write_text(_behind_scene(behind, stack, face, w, h), "utf-8")
         scenes.append("behind")
+    ov = clip.brand_overlay if clip.brand_overlay and clip.brand_overlay.enabled else None
+    if ov:
+        asset = next((a for a in edl.assets if a.id == ov.asset), None)
+        if asset is None or not asset.uri:
+            raise EDLError(f"clip {clip.id!r}: the overlay asset {ov.asset!r} has no file")
+        suffix = Path(asset.uri).suffix.lower()
+        if suffix not in MEDIA_SUFFIXES:
+            raise EDLError(f"asset {ov.asset!r}: {suffix or 'no extension'} is not a supported overlay type")
+        (project / "assets" / "brand").mkdir(parents=True, exist_ok=True)
+        rel = f"assets/brand/overlay{suffix}"
+        if prepare:
+            shutil.copyfile(_inside(Path(asset_root) if asset_root else media_root, asset.uri), project / rel)
+        o0, od = overlay_window(ov, duration)
+        (project / "compositions" / "pngoverlay.html").write_text(_overlay_scene(ov, rel, o0, od, w, h), "utf-8")
+        scenes.append("pngoverlay")
     if groups:
+        tops: dict[int, int] = {}
+        if media and clip.captions.enabled:                 # a picture over the captions: the words move to a free band while it is up (see caption_tops)
+            blockers = []
+            for o, t0, d in media:
+                mode, box = boxes.get(o.id, ("full", None))
+                y0, y1 = (box[1], box[1] + box[3]) if box else (0, h)
+                blockers.append((t0, t0 + d, y0, y1))
+            fz = clip.layout.face_zone
+            tops = caption_tops(groups, blockers, clip.captions.top_px, h, clip.captions.size_scale, (round(fz[1] * h), round(fz[3] * h)) if fz else None)
         (project / "compositions" / "captions.html").write_text(
-            _captions_scene(clip, groups, stack, face, w, h), "utf-8")
+            _captions_scene(clip, groups, stack, face, w, h, tops), "utf-8")
         scenes.append("captions")
     if cards:
         (project / "compositions" / "cards.html").write_text(_cards_scene(cards, stack, face, w, h), "utf-8")

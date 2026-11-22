@@ -46,6 +46,47 @@ def test_a_logo_is_checked_and_replaced(store, tmp_path):
     assert store.logo_path(OWNER) is None
 
 
+def _alpha_png(path, hole):
+    """A 200x200 PNG: opaque red, with a fully clear middle when ``hole``."""
+    flt = "color=c=red@1:s=200x200,format=rgba" + (",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(between(X,40,160)*between(Y,40,160),0,255)'" if hole else "")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", flt, "-frames:v", "1", str(path)], check=True)
+    return path.read_bytes()
+
+
+def test_an_overlay_is_checked_and_a_solid_one_is_placed_not_framed(store, tmp_path):
+    d = store.put_overlay(OWNER, _alpha_png(tmp_path / "f.png", True))
+    assert d["overlay"] and d["overlay_info"]["transparent"] and d["settings"]["overlay_fit"] == "frame"
+    for bad, msg in ((b"", "empty"), (b"\xff\xd8\xff\xe0" + b"0" * 40, "PNG"), (b"<svg/>", "PNG")):
+        with pytest.raises(BrandError, match=msg):
+            store.put_overlay(OWNER, bad)
+    assert store.overlay_path(OWNER).is_file()                  # a refused upload keeps the old overlay
+    solid = store.put_overlay(OWNER, _alpha_png(tmp_path / "s.png", False))
+    assert not solid["overlay_info"]["transparent"] and solid["settings"]["overlay_fit"] == "placed"
+    with pytest.raises(BrandError, match="no transparent"):
+        store.set_settings(OWNER, {"overlay_fit": "frame"})
+    with pytest.raises(BrandError):
+        store.set_settings(OWNER, {"overlay_position": "zz"})
+    with pytest.raises(BrandError):
+        store.set_settings(OWNER, {"overlay_size_pct": 500})
+    k = store.kit(OWNER)
+    assert k.overlay and k.overlay_fit == "placed"
+    store.delete(OWNER, "overlay")
+    assert store.overlay_path(OWNER) is None and store.kit(OWNER).overlay is None
+
+
+def test_overlay_routes(tmp_path, video_bytes):  # noqa: F811
+    c, app = client(tmp_path)
+    r = c.post("/api/jobs", data={"rights": "true", "overlay": "1"}, files={"file": ("a.mp4", video_bytes, "video/mp4")})
+    assert r.status_code == 422 and "overlay" in r.json()["detail"]
+    assert c.post("/api/brand/overlay", files={"file": ("o.png", b"<svg/>", "image/png")}).status_code == 422
+    r = c.post("/api/brand/overlay", files={"file": ("o.png", _alpha_png(tmp_path / "o.png", True), "image/png")})
+    assert r.status_code == 200 and r.json()["overlay"]
+    got = c.get("/api/brand/overlay/file")
+    assert got.status_code == 200 and got.headers["content-type"] == "image/png" and got.content.startswith(b"\x89PNG")
+    assert c.delete("/api/brand/overlay").json()["overlay"] is False
+    assert c.get("/api/brand/overlay/file").status_code == 404
+
+
 def test_an_outro_is_converted_to_the_canonical_shape(store, tmp_path):
     d = store.put_outro(OWNER, mp4(tmp_path / "o.mp4", 2, audio=False, size="640x360"))
     assert d["outro"] and 1.5 < d["outro_seconds"] < 2.5

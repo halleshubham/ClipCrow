@@ -299,6 +299,7 @@ class MediaCard(_OverlayBase):
     motion: Literal["none", "zoom_in", "pan_left", "pan_right"] = "zoom_in"
     caption: str = Field(default="", max_length=80)
     crop: Optional[tuple[float, float, float, float]] = None     # the part of the picture shown, (x0, y0, x1, y1) as fractions of its width and height; None = all of it
+    source: str = Field(default="", max_length=40)               # the site or platform the picture comes from, shown as a small label when the crop left it out; "" = none
 
     @field_validator("crop")
     @classmethod
@@ -341,6 +342,23 @@ class Logo(_Model):
     shrink: float = Field(default=1.0, ge=0.3, le=1.0)           # (clips made before the logo stopped shrinking carry a value below 1; new ones never do)
     faded_opacity: Optional[float] = Field(default=None, ge=0.05, le=1.0)   # ... and the lower opacity used when no spot is clear of the face: the logo keeps its size and fades
     side_px: Optional[int] = Field(default=None, ge=0, le=300)   # ... and a narrower side margin when that was needed (None: ``margin_px``)
+
+
+OverlayPosition = Literal["tl", "tc", "tr", "cl", "cc", "cr", "bl", "bc", "br"]
+
+
+class FrameOverlay(_Model):
+    """The brand's own PNG laid over the picture (an image Asset of this EDL): a whole-frame design (a border, a bug, a frame) or a smaller graphic placed in the frame
+    (a sticker, a badge, a watermark). It sits over the footage and any pictures, under the captions and the logo."""
+    asset: SafeId
+    enabled: bool = True
+    fit: Literal["frame", "placed"] = "frame"                  # frame: stretched over the whole frame; placed: a graphic of ``size_pct`` of the width at ``position``
+    position: OverlayPosition = "br"
+    size_pct: int = Field(default=30, ge=5, le=100)            # width as a percentage of the frame width (placed only)
+    opacity: float = Field(default=1.0, ge=0.1, le=1.0)
+    margin_px: int = Field(default=40, ge=0, le=300)
+    show: Literal["always", "first", "last"] = "always"        # the whole clip, or its first / last ``seconds``
+    seconds: float = Field(default=5.0, ge=0.5, le=60.0)
 
 
 BannerPlatform = Literal["youtube", "instagram", "facebook", "tiktok", "x", "linkedin", "telegram", "whatsapp"]
@@ -406,6 +424,7 @@ class Clip(_Model):
     overlays: list[Overlay] = Field(default_factory=list, max_length=60)
     cover: Optional[Cover] = None
     logo: Optional[Logo] = None
+    brand_overlay: Optional[FrameOverlay] = None
     banner: Optional[Banner] = None
     outro: Optional[Outro] = None
     music: Optional[Music] = None
@@ -474,7 +493,7 @@ class EDL(_Model):
                 if o.kind == "media" and kinds.get(o.asset) not in ("image", "video"):
                     raise ValueError(f"clip {c.id!r}: media overlay {o.id!r} needs an image or video asset, "
                                      f"{o.asset!r} is {kinds.get(o.asset, 'not in the EDL')}")
-            for what, ref, want in (("logo", c.logo, "image"), ("outro", c.outro, "video")):
+            for what, ref, want in (("logo", c.logo, "image"), ("overlay", c.brand_overlay, "image"), ("outro", c.outro, "video")):
                 if ref is not None and kinds.get(ref.asset) != want:
                     raise ValueError(f"clip {c.id!r}: the {what} needs a {want} asset, "
                                      f"{ref.asset!r} is {kinds.get(ref.asset, 'not in the EDL')}")

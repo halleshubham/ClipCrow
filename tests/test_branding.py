@@ -122,6 +122,29 @@ def test_logo_must_be_a_picture_inside_the_asset_root(make_edl, tmp_path, gsap, 
         compile_clip(edl, edl.clips[0], tmp_path / "p", media_root=tmp_path, gsap_js=gsap, asset_root=tmp_path)
 
 
+def test_overlay_scene_sits_under_the_captions_and_follows_its_window(make_edl, tmp_path, gsap, fonts_available):
+    edl = with_assets(make_edl, {**CLIP, "brand_overlay": {"asset": "brand-logo", "fit": "placed", "position": "bc", "show": "last", "seconds": 3}})
+    (tmp_path / "brand").mkdir(exist_ok=True)
+    png(tmp_path / "brand" / "logo.png")
+    res = compile_clip(edl, edl.clips[0], tmp_path / "p", media_root=tmp_path, gsap_js=gsap, asset_root=tmp_path, prepare=False)
+    assert "pngoverlay" in res.scenes
+    html = (res.project_dir / "compositions" / "pngoverlay.html").read_text()
+    assert 'data-start="7' in html or 'data-start="7.0' in html
+    idx = (res.project_dir / "index.html").read_text()
+    assert idx.index('id="pngoverlay"') < idx.index('id="captions"') if 'id="captions"' in idx else True
+    off = with_assets(make_edl, {**CLIP, "brand_overlay": {"asset": "brand-logo", "enabled": False}})
+    assert "pngoverlay" not in compile_clip(off, off.clips[0], tmp_path / "q", media_root=tmp_path, gsap_js=gsap, asset_root=tmp_path, prepare=False).scenes
+
+
+def test_apply_brand_sets_the_overlay_or_says_there_is_none(make_edl, tmp_path):
+    kit = BrandKit(overlay=png(tmp_path / "ov.png"), overlay_fit="placed", overlay_position="tc", overlay_size_pct=40, overlay_show="first", overlay_seconds=2.5)
+    edl = apply_brand(make_edl(clips=[CLIP]), kit, BrandingChoice(overlay=True), tmp_path / "job")
+    o = edl.clips[0].brand_overlay
+    assert (o.fit, o.position, o.size_pct, o.show, o.seconds) == ("placed", "tc", 40, "first", 2.5) and (tmp_path / "job" / "brand" / "overlay.png").is_file()
+    with pytest.raises(BrandError, match="overlay"):
+        apply_brand(make_edl(clips=[CLIP]), BrandKit(), BrandingChoice(overlay=True), tmp_path / "job2")
+
+
 # --- the brand kit applied to an EDL -----------------------------------------------------------------------------
 
 def test_apply_brand_copies_files_and_sets_every_clip(make_edl, tmp_path):

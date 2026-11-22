@@ -49,7 +49,7 @@ from . import settings as opsettings
 from .ops import Limits, Snapshot, Watchdog, admin_emails, disk_snapshot, is_throwaway, job_refusal, jobs_since, RateLimiter
 from .mailer import MailQueue, Mailer, Message, Outbox, billing_mail, job_done_mail, plain_mail, sign_in_code_mail, welcome_mail
 from .billing import BillingError, Razorpay, apply_event
-from .brand import MAX_LOGO_BYTES, MAX_MUSIC_BYTES, MAX_OUTRO_BYTES, TRACK_ID, BrandStore, track_path
+from .brand import MAX_LOGO_BYTES, MAX_OVERLAY_BYTES, MAX_MUSIC_BYTES, MAX_OUTRO_BYTES, TRACK_ID, BrandStore, track_path
 from .editor import ClipEdit, clip_view, TranscriptEdit, transcript_view
 from .jobs import VIDEO_SUFFIXES, Job, JobStore, Params
 from .plans import Payg, Catalog, load_catalog
@@ -1495,7 +1495,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
                             ai_images=want_images, multi=o.get("multi") or "switch", graphics=truthy(o.get("graphics")),
                             clean=truthy(o.get("clean")), clean_pace=o.get("clean_pace") or "natural", gpu=o.get("gpu") if o.get("gpu") in ("auto", "home", "pod") else "auto", clean_take=o.get("clean_take") or "last", fresh_transcript=truthy(o.get("fresh_transcript")), whole=truthy(o.get("whole")) or no_length,           # no length asked for: the whole video is one reel
                            
-                            cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), banner=truthy(o.get("banner")), outro=truthy(o.get("outro")), sounds=truthy(o.get("sounds")), music=truthy(o.get("music")), transition=o.get("transition") or "none")
+                            cover=truthy(o.get("cover")), logo=truthy(o.get("logo")), overlay=truthy(o.get("overlay")), banner=truthy(o.get("banner")), outro=truthy(o.get("outro")), sounds=truthy(o.get("sounds")), music=truthy(o.get("music")), transition=o.get("transition") or "none")
         except (ValidationError, ValueError, TypeError) as e:
             raise HTTPException(422, f"Check the options: {str(e).splitlines()[0][:160]}")
         if params.min_clip >= params.max_clip:
@@ -1519,6 +1519,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         params.brand = bid                                      # fixed now: changing the default brand later never moves this job
         if params.logo and brands.logo_path(owner, bid) is None:
             raise HTTPException(422, "Upload a logo for this brand on the Brand page first, or turn the logo off.")
+        if params.overlay and brands.overlay_path(owner, bid) is None:
+            raise HTTPException(422, "Upload an overlay PNG for this brand on the Brand page first, or turn the overlay off.")
         if params.banner and not brands.settings(owner, bid).get("banner_handle"):
             raise HTTPException(422, "Write the channel name for the banner on the Brand page first, or turn the banner off.")
         if params.music and brands.music_path(owner, bid) is None:
@@ -1706,7 +1708,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
                          clean: Optional[str] = Form(None), clean_pace: Optional[str] = Form(None), gpu: Optional[str] = Form(None), clean_take: Optional[str] = Form(None), fresh_transcript: Optional[str] = Form(None), whole: Optional[str] = Form(None), immersive: Optional[str] = Form(None),
                          explainer: Optional[str] = Form(None), links: Optional[str] = Form(None), pictures_ids: Optional[str] = Form(None, alias="pictures"),
                          ai_images: Optional[str] = Form(None), cover: Optional[str] = Form(None),
-                         logo: Optional[str] = Form(None), banner: Optional[str] = Form(None), outro: Optional[str] = Form(None), sounds: Optional[str] = Form(None), music: Optional[str] = Form(None), transition: Optional[str] = Form(None),
+                         logo: Optional[str] = Form(None), overlay: Optional[str] = Form(None), banner: Optional[str] = Form(None), outro: Optional[str] = Form(None), sounds: Optional[str] = Form(None), music: Optional[str] = Form(None), transition: Optional[str] = Form(None),
                          style: Optional[str] = Form(None), brand: Optional[str] = Form(None)) -> dict:
         if rights.lower() not in ("1", "true", "on", "yes"):
             raise HTTPException(400, "Confirm that you own this video or have the rights to process it.")
@@ -1715,7 +1717,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
             raise HTTPException(413, f"That file is larger than the {max_upload_mb} MB limit.")
         params = build_params(dict(language=language, clips=clips, min_clip=min_clip, max_clip=max_clip, spread=spread,
                                    speaker_name=speaker_name, speaker_title=speaker_title, cutout=cutout, multi=multi, graphics=graphics, clean=clean, clean_pace=clean_pace, gpu=gpu, clean_take=clean_take, fresh_transcript=fresh_transcript, whole=whole,
-                                   immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, banner=banner, outro=outro, sounds=sounds, music=music, transition=transition,
+                                   immersive=immersive, explainer=explainer, links=links, pictures=pictures_ids, ai_images=ai_images, cover=cover, logo=logo, overlay=overlay, banner=banner, outro=outro, sounds=sounds, music=music, transition=transition,
                                    style=style, brand=brand),
                               brand_owner(request))
         suffix = Path(file.filename or "").suffix.lower()
@@ -2258,6 +2260,14 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         except BrandError as e:
             raise HTTPException(422, str(e))
 
+    @app.post("/api/brand/overlay", dependencies=[Depends(authed)])
+    async def brand_overlay(request: Request, file: UploadFile = File(...)) -> dict:
+        data = await file.read(MAX_OVERLAY_BYTES + 1)
+        try:
+            return await asyncio.to_thread(brands.put_overlay, brand_owner(request), data, brand_q(request))
+        except BrandError as e:
+            raise HTTPException(422, str(e))
+
     @app.post("/api/brand/outro", dependencies=[Depends(authed)])
     async def brand_outro(request: Request, file: UploadFile = File(...)) -> dict:
         owner = brand_owner(request)
@@ -2334,6 +2344,13 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
             raise HTTPException(404, "No logo yet.")
         return FileResponse(path, media_type={".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}[path.suffix],
                             headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/brand/overlay/file", dependencies=[Depends(authed)])
+    def brand_overlay_file(request: Request):
+        path = brands.overlay_path(brand_owner(request), brand_q(request))
+        if path is None:
+            raise HTTPException(404, "No overlay yet.")
+        return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/brand/outro/file", dependencies=[Depends(authed)])
     def brand_outro_file(request: Request):
