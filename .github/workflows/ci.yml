@@ -42,7 +42,7 @@ jobs:
         env:
           CLIPCROW_TEST_DATABASE_URL: postgresql://postgres:ci@127.0.0.1:5432/clipcrow_test
       # and the service and account tests once more with the jobs, brands, styles, schedule and settings records in PostgreSQL (CLIPCROW_STORE=db)
-      - run: pytest -q tests/test_service.py tests/test_accounts.py tests/test_brand_service.py tests/test_styles.py tests/test_schedule.py tests/test_cleancut.py tests/test_storage_cleanup.py
+      - run: pytest -q tests/test_service.py tests/test_accounts.py tests/test_brand_service.py tests/test_styles.py tests/test_schedule.py tests/test_cleancut.py tests/test_storage_cleanup.py tests/test_settings.py tests/test_asr_cache.py tests/test_job_modes.py tests/test_store_modes.py
         env:
           CLIPCROW_TEST_DATABASE_URL: postgresql://postgres:ci@127.0.0.1:5432/clipcrow_test
           CLIPCROW_STORE: db

@@ -99,8 +99,11 @@ def test_a_change_is_applied_at_once_and_saved_and_survives_a_restart(tmp_path, 
     assert [t["bonus_percent"] for t in g["tiers"]][0] == 3
     row = next(s for s in r.json()["settings"] if s["key"] == "price_per_minute")
     assert row["value"] == 7.5 and row["default"] == 8.0 and row["source"] == "operator"
-    assert json.loads((tmp_path / "data" / "settings.json").read_text())["values"]["price_per_minute"] == 7.5
-    assert oct((tmp_path / "data" / "settings.json").stat().st_mode & 0o777) == "0o600"
+    if os.environ.get("CLIPCROW_STORE", "files") != "db":                                                          # the file is the record unless the database holds it
+        assert json.loads((tmp_path / "data" / "settings.json").read_text())["values"]["price_per_minute"] == 7.5
+        assert oct((tmp_path / "data" / "settings.json").stat().st_mode & 0o777) == "0o600"
+    if os.environ.get("CLIPCROW_STORE", "files") == "db" and os.environ.get("CLIPCROW_TEST_DATABASE_URL"):
+        return                              # the test database gives every Accounts its own private schema, so a "restart" would start empty (a real server keeps its database)
     boss2, user2, app2, _ = make(tmp_path, monkeypatch)                                                          # a new server on the same data folder
     assert user2.get("/api/pricing").json()["payg"]["price_per_minute"] == 7.5
 
@@ -192,6 +195,7 @@ def test_changes_are_kept_in_a_short_history_with_who_and_what(tmp_path, monkeyp
 
 
 def test_a_damaged_settings_file_cannot_put_a_bad_value_in(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLIPCROW_STORE_SETTINGS", "files")                                                         # this is about a hand-edited FILE
     (tmp_path / "data").mkdir(parents=True)
     (tmp_path / "data" / "settings.json").write_text(json.dumps({"values": {"price_per_minute": -5, "min_job_minutes": 4, "unknown": 1}}))
     boss, user, _, _ = make(tmp_path, monkeypatch)

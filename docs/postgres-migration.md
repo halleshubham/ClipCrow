@@ -1,6 +1,29 @@
 # Plan: everything structured in PostgreSQL
 
-Status: PLAN, nothing built. Written 2026-11-22. Decisions needed are at the end.
+Status: BUILT, off by default (2026-11-22). Every store keeps working from files until a switch is flipped, so deploying the code changes nothing. The plan below was
+followed with these differences, decided while building: records are stored as JSON TEXT (not `jsonb`: nothing queries inside them, and TEXT is identical on SQLite and
+PostgreSQL); the EDL stays a FILE next to the job (the renderer and the GPU workers read it from disk, so a database copy would be a second source of truth); jobs get their
+own `jobs` table with indexed columns, everything else uses one `docs(kind, owner, key, doc, version)` table. The answers to the six questions at the end were taken as
+the recommended ones (SQLite stays for development and tests; transcripts stay as files; a short restart for the cutover; backups are the operator's to set up).
+
+## Running it: the cutover, one store at a time
+
+The switch is `CLIPCROW_STORE_<NAME>` for `jobs`, `uploads`, `brand`, `style`, `schedule`, `settings` (or `CLIPCROW_STORE` for all of them): `files` (default), `both`
+(written to the files AND the database, read from the files) or `db` (the database only; the files stay untouched). It needs the accounts database (`DATABASE_URL`); a
+single-user install without accounts always uses files.
+
+1. Deploy the code and confirm `DATABASE_URL` is set (accounts already use it).
+2. Set `CLIPCROW_STORE=both` and redeploy. From now on every write goes to both places, and reads still come from the files, so nothing can be lost.
+3. In the service's terminal: `clipcrow migrate-stores --data /data` copies what was written before step 2 (read-only on the files, safe to run twice), then
+   `clipcrow migrate-stores --data /data --verify` must print `different 0, only in files 0, only in the database 0` (a job that is running at that instant may differ once;
+   run it again). The report has counts and names only.
+4. Set `CLIPCROW_STORE=db` and redeploy when no job is running. The files are not deleted. Going back is setting `both` (or `files`) again: run `migrate-stores`
+   first only if you want what was written in `db` mode copied back to the files (it copies files to the database, not the other way, so for a rollback after real use
+   keep `both` for a while instead of going straight back).
+5. Keep the files for at least a retention period, then remove the old records by hand once a backup restore has been tried.
+
+Do it one store at a time if you prefer (`CLIPCROW_STORE_STYLE=both` first): they are independent. Jobs are the one to watch; do them last.
+
 
 ## Where the data is today
 

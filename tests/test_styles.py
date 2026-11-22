@@ -292,10 +292,13 @@ def test_erasing_an_account_removes_its_styles(tmp_path, ref_bytes):
     signup(c, "a@example.com")
     sid = make_style(c, ref_bytes)["id"]
     wait_style(c, sid)
-    assert list((tmp_path / "data" / "styles").glob("*/*.json"))
+    def stored() -> int:                                              # the records wherever they live: files, the database, or both
+        n = len(list((tmp_path / "data" / "styles").glob("*/*.json")))
+        return n + accounts.db.q("SELECT COUNT(*) AS n FROM docs WHERE kind='style'").fetchone()["n"]
+    assert stored()
     r = c.request("DELETE", "/api/account", json={"email": "a@example.com"})
     assert r.status_code == 200, r.text
-    assert not list((tmp_path / "data" / "styles").glob("*/*.json"))
+    assert not stored()
 
 
 def test_restart_marks_an_interrupted_measuring_as_failed(tmp_path):
