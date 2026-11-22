@@ -346,10 +346,8 @@ def test_an_account_with_a_running_job_cannot_be_deleted_yet(tmp_path, video_byt
 # --- retention -----------------------------------------------------------------------------------------------------------
 
 def age(app, job_id, days):
-    p = app.state.store.dir(job_id) / "job.json"
-    d = json.loads(p.read_text())
-    d["created_at"] = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="milliseconds")
-    p.write_text(json.dumps(d))
+    stamp = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="milliseconds")
+    app.state.store.update(job_id, lambda j: setattr(j, "created_at", stamp))
 
 
 def test_old_originals_go_first_then_the_whole_job(tmp_path, video_bytes):

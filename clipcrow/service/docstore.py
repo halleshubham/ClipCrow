@@ -14,7 +14,9 @@ Only a server with accounts has a database to share; a single-user install stays
 from __future__ import annotations
 
 import os
+import random
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
@@ -95,9 +97,11 @@ class DocStore:
     def count(self, kind: str) -> int:
         return int(self.db.q("SELECT COUNT(*) AS n FROM docs WHERE kind=?", (kind,)).fetchone()["n"])
 
-    def update(self, kind: str, owner: str, key: str, fn, *, retries: int = 8) -> str:
+    def update(self, kind: str, owner: str, key: str, fn, *, retries: int = 60) -> str:
         """Read-modify-write without a process lock: ``fn(old_text_or_None) -> new_text``, retried when someone else wrote in between."""
-        for _ in range(retries):
+        for attempt in range(retries):
+            if attempt:
+                time.sleep(random.random() * min(0.002 * attempt, 0.05))      # writers that just collided do not collide again in step
             got = self.get(kind, owner, key)
             new = fn(got[0] if got else None)
             try:

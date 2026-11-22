@@ -38,9 +38,14 @@ jobs:
       - run: pip install -e '.[dev,llm,vision,service,storage,asr]'
       - run: pytest -q
       # the tests that touch accounts, money, settings, posting and the database layer, again with every Accounts in PostgreSQL
-      - run: pytest -q tests/test_accounts.py tests/test_billing.py tests/test_payg.py tests/test_ops.py tests/test_settings.py tests/test_sample.py tests/test_sociobird_user.py tests/test_publish.py tests/test_db.py
+      - run: pytest -q tests/test_accounts.py tests/test_billing.py tests/test_payg.py tests/test_ops.py tests/test_settings.py tests/test_sample.py tests/test_sociobird_user.py tests/test_publish.py tests/test_db.py tests/test_docstore.py tests/test_store_modes.py tests/test_job_modes.py
         env:
           CLIPCROW_TEST_DATABASE_URL: postgresql://postgres:ci@127.0.0.1:5432/clipcrow_test
+      # and the service and account tests once more with the jobs, brands, styles, schedule and settings records in PostgreSQL (CLIPCROW_STORE=db)
+      - run: pytest -q tests/test_service.py tests/test_accounts.py tests/test_brand_service.py tests/test_styles.py tests/test_schedule.py tests/test_cleancut.py tests/test_storage_cleanup.py
+        env:
+          CLIPCROW_TEST_DATABASE_URL: postgresql://postgres:ci@127.0.0.1:5432/clipcrow_test
+          CLIPCROW_STORE: db
 
   render:
     timeout-minutes: 30

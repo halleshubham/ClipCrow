@@ -82,7 +82,7 @@ def test_the_runner_fingerprints_the_upload(tmp_path, video_bytes):
     from tests.test_service import FakePipeline, client, upload, wait
     c, app = client(tmp_path, FakePipeline())
     done = wait(c, upload(c, video_bytes).json()["id"])
-    saved = json.loads((tmp_path / "data" / "jobs" / done["id"] / "job.json").read_text(encoding="utf-8"))
+    saved = json.loads(app.state.store.get(done["id"]).model_dump_json())
     src = next((tmp_path / "data" / "jobs" / done["id"]).glob("source.*"))
     assert saved["source_sha"] == file_sha256(src)
 

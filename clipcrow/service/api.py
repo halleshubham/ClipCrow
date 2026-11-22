@@ -285,7 +285,11 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
                sociobird_oauth_exchange: Callable[[str], str] | None = None) -> FastAPI:
     """``accounts``: multi-user mode (sign-up by emailed code, per-user jobs, minutes metered against the plan). Without it the app is open and single-user: only for
     this machine (the CLI refuses a public address without accounts). There is no password and no shared token: the emailed code is the only way in."""
-    store = JobStore(data_dir)
+    docs = DocStore(accounts.db) if accounts else None                      # records that can live in the database (CLIPCROW_STORE_<NAME>); only a server with accounts has one
+    modes = {n: store_mode(n, has_db=docs is not None) for n in ('jobs', 'uploads', 'brand', 'style', 'schedule', 'settings')}
+    if any(m != 'files' for m in modes.values()):
+        log.info('record stores: %s', ', '.join(f'{k}={v}' for k, v in modes.items()))
+    store = JobStore(data_dir, docs, modes['jobs'])
     catalog = catalog or load_catalog()
     runner = JobRunner(store, pipeline)
 
@@ -314,12 +318,8 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
     direct = bool(storage) and os.environ.get("CLIPCROW_DIRECT_UPLOAD", "1") != "0"
     if direct:                                              # the browser PUTs file parts straight to the bucket
         csp = csp.replace("connect-src 'self'", f"connect-src 'self' {storage.origin}")
-    uploads = UploadStore(data_dir) if direct else None
+    uploads = UploadStore(data_dir, docs, modes['uploads']) if direct else None
     runner.storage = storage
-    docs = DocStore(accounts.db) if accounts else None                      # records that can live in the database (CLIPCROW_STORE_<NAME>); only a server with accounts has one
-    modes = {n: store_mode(n, has_db=docs is not None) for n in ('brand', 'style', 'schedule', 'settings')}
-    if any(m != 'files' for m in modes.values()):
-        log.info('record stores: %s', ', '.join(f'{k}={v}' for k, v in modes.items()))
     brands = BrandStore(data_dir, docs, modes['brand'])
     pictures = PictureStore(data_dir)
     runner.brands = brands
@@ -332,7 +332,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
                     storage=storage if os.environ.get("CLIPCROW_WORKER_DIRECT", "1") != "0" else None,
                     rate_for=lambda name: rate_lookup(load_rates())(name),                    # read again each time, so a rate changed on the Operator page applies at once
                     on_task_end=lambda r: store.add_gpu_usage(r["job"], {k: r[k] for k in ("kind", "worker", "seconds", "ok", "rate")} | {"at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
-                    if (store.dir(r["job"]) / "job.json").is_file() else None) if worker_token else None
+                    if store.exists(r["job"]) else None) if worker_token else None
     pod = None
     if hub is not None:
         from .gpu_pod import from_env as pod_from_env

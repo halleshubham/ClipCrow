@@ -145,3 +145,19 @@ def test_the_app_works_the_same_in_every_mode(tmp_path, monkeypatch, mode):
     assert c.get("/api/styles").json() == []
     docs = accounts.db.q("SELECT COUNT(*) AS n FROM docs").fetchone()["n"]
     assert (docs > 0) == (mode != "files")
+
+
+def test_direct_upload_records_in_every_mode(kit):
+    from clipcrow.service.uploads import UploadStore, new_upload
+    mode, tmp, docs = kit
+    st = UploadStore(tmp, docs, mode)
+    u = new_upload(st, id=st.new_id(), owner=OWNER, filename="ep12.mp4", suffix=".mp4", size=10, part_size=5, parts=2, s3_upload_id="abc")
+    st.save(u)
+    assert st.get(u.id).filename == "ep12.mp4" and st.open_for(OWNER) == 1 and st.open_for(OTHER) == 0 and [x.id for x in st.list()] == [u.id]
+    assert [x.id for x in st.expired(hours=0)] == [u.id] and st.expired(hours=24) == []
+    again = UploadStore(tmp, docs, mode)                                     # a restart
+    assert again.get(u.id).s3_upload_id == "abc"
+    st.delete(u.id)
+    with pytest.raises(KeyError):
+        st.get(u.id)
+    st.delete("zzzzzzzzzzzz")                                                # not an id: ignored, as before

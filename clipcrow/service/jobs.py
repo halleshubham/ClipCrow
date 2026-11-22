@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import shutil
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,6 +24,8 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..styles import StyleSettings
+from .docstore import Conflict
+from .jobrows import JobRows
 
 JOB_ID = re.compile(r"^[a-f0-9]{12}\Z")          # \Z, not $: "$" also matches before a trailing newline
 CLIP_ID = re.compile(r"^c\d{1,3}\Z")
@@ -151,11 +155,15 @@ class Brief:
 
 
 class JobStore:
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, docs=None, mode: str = "files"):
+        """``docs``/``mode``: where the job RECORDS live (``docstore``): the files (default), both (the files are read), or the database only. The job's working files
+        (the video, clips, EDL, transcripts) are always files in the job's folder; only ``job.json``, ``posts.json`` and ``gpu_usage.json`` move."""
         self.root = Path(root) / "jobs"
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._briefs: dict[str, tuple] = {}
+        self.docs, self.mode = (docs, mode) if docs is not None else (None, "files")
+        self.rows = JobRows(docs.db) if self.mode != "files" else None
 
     def dir(self, job_id: str) -> Path:
         if not JOB_ID.match(job_id):
@@ -173,65 +181,127 @@ class JobStore:
     def save(self, job: Job) -> None:
         path = self.dir(job.id) / "job.json"
         tmp = path.with_suffix(".tmp")
+        text = job.model_dump_json(indent=1)
         with self._lock:
-            tmp.write_text(job.model_dump_json(indent=1), encoding="utf-8")
-            os.replace(tmp, path)
+            if self.mode != "db":
+                tmp.write_text(text, encoding="utf-8")
+                os.replace(tmp, path)
+            if self.mode != "files":
+                self.rows.put(job.id, job.owner, job.status, job.created_at, text)
             self._briefs.pop(job.id, None)                  # a rewrite inside one clock tick with the same size must not look unchanged
+
+    def exists(self, job_id: str) -> bool:
+        if self.mode == "db":
+            return JOB_ID.match(job_id) is not None and self.rows.exists(job_id)
+        return (self.dir(job_id) / "job.json").is_file()
 
     def get(self, job_id: str) -> Job:
         try:
+            if self.mode == "db":
+                self.dir(job_id)                                    # validates the id
+                got = self.rows.get(job_id)
+                if got is None:
+                    raise KeyError(job_id)
+                return Job.model_validate_json(got[0])
             return Job.model_validate(json.loads((self.dir(job_id) / "job.json").read_text(encoding="utf-8")))
         except (OSError, ValueError, KeyError) as e:
             raise KeyError(job_id) from e
 
     def update(self, job_id: str, fn) -> Job:
-        """Load, change and save a job as one step (so two threads never overwrite each other's change)."""
+        """Load, change and save a job as one step, so two writers never overwrite each other's change: under a process lock for the files, and by a version check
+        for the database (a job changed in between is loaded again and ``fn`` is applied to it again, so ``fn`` must only change the job it is given)."""
+        if self.mode == "db":
+            self.dir(job_id)
+            for attempt in range(60):
+                if attempt:
+                    time.sleep(random.random() * min(0.002 * attempt, 0.05))      # writers that just collided do not collide again in step
+                got = self.rows.get(job_id)
+                if got is None:
+                    raise KeyError(job_id)
+                job = Job.model_validate_json(got[0])
+                fn(job)
+                try:
+                    self.rows.put(job.id, job.owner, job.status, job.created_at, job.model_dump_json(indent=1), expect_version=got[1])
+                except Conflict:
+                    continue
+                self._briefs.pop(job.id, None)
+                return job
+            raise Conflict(f"job {job_id} is being changed too often")
         with self._lock:
             job = self.get(job_id)
             fn(job)
             self.save(job)
             return job
 
-    # posts to social channels: <job>/out/posts.json, a list of {id, clip, channel, name, platform, status, detail, when, at}
-    def posts(self, job_id: str, clip_id: str | None = None) -> list[dict]:
+    # A job's two small lists live in ``out/<name>.json`` (files, both) or as database records (db, both); db and both write the same text.
+    def _list_read(self, job_id: str, name: str, kind: str) -> list:
         try:
-            rows = json.loads((self.dir(job_id) / "out" / "posts.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            rows = []
-        return [r for r in rows if clip_id is None or r.get("clip") == clip_id]
-
-    def add_posts(self, job_id: str, rows: list[dict]) -> None:
-        with self._lock:
-            path = self.dir(job_id) / "out" / "posts.json"
-            path.write_text(json.dumps(self.posts(job_id) + rows, ensure_ascii=False), encoding="utf-8")
-
-    def update_post(self, job_id: str, post_id: str, status: str, detail: str = "") -> None:
-        with self._lock:
-            rows = self.posts(job_id)
-            for r in rows:
-                if r["id"] == post_id:
-                    r["status"], r["detail"] = status, detail[:300]
-            (self.dir(job_id) / "out" / "posts.json").write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
-
-    # GPU time of a job: <job>/out/gpu_usage.json, a list of {kind, worker, seconds, ok, rate (INR an hour), at}
-    def gpu_usage(self, job_id: str) -> list[dict]:
-        try:
-            rows = json.loads((self.dir(job_id) / "out" / "gpu_usage.json").read_text(encoding="utf-8"))
+            if self.mode == "db":
+                self.dir(job_id)
+                text = self.docs.text(kind, "", job_id)
+            else:
+                text = (self.dir(job_id) / "out" / f"{name}.json").read_text(encoding="utf-8")
+            rows = json.loads(text) if text else []
         except (OSError, ValueError):
             return []
         return rows if isinstance(rows, list) else []
 
-    def add_gpu_usage(self, job_id: str, row: dict) -> None:
+    def _list_change(self, job_id: str, name: str, kind: str, change) -> list:
+        """Read the list, ``change(rows) -> rows``, write it back: under the process lock for the files, by a version check for the database."""
+        if self.mode == "db":
+            self.dir(job_id)
+            out: list = []
+
+            def fn(old):
+                rows = json.loads(old) if old else []
+                out[:] = change(rows if isinstance(rows, list) else [])
+                return json.dumps(out, ensure_ascii=False)
+            self.docs.update(kind, "", job_id, fn)
+            return out
         with self._lock:
-            path = self.dir(job_id) / "out" / "gpu_usage.json"
+            rows = change(self._list_read(job_id, name, kind))
+            text = json.dumps(rows, ensure_ascii=False)
+            path = self.dir(job_id) / "out" / f"{name}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(self.gpu_usage(job_id) + [row], ensure_ascii=False), encoding="utf-8")
+            path.write_text(text, encoding="utf-8")
+            if self.mode == "both":
+                self.docs.put(kind, "", job_id, text)
+            return rows
+
+    # posts to social channels: a list of {id, clip, channel, name, platform, status, detail, when, at}
+    def posts(self, job_id: str, clip_id: str | None = None) -> list[dict]:
+        return [r for r in self._list_read(job_id, "posts", "job_posts") if clip_id is None or r.get("clip") == clip_id]
+
+    def add_posts(self, job_id: str, rows: list[dict]) -> None:
+        self._list_change(job_id, "posts", "job_posts", lambda cur: cur + rows)
+
+    def update_post(self, job_id: str, post_id: str, status: str, detail: str = "") -> None:
+        def change(cur):
+            for r in cur:
+                if r["id"] == post_id:
+                    r["status"], r["detail"] = status, detail[:300]
+            return cur
+        self._list_change(job_id, "posts", "job_posts", change)
+
+    # GPU time of a job, a list of {kind, worker, seconds, ok, rate (INR an hour), at}
+    def gpu_usage(self, job_id: str) -> list[dict]:
+        return self._list_read(job_id, "gpu_usage", "job_gpu")
+
+    def add_gpu_usage(self, job_id: str, row: dict) -> None:
+        self._list_change(job_id, "gpu_usage", "job_gpu", lambda cur: cur + [row])
 
     def edl_path(self, job_id: str) -> Path:
         return self.dir(job_id) / "out" / "edl.json"
 
     def list(self) -> list[Job]:
         jobs = []
+        if self.mode == "db":
+            for text in self.rows.texts():
+                try:
+                    jobs.append(Job.model_validate_json(text))
+                except ValueError:
+                    continue
+            return sorted(jobs, key=lambda j: j.created_at, reverse=True)
         for d in self.root.iterdir():
             try:
                 jobs.append(self.get(d.name))
@@ -242,6 +312,8 @@ class JobStore:
     def briefs(self) -> list["Brief"]:
         """Owner, status and date of every job, newest first: for the checks that run on every request (limits, queue position). A job file is read again only when it
         changed (size or modification time), so with thousands of jobs this costs one ``stat`` each instead of parsing every file."""
+        if self.mode == "db":                                # one query, nothing parsed
+            return [Brief(i, o, st, c) for i, o, st, c in self.rows.briefs()]
         out, seen = [], set()
         with self._lock:
             for d in self.root.iterdir():
@@ -267,6 +339,11 @@ class JobStore:
 
     def delete(self, job_id: str) -> None:
         shutil.rmtree(self.dir(job_id), ignore_errors=True)
+        if self.mode != "files":
+            self.rows.delete(job_id)
+            self.docs.delete("job_posts", "", job_id)
+            self.docs.delete("job_gpu", "", job_id)
+        self._briefs.pop(job_id, None)
 
     def source_path(self, job_id: str) -> Optional[Path]:
         return next(iter(sorted(self.dir(job_id).glob("source.*"))), None)

@@ -39,10 +39,12 @@ class Upload(BaseModel):
 
 
 class UploadStore:
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, docs=None, mode: str = "files"):
+        """``docs``/``mode``: where the records live (see ``docstore``): the files (default), both (the files are read), or the database only."""
         self.root = Path(root) / "uploads"
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self.docs, self.mode = (docs, mode) if docs is not None else (None, "files")
 
     def _path(self, upload_id: str) -> Path:
         if not JOB_ID.match(upload_id):
@@ -54,28 +56,46 @@ class UploadStore:
         return uuid.uuid4().hex[:12]
 
     def save(self, u: Upload) -> None:
+        text = u.model_dump_json()
         with self._lock:
-            tmp = self._path(u.id).with_suffix(".tmp")
-            tmp.write_text(u.model_dump_json(), encoding="utf-8")
-            os.replace(tmp, self._path(u.id))
+            if self.mode != "db":
+                tmp = self._path(u.id).with_suffix(".tmp")
+                tmp.write_text(text, encoding="utf-8")
+                os.replace(tmp, self._path(u.id))
+            else:
+                self._path(u.id)                                     # validates the id
+            if self.mode != "files":
+                self.docs.put("upload", "", u.id, text)
 
     def get(self, upload_id: str) -> Upload:
         try:
+            if self.mode == "db":
+                self._path(upload_id)
+                text = self.docs.text("upload", "", upload_id)
+                if text is None:
+                    raise KeyError(upload_id)
+                return Upload.model_validate_json(text)
             return Upload.model_validate(json.loads(self._path(upload_id).read_text(encoding="utf-8")))
         except (OSError, ValueError, KeyError) as e:
             raise KeyError(upload_id) from e
 
     def delete(self, upload_id: str) -> None:
         try:
-            self._path(upload_id).unlink(missing_ok=True)
+            if self.mode != "db":
+                self._path(upload_id).unlink(missing_ok=True)
+            else:
+                self._path(upload_id)
+            if self.mode != "files":
+                self.docs.delete("upload", "", upload_id)
         except KeyError:
             pass
 
     def list(self) -> list[Upload]:
         out = []
-        for p in self.root.glob("*.json"):
+        ids = [k for k, _ in self.docs.items("upload", "")] if self.mode == "db" else [p.stem for p in self.root.glob("*.json")]
+        for i in ids:
             try:
-                out.append(self.get(p.stem))
+                out.append(self.get(i))
             except KeyError:
                 continue
         return out

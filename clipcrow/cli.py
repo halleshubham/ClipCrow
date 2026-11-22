@@ -199,13 +199,15 @@ def main(argv: list[str] | None = None) -> int:
             url = os.environ.get("DATABASE_URL", "").strip()
             target = Accounts(url or Path(a.data) / "clipcrow.db", secret_file=Path(a.data) / "clipcrow.secret")      # the same database the accounts use
             docs = DocStore(target.db)
+            from .service.jobrows import JobRows
+            rows = JobRows(target.db)
             if a.verify:
-                rep = storemigrate.verify(a.data, docs)
+                rep = storemigrate.verify(a.data, docs, rows)
                 print(f"files {rep['files']}, same {rep['same']}, different {len(rep['different'])}, only in files {len(rep['only_in_files'])}, only in the database {len(rep['only_in_db'])}")
                 for name in rep["different"][:20] + rep["only_in_files"][:20] + rep["only_in_db"][:20]:
                     print("  -", name)
                 return 0 if not (rep["different"] or rep["only_in_files"] or rep["only_in_db"]) else 1
-            rep = storemigrate.migrate(a.data, docs)
+            rep = storemigrate.migrate(a.data, docs, rows)
             print("copied:", ", ".join(f"{k} {v}" for k, v in rep.items()))
             print(f"target: {target.describe()}. Check with: clipcrow migrate-stores --verify")
             return 0

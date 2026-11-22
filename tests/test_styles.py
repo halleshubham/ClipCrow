@@ -234,31 +234,31 @@ def edl_of(tmp_path, job_id):
 
 
 def test_a_job_uses_the_style_and_keeps_its_own_copy(tmp_path, ref_bytes, video_bytes):
-    c, _ = client(tmp_path, WordyPipeline())
+    c, app = client(tmp_path, WordyPipeline())
     sid = make_style(c, ref_bytes)["id"]
     s = wait_style(c, sid)
     r = c.post("/api/jobs", data={"rights": "true", "style": sid, "clips": "2"}, files={"file": ("ep.mp4", video_bytes, "video/mp4")})
     assert r.status_code == 201, r.text
     job_id = r.json()["id"]
     assert wait(c, job_id)["status"] == "done"
-    job = json.loads((tmp_path / "data" / "jobs" / job_id / "job.json").read_text("utf-8"))
+    job = json.loads(app.state.store.get(job_id).model_dump_json())
     assert job["params"]["style_name"] == "Fast reel" and job["params"]["style"]["caption_max_words"] == 5
     assert (job["params"]["min_clip"], job["params"]["max_clip"]) == (s["settings"]["min_clip"], s["settings"]["max_clip"])
     caps = [cl["captions"] for cl in edl_of(tmp_path, job_id)["clips"]]
     assert caps and all(x["max_words"] == 5 and x["pause_break"] == pytest.approx(0.15) for x in caps)
     c.put(f"/api/styles/{sid}", json={"settings": {"caption_max_words": 2}})            # editing later changes nothing already made
     c.delete(f"/api/styles/{sid}")
-    job = json.loads((tmp_path / "data" / "jobs" / job_id / "job.json").read_text("utf-8"))
+    job = json.loads(app.state.store.get(job_id).model_dump_json())
     assert job["params"]["style"]["caption_max_words"] == 5
 
 
 def test_an_explicit_clip_length_beats_the_style_and_a_missing_style_is_refused(tmp_path, ref_bytes, video_bytes):
-    c, _ = client(tmp_path, WordyPipeline())
+    c, app = client(tmp_path, WordyPipeline())
     sid = make_style(c, ref_bytes)["id"]
     wait_style(c, sid)
     r = c.post("/api/jobs", data={"rights": "true", "style": sid, "min_clip": "20", "max_clip": "50"},
                files={"file": ("ep.mp4", video_bytes, "video/mp4")})
-    job = json.loads((tmp_path / "data" / "jobs" / r.json()["id"] / "job.json").read_text("utf-8"))
+    job = json.loads(app.state.store.get(r.json()["id"]).model_dump_json())
     assert (job["params"]["min_clip"], job["params"]["max_clip"]) == (20, 50) and job["params"]["style"] is not None
     nope = c.post("/api/jobs", data={"rights": "true", "style": "0" * 12}, files={"file": ("ep.mp4", video_bytes, "video/mp4")})
     assert nope.status_code == 422 and "does not exist" in nope.json()["detail"]
