@@ -232,3 +232,9 @@ Operator, **Storage**: the server disk, what jobs use on it (originals, clips, o
 A superadmin can **remove the local clip files** that are safe (each is checked with R2 first: the object must exist with the same size; the clips stay playable from R2),
 **upload missing copies to R2 now**, and **give old jobs that have no owner to their own account and keep them** (a job that belongs to an account is otherwise expired by its plan's
 retention, 30 days on the free plan). Originals (`source.*`, `clean.mp4`) are never removed by the cleanup: they are what re-rendering and editing need; they follow `source_days`.
+
+### Viewing as another account (superadmin)
+Operator, People, **View as**: see an account exactly as its owner does, to judge the quality of their jobs. **Silent** for them (no mail, nothing shown, their own sessions are untouched).
+**Read-only** for you: every change (upload, delete, retry, settings, account delete) answers 403, and the social connection and posting pages are blocked, so nothing is spent or posted as them.
+It lasts an hour, ends at sign-out or when either account is deleted, and cannot be used on yourself or another superadmin. A red bar shows who you are viewing, with **Stop viewing**.
+Every start and stop is written to the **Staff access log** (Operator page, superadmin only). The privacy page tells people that operators may look at accounts read-only for support and quality.

@@ -148,6 +148,10 @@ class ClaimJobs(BaseModel):
     email: str = Field(max_length=254)                           # the account that receives every job that has no owner
 
 
+class ViewAs(BaseModel):
+    user_id: str = Field(pattern=r"^[a-f0-9]{32}$")        # the Rust regex engine: $ does not match before a trailing newline
+
+
 class AdminPlan(BaseModel):
     plan: str
 
@@ -383,11 +387,24 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
             return catalog.plan("free")
         return plan
 
+    VIEW_ONLY_BLOCKED = ("/api/sociobird", "/api/publish")          # a viewed account's social connection is never touched, not even to read
+
     def authed(request: Request) -> Optional[User]:
         if accounts:
-            user = accounts.user_for_session(request.cookies.get(SESSION_COOKIE, ""))
+            tok = request.cookies.get(SESSION_COOKIE, "")
+            user = accounts.user_for_session(tok)
             if user is None:
                 raise HTTPException(401, "Sign in first.")
+            request.state.real_user, request.state.viewing = user, None
+            if user.email in env_admins:                               # only a superadmin can be viewing another account
+                target = accounts.impersonation_target(tok)
+                if target is not None:
+                    request.state.viewing = target
+                    if request.method not in ("GET", "HEAD", "OPTIONS"):
+                        raise HTTPException(403, "You are viewing this account read-only. Stop viewing to make changes.")
+                    if request.url.path.startswith(VIEW_ONLY_BLOCKED):
+                        raise HTTPException(403, "Posting and the social connection are not available while viewing another account.")
+                    user = target
             request.state.user = user
             return user
         request.state.user = None                                    # no accounts: the app is open (this machine only)
@@ -481,10 +498,11 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         except HTTPException:
             signed_in = False
         is_admin = bool(email and email in admins)
+        viewing = getattr(request.state, "viewing", None)
         return {"demo": demo, "languages": LANGUAGES, "max_upload_mb": max_upload_mb, "accounts": bool(accounts),
                 "pricing": catalog.payg.view() if catalog.payg else None, "signup": bool(accounts) and allow_signup, "signup_paused": bool(accounts) and allow_signup and accounts.signups_today() >= limits.signups_per_day,
                 "email": email, "admin": bool(email and email in admins), "mail": bool(mailer), "billing": bool(accounts and razorpay), "direct_upload": direct, "publishing": bool(accounts) or bool(sociobird),
-                "needs_login": bool(accounts), "signed_in": signed_in, "ready": pipeline.check_ready() if (signed_in or not accounts) else None,
+                "needs_login": bool(accounts), "signed_in": signed_in, "viewing_as": viewing.email if viewing else None, "ready": pipeline.check_ready() if (signed_in or not accounts) else None,
                 "ai_images": bool(getattr(pipeline, "can_generate_images", False)),
                 "gpu_worker": {"enabled": hub is not None, "online": bool(hub and hub.online()),
                                "render": bool(hub and hub.online("render")),
@@ -770,6 +788,37 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
             raise HTTPException(403, "Only a superadmin can do this.")
         return admin
 
+    def real_superadmin(request: Request) -> User:
+        """The signed-in person themselves (never the account being viewed), who must be a superadmin."""
+        user = need_accounts().user_for_session(request.cookies.get(SESSION_COOKIE, ""))
+        if user is None or user.email not in env_admins:
+            raise HTTPException(404, "Not found.")
+        return user
+
+    @app.post("/api/admin/impersonate")
+    def admin_impersonate(body: ViewAs, request: Request, admin: User = Depends(real_superadmin)) -> dict:
+        """Look at another account exactly as they see it, to judge the quality of their jobs. Silent for them (nothing is sent or shown), read-only for you, limited to an hour,
+        and every start and stop is written to the audit log below."""
+        target = admin_target(body.user_id)
+        if target.id == admin.id or target.email in env_admins:
+            raise HTTPException(422, "Choose someone who is not a superadmin.")
+        accounts.start_impersonation(request.cookies.get(SESSION_COOKIE, ""), target.id)
+        accounts.audit(admin.email, "view-as-start", target.email)
+        return {"email": target.email, "minutes": 60}
+
+    @app.delete("/api/admin/impersonate")
+    def admin_stop_impersonating(request: Request, admin: User = Depends(real_superadmin)) -> dict:
+        tok = request.cookies.get(SESSION_COOKIE, "")
+        target = accounts.impersonation_target(tok)
+        if target is not None:
+            accounts.audit(admin.email, "view-as-stop", target.email)
+        accounts.stop_impersonation(tok)
+        return {"ok": True}
+
+    @app.get("/api/admin/audit")
+    def admin_audit(admin: User = Depends(real_superadmin)) -> dict:
+        return {"entries": accounts.audit_list()}
+
     @app.get("/api/admin/overview")
     def admin_overview(admin: User = Depends(admin_only)) -> dict:
         snap = snapshot()
@@ -781,6 +830,7 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         users = accounts.list_users()
         for u in users:
             u["jobs_now"] = by_owner.get(u["id"], 0)
+            u["is_superadmin"] = u["email"] in env_admins
         recent_failed = [{"id": j.id, "owner": next((u["email"] for u in users if u["id"] == j.owner), ""), "error": (j.error or "")[:160], "when": j.created_at}
                          for j in sorted((j for j in jobs if j.status == "failed"), key=lambda j: j.created_at, reverse=True)[:10]]
         owners = {u["id"]: u["email"] for u in users}

@@ -86,6 +86,10 @@ def schema_statements(dialect: str) -> list[str]:
         f"CREATE TABLE IF NOT EXISTS credit_log (id {auto}, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, delta DOUBLE PRECISION NOT NULL, "
         "balance_after DOUBLE PRECISION NOT NULL, by_email TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS credit_log_user ON credit_log(user_id, id)",
+        # a superadmin viewing another account (read-only, time-limited); it ends with the session, or when either account is deleted
+        "CREATE TABLE IF NOT EXISTS impersonation (token_hash TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE, "
+        "target_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, until DOUBLE PRECISION NOT NULL)",
+        f"CREATE TABLE IF NOT EXISTS admin_audit (id {auto}, at TEXT NOT NULL, admin_email TEXT NOT NULL, action TEXT NOT NULL, target_email TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '')",
         "CREATE TABLE IF NOT EXISTS webhook_events (id TEXT PRIMARY KEY, received_at TEXT NOT NULL)",
     ]
 
@@ -330,6 +334,36 @@ class Accounts:
         row = self._q("SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.disabled=0",
                       (hashlib.sha256(token.encode()).hexdigest(), time.time())).fetchone()
         return self._user(row) if row else None
+
+    # --- a superadmin looking at another account (view-only; see api.authed) ---------------------------------------
+    def start_impersonation(self, token: str, target_id: str, minutes: int = 60) -> None:
+        h = hashlib.sha256(token.encode()).hexdigest()
+        with self.db.tx() as t:
+            t.q("DELETE FROM impersonation WHERE token_hash=?", (h,))
+            t.q("INSERT INTO impersonation(token_hash, target_id, until) VALUES (?,?,?)", (h, target_id, time.time() + minutes * 60))
+
+    def stop_impersonation(self, token: str) -> None:
+        self._q("DELETE FROM impersonation WHERE token_hash=?", (hashlib.sha256((token or "").encode()).hexdigest(),))
+
+    def impersonation_target(self, token: str) -> Optional[User]:
+        """The account this session is viewing, while the time allowed lasts; None otherwise (an expired one is removed)."""
+        if not token:
+            return None
+        h = hashlib.sha256(token.encode()).hexdigest()
+        row = self._q("SELECT u.*, i.until AS _until FROM impersonation i JOIN users u ON u.id = i.target_id WHERE i.token_hash=?", (h,)).fetchone()
+        if row is None:
+            return None
+        if float(row["_until"]) <= time.time():
+            self._q("DELETE FROM impersonation WHERE token_hash=?", (h,))
+            return None
+        return self._user(row)
+
+    def audit(self, admin_email: str, action: str, target_email: str = "", note: str = "") -> None:
+        self._q("INSERT INTO admin_audit(at, admin_email, action, target_email, note) VALUES (?,?,?,?,?)", (_now(), admin_email[:200], action[:40], target_email[:200], note[:200]))
+
+    def audit_list(self, limit: int = 100) -> list[dict]:
+        rows = self._q("SELECT at, admin_email, action, target_email, note FROM admin_audit ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+        return [{"at": r["at"], "by": r["admin_email"], "action": r["action"], "target": r["target_email"], "note": r["note"]} for r in rows]
 
     def end_session(self, token: str) -> None:
         self._q("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256((token or "").encode()).hexdigest(),))

@@ -169,7 +169,15 @@ function showBanner() {
   const c = state.config;
   banner.hidden = true;
   banner.className = 'banner';
-  if (c.ready) {
+  if (c.viewing_as) {                                              // a superadmin looking at this account (read-only); only they ever see this bar
+    const stop = el('button', { class: 'btn', type: 'button', text: 'Stop viewing' });
+    stop.addEventListener('click', async () => {
+      try { await api('/admin/impersonate', { method: 'DELETE' }); state.config = await api('/config'); showBanner(); location.hash = '#/admin'; route(); } catch (ex) { banner.textContent = ex.message; }
+    });
+    banner.replaceChildren(el('span', { translate: 'no', text: `Viewing ${c.viewing_as} · read-only · they are not told` }), ' ', stop);
+    banner.classList.add('bad');
+    banner.hidden = false;
+  } else if (c.ready) {
     banner.textContent = c.ready;
     banner.classList.add('bad');
     banner.hidden = false;
@@ -429,6 +437,7 @@ function storageCard(st, email, refresh, notice) {
 async function adminView(notice) {
   const ov = await api('/admin/overview');
   const st = await api('/admin/storage');
+  const audit = ov.superadmin ? (await api('/admin/audit')).entries : [];
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
   const act = async (path, body) => {
     err.hidden = true;
@@ -443,7 +452,10 @@ async function adminView(notice) {
       el('td', {}, plan, el('button', { class: 'btn', type: 'button', text: 'Apply', onclick: () => act(`/admin/users/${u.id}/plan`, { plan: plan.value }) })),
       el('td', { text: `${u.used_minutes} used, ${u.credits} extra` }),
       el('td', { text: String(u.jobs) }),
-      el('td', {}, el('a', { class: 'btn', href: `#/admin/users/${u.id}`, text: ov.superadmin ? 'Manage credits' : 'View credits' })),
+      el('td', {}, el('a', { class: 'btn', href: `#/admin/users/${u.id}`, text: ov.superadmin ? 'Manage credits' : 'View credits' }),
+        ov.superadmin && !u.is_superadmin ? el('button', { class: 'btn', type: 'button', text: 'View as', title: 'See their jobs exactly as they do (read-only, silent, logged)', onclick: async () => {
+          try { await api('/admin/impersonate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: u.id }) }); state.config = await api('/config'); showBanner(); location.hash = '#/jobs'; route(); }
+          catch (ex) { err.textContent = ex.message; err.hidden = false; } } }) : null),
       el('td', {}, el('button', { class: 'btn', type: 'button', text: u.disabled ? 'Enable' : 'Disable', onclick: () => { if (confirm(u.disabled ? 'Enable this account?' : 'Disable this account and sign it out?')) act(`/admin/users/${u.id}/disabled`, { disabled: !u.disabled }); } })));
   });
   app.replaceChildren(el('div', { class: 'stack' }, el('h1', { text: 'Operator' }), el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin/settings', text: 'Settings' })),
@@ -458,6 +470,11 @@ async function adminView(notice) {
     moneyCard(ov.money),
     el('section', { class: 'card stack' }, el('h2', { text: 'People' }),
       el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['Email', 'Plan', 'This month', 'Jobs', 'Credits', ''].map((t) => el('th', { text: t })))), el('tbody', {}, rows)))),
+    ov.superadmin ? el('section', { class: 'card stack' }, el('h2', { text: 'Staff access log' }),
+      el('p', { class: 'small muted', text: 'Every time a superadmin looked at an account (view-only). People are not notified; this is the record.' }),
+      audit.length ? el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['When (UTC)', 'Who', 'What', 'Account'].map((h) => el('th', { text: h })))),
+        el('tbody', {}, audit.slice(0, 30).map((e) => el('tr', {}, el('td', { text: e.at.replace('T', ' ').slice(0, 16) }), el('td', { translate: 'no', text: e.by }), el('td', { text: e.action === 'view-as-start' ? 'started viewing' : 'stopped viewing' }), el('td', { translate: 'no', text: e.target }))))))
+        : el('p', { class: 'small muted', text: 'Nobody has looked at an account yet.' })) : null,
     el('section', { class: 'card stack' }, el('h2', { text: 'Recent failures' }),
       ov.recent_failed.length ? el('ul', { class: 'plain' }, ov.recent_failed.map((f) => el('li', {}, el('a', { href: `#/jobs/${f.id}`, text: f.id }), ` ${f.owner}: ${f.error || 'no message'}`)))
         : el('p', { class: 'small muted', text: 'None.' }))));
@@ -1458,7 +1475,7 @@ async function jobView(jobId) {
 async function jobsView() {
   const jobs = await api('/jobs');
   const body = jobs.length
-    ? el('div', { class: 'card', style: { padding: '8px 24px' } }, el('table', {},
+    ? el('div', { class: 'card tablewrap', style: { padding: '8px 24px' } }, el('table', {},
       el('thead', {}, el('tr', {}, ['Video', 'Status', 'Started', 'Clips'].map((h) => el('th', { text: h })))),
       el('tbody', {}, jobs.map((j) => el('tr', { class: 'jobrow' },
         el('td', {}, icon('film', 18), el('a', { href: `#/jobs/${j.id}`, translate: 'no', text: j.name })),

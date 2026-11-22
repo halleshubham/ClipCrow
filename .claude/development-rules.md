@@ -201,3 +201,8 @@ A green pipeline closes a task, not the push: after pushing, confirm the commit'
 - `speakers.json` belongs to the video it was made from (size + mtime signature); a re-cut or a new working video rebuilds it. A person's corrections live in its `overrides` and always win.
 - Anything a model downloads is pinned (`voices.MODEL_REVISION` once checked) and its failure must degrade to the old behaviour, never fail the job. The YuNet model is MIT (OpenCV zoo): keep its licence note.
 - Tests never download a model: `CLIPCROW_SPEAKERS=0` in `tests/conftest.py`; the speaker tests pass a tone-pitch embedder and a fixed-faces detector.
+
+## Viewing as another account
+Superadmin "view as" is read-only and logged: never add a route that lets a viewing session change data, spend minutes, read or use another person's SocioBird/credentials, or hide its own start and stop from `admin_audit`.
+New write routes are safe by default (every non-GET is refused while viewing); a new GET that reaches a person's secrets or their social accounts must be added to `VIEW_ONLY_BLOCKED` in `api.py`.
+

@@ -316,3 +316,9 @@ machine only. `/api/health` now also says `busy` (true while a job runs or waits
 (`GET /api/admin/storage`; superadmin actions `POST /api/admin/storage/cleanup` (verifies each clip with a HEAD request to the bucket first), `.../upload-missing`, and `POST /api/admin/jobs/claim`).
 `Job.keep` (set by claim) exempts a job from retention: otherwise old jobs given to a free-plan account would be deleted at the next sweep, bucket copies included. Evicted clips play through the
 presigned-URL redirect that already existed. Originals are not removed by the cleanup. Tests: `tests/test_storage_cleanup.py`.
+
+## 2026-11-22 - Superadmin "view as" (read-only impersonation)
+`POST/DELETE /api/admin/impersonate`, `GET /api/admin/audit` (all `real_superadmin`: the signed-in person themselves, never the viewed account). State is a row in `impersonation` (cascades with the session
+and either account, expires after an hour). `authed()` swaps in the viewed account only for a superadmin, refuses every non-GET with 403 and blocks `/api/sociobird*` and `/api/publish*`; `/api/config`
+reports `viewing_as` so the UI shows the bar. Silent for the owner by design, but every start and stop is in `admin_audit`; the privacy page discloses it. Cannot target yourself or a superadmin. The Jobs
+table now scrolls inside its card at 360 px (it overflowed before). Tests: `tests/test_impersonation.py`.
