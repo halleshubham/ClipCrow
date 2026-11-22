@@ -495,3 +495,6 @@ details.fine .stack { gap: 16px; }
 
 .hero > h2, .card.stack > h2, .card.stack > .row > h2 { margin: 0; }
 .hero > p { margin: 0; }
+
+.stepsbar.tabs4 { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 0; }
+@media (max-width: 720px) { .stepsbar.tabs4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

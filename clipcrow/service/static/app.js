@@ -352,8 +352,7 @@ async function adminSettingsView() {
   const history = el('section', { class: 'card stack' }, el('h2', { text: 'Recent changes' }),
     d.history.length ? el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['When (UTC)', 'By', 'Setting', 'From', 'To'].map((h) => el('th', { text: h })))),
       el('tbody', {}, d.history.map((h) => el('tr', {}, el('td', { text: h.at }), el('td', { translate: 'no', text: h.by }), el('td', { text: h.key }), el('td', { text: String(h.old) }), el('td', { text: String(h.new) })))))) : el('p', { class: 'small muted', text: 'No changes yet.' }));
-  app.replaceChildren(el('div', { class: 'stack' }, el('h1', { text: 'Operator settings' }),
-    el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin', text: 'Back to the overview' })),
+  app.replaceChildren(el('div', { class: 'stack' }, pageHead('Operator settings', 'Sign-up, limits, GPU behaviour and alerts.', el('a', { class: 'btn', href: '#/admin', text: 'Back to the overview' })),
     d.superadmin ? null : el('p', { class: 'small muted', text: 'You can read these settings. Only a superadmin can change them.' }),
     err, services, ...groups, history,
     el('div', { class: 'actionbar' }, el('div', { class: 'abar' }, el('span', { class: 'small muted', text: 'Changes apply at once. Reset puts a setting back to what the server started with.' }), el('div', { class: 'grp' }, saved, save)))));
@@ -394,8 +393,7 @@ async function adminUserView(userId) {
       el('div', {}, fieldLabel('timer', 'Minutes', 'cr-amount', ''), amount, quick),
       el('div', {}, fieldLabel('pencil', 'Why (required, kept in the ledger and the audit log)', 'cr-note', ''), note), el('div', { class: 'row' }, go));
   }
-  app.replaceChildren(el('div', { class: 'stack' }, el('h1', { translate: 'no', text: who ? who.email : 'Account' }),
-    el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin', text: 'Back to the overview' })), err,
+  app.replaceChildren(el('div', { class: 'stack' }, pageHead(who ? who.email : 'Account', 'Minutes, plan and access for this person.', el('a', { class: 'btn', href: '#/admin', text: 'Back to the overview' })), err,
     el('section', { class: 'card stack' }, el('h2', { text: 'Extra minutes' }), el('div', { class: 'stat' }, el('div', { class: 'num', text: String(d.balance) }),
       el('div', { class: 'small muted', text: 'bought or given, never expire; the monthly allowance is separate' })), form),
     el('section', { class: 'card stack' }, el('h2', { text: 'Ledger' }), ledger)));
@@ -477,7 +475,7 @@ async function adminView(notice) {
           onclick: () => { if (confirm(u.disabled ? `Enable ${u.email}?` : `Disable ${u.email} and sign them out?`)) act(`/admin/users/${u.id}/disabled`, { disabled: !u.disabled }); } }))));
   });
   const peopleHead = ['Person', manyPlans ? 'Plan' : null, 'Minutes left', 'Used this month', 'Jobs', 'Actions'].filter(Boolean);
-  app.replaceChildren(el('div', { class: 'stack' }, el('h1', { text: 'Operator' }), el('p', { class: 'row' }, el('a', { class: 'btn', href: '#/admin/settings', text: 'Settings' })),
+  app.replaceChildren(el('div', { class: 'stack' }, pageHead('Operator', 'What is running now, and the people, money and storage behind it.', el('a', { class: 'btn', href: '#/admin/settings', text: 'Settings' })),
     el('section', { class: 'card stack' }, el('h2', { text: 'Now' }),
       el('div', { class: 'statrow' },
         stat('jobs running', ov.jobs.running), stat('waiting', ov.jobs.queued), stat('failed in the last hour', ov.failed_last_hour, ov.failed_last_hour >= 5),
@@ -555,7 +553,7 @@ async function accountView() {
   const billing = el('div', { id: 'billing' });
   const postingBox = await postingCard();
   app.replaceChildren(el('div', { class: 'stack' },
-    el('h1', { text: 'Account' }),
+    pageHead('Account', 'Your plan and minutes, where you post, and your data.'),
     el('section', { class: 'card stack' },
       el('div', { class: 'row', style: { justifyContent: 'space-between' } },
         el('div', {}, el('strong', { translate: 'no', text: me.email }), el('div', { class: 'small muted', text: `${me.plan.name} plan${me.plan.price_label ? ' · ' + me.plan.price_label : ''}` })),
@@ -1679,7 +1677,7 @@ async function jobsView() {
         el('td', { text: when(j.created_at) }),
         el('td', { text: j.clips.length ? `${j.clips.filter((c) => c.ready).length} of ${j.clips.length}` : '—' }))))))
     : el('div', { class: 'card empty' }, el('div', { class: 'ico' }, icon('film', 26)), 'No jobs yet. ', el('a', { href: '#/new', text: 'Start one' }), '.');
-  app.replaceChildren(el('h1', { text: 'Jobs' }), el('div', { style: { height: '16px' } }), body);
+  app.replaceChildren(pageHead('Jobs', 'Everything you have made. Open a job to follow it, edit its clips, download or share them.', el('a', { class: 'btn primary', href: '#/new', text: 'New job' })), body);
 }
 
 // ---- clip editor ----------------------------------------------------------------------------------
@@ -1836,8 +1834,7 @@ async function clipEditorView(jobId, clipId) {
 
   const group = (title, ...kids) => el('fieldset', { class: 'card group' }, el('legend', { text: title }), ...kids);
   app.replaceChildren(el('div', { class: 'stack' },
-    el('div', { class: 'row' }, el('div', { class: 'grow' }, el('h1', { text: 'Edit clip' }),
-      el('div', { class: 'small muted', translate: 'no', text: view.title })), el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
+    pageHead('Edit clip', view.title, el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
     el('div', { class: 'cols' },
       el('div', { class: 'stack edcol sticky', style: { gap: '12px' } }, player, status),
       el('div', { class: 'stack grow', style: { flex: '999 1 420px' } },
@@ -2154,11 +2151,28 @@ async function brandView(bid) {
     pvNote);
 
   app.replaceChildren(el('div', { class: 'stack' },
-    el('div', {}, el('h1', { text: 'Brand' }), el('p', { class: 'small muted' }, 'Added to clips when you tick them on a new job.', tip('Clips already made keep the copy they were made with.', 'the brand page'))),
+    pageHead('Brand', 'Added to clips when you tick them on a new job. Clips already made keep the copy they were made with.'),
     switcher,
-    el('div', { class: 'layout' }, el('div', { class: 'stack' }, el('div', { class: 'pair' }, logoBox, outroBox), logoPlacement, el('div', { class: 'pair' }, overlayBox), overlayPlacement, banner, coverGroup, endingGroup, speakerGroup, captionsGroup, musicBox, defaultsGroup,
+    el('div', { class: 'layout' }, el('div', { class: 'stack' },
+      el('div', { class: 'stepsbar tabs4', role: 'group', 'aria-label': 'Brand sections' }, BRAND_TABS.map(([id, t, hint]) =>
+        el('button', { type: 'button', class: 'stepb', 'data-tab': id }, el('b', { text: t }), el('span', { class: 'stepv', text: hint })))),
+      el('div', { class: 'panel', 'data-panel': 'marks' }, el('div', { class: 'pair' }, logoBox, outroBox), logoPlacement, el('div', { class: 'pair' }, overlayBox), overlayPlacement, banner),
+      el('div', { class: 'panel', 'data-panel': 'look', hidden: true }, coverGroup, endingGroup, speakerGroup, captionsGroup),
+      el('div', { class: 'panel', 'data-panel': 'sound', hidden: true }, musicBox),
+      el('div', { class: 'panel', 'data-panel': 'defaults', hidden: true }, defaultsGroup),
       el('div', { class: 'actionbar' }, err, el('div', { class: 'row' }, note, saveBtn))), el('div', { class: 'aside first-on-phone' }, preview))));
+  const tabBtns = [...app.querySelectorAll('[data-tab]')], tabPanels = [...app.querySelectorAll('[data-panel]')];
+  const showTab = (id) => {
+    tabPanels.forEach((p) => { p.hidden = p.dataset.panel !== id; });
+    tabBtns.forEach((b) => { if (b.dataset.tab === id) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); });
+    try { sessionStorage.setItem('brandTab', id); } catch (_) { /* a private window: the tab is just not remembered */ }
+  };
+  tabBtns.forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+  let firstTab = 'marks';
+  try { firstTab = sessionStorage.getItem('brandTab') || 'marks'; } catch (_) { /* not remembered */ }
+  showTab(BRAND_TABS.some(([id]) => id === firstTab) ? firstTab : 'marks');
 }
+const BRAND_TABS = [['marks', 'Logo and marks', 'logo, overlay, banner'], ['look', 'Cover and captions', 'cover, speaker, captions'], ['sound', 'Music', 'background track'], ['defaults', 'Defaults', 'ticked on a new job']];
 
 // ---- sharing ---------------------------------------------------------------------------------------
 
@@ -2169,7 +2183,7 @@ const MAX_CHANNELS = 6;                      // the server accepts at most this 
 
 const needsSocioBird = (e) => /^Connect your SocioBird|^SocioBird refused your connection/.test(e.message || '');
 function connectCard(message) {
-  return el('div', { class: 'stack' }, el('h1', { text: 'Share' }), el('section', { class: 'card stack' }, el('h2', { text: 'Connect SocioBird to post' }),
+  return el('div', { class: 'stack' }, pageHead('Share', 'Post your clips to your channels.'), el('section', { class: 'card stack' }, el('h2', { text: 'Connect SocioBird to post' }),
     el('p', { text: message }), el('div', { class: 'row' }, el('a', { class: 'btn primary', href: '#/account', text: 'Open my Account page' }))));
 }
 
@@ -2258,8 +2272,7 @@ async function shareView(jobId, clipId) {
   });
   const field = (label, control, hint) => el('div', {}, el('label', { class: 'field', for: control.id, text: label }), control, hint && el('div', { class: 'hint', text: hint }));
   app.replaceChildren(el('div', { class: 'stack' },
-    el('div', { class: 'row' }, el('div', { class: 'grow' }, el('h1', { text: 'Share clip' }), el('div', { class: 'small muted', translate: 'no', text: clip.title })),
-      el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
+    pageHead('Share clip', clip.title, el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
     channels.length === 0 ? el('div', { class: 'card empty', text: 'No channels we can post to are connected in SocioBird yet.' }) : el('div', { class: 'card stack' },
       el('fieldset', { class: 'stack', style: { border: 0, padding: 0, margin: 0 } },
         el('legend', { class: 'field', text: 'Post to' }), el('div', { class: 'row' }, counter, el('span', { class: 'small muted', text: 'Channels are grouped by brand, as in SocioBird.' })),
@@ -2401,8 +2414,7 @@ async function scheduleView(jobId, clipsParam) {
   const field = (label, control, hint) => el('div', {}, el('label', { class: 'field', for: control.id, text: label }), control, hint && el('div', { class: 'hint', text: hint }));
   onPick();
   app.replaceChildren(el('div', { class: 'stack' },
-    el('div', { class: 'row' }, el('div', { class: 'grow' }, el('h1', { text: 'Schedule reels' }), el('div', { class: 'small muted', translate: 'no', text: job.name })),
-      el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
+    pageHead('Schedule reels', job.name, el('a', { class: 'btn', href: `#/jobs/${jobId}`, text: 'Back to the job' })),
     channels.length === 0 ? el('div', { class: 'card empty', text: 'No channels we can post to are connected in SocioBird yet.' }) : el('div', { class: 'stack' },
       el('section', { class: 'card stack' }, el('h2', { text: 'Reels' }),
         ...reelBoxes.map(({ c, box }) => el('label', { class: 'check', for: box.id }, box, el('span', {}, el('strong', { class: 'deva', translate: 'no', text: c.title }), el('br'), el('span', { class: 'muted', text: `${Math.round(c.end - c.start)} s` }))))),
@@ -2516,8 +2528,7 @@ async function stylesView() {
 
   function draw() {
     app.replaceChildren(el('div', { class: 'stack' },
-      el('h1', { text: 'Styles' }),
-      el('p', { class: 'lead', text: 'Upload a video whose pacing you like. ClipCrow measures how fast it cuts and how fast the speaker talks, and your own clips follow that rhythm. The reference itself is deleted once it has been measured.' }),
+      pageHead('Styles', 'Upload a video whose pacing you like. ClipCrow measures how fast it cuts and how fast the speaker talks, and your own clips follow that rhythm. The reference itself is deleted once it has been measured.'),
       el('section', { class: 'card stack' }, el('h2', { text: 'New style' }),
         el('div', {}, el('label', { class: 'field', for: 'style_file', text: 'Reference video (5 s to 3 minutes, up to 200 MB)' }), fileIn),
         el('div', {}, el('label', { class: 'field', for: 'style_name', text: 'Name' }), nameIn),
