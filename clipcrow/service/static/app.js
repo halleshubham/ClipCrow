@@ -819,13 +819,29 @@ function chip(id, ic, text, help) {
     tip(help, text));
 }
 
-async function newJobView() {
+// the goals a person can pick on New job: each one sets the options below it, so the page asks about the outcome and not about switches
+const GOALS = [
+  ['talk', 'scissors', 'Reels from a long talk', 'Finds the best moments of a talk, podcast or lecture and makes several short reels.'],
+  ['vox', 'users', 'Reels from vox populi', 'Street interviews: one reel per person’s answer, cutting to whoever is speaking.'],
+  ['clean', 'sparkles', 'One clean reel from a raw take', 'Cuts fumbles, fillers and dead air and keeps picture and sound in sync.'],
+  ['edited', 'layers', 'Edited explainer', 'An already edited video: the speaker’s face is framed for the reel, and slides, cards and animations are shown whole on screen.'],
+  ['explainer', 'image', 'Explainer with pictures', 'Shows your screenshots when the speaker names them, with their source.'],
+  ['whole', 'play', 'Whole video as one reel', 'No selection: one title and one hook, up to 15 minutes.'],
+];
+function pillGroup(label, key, options) {
+  const group = el('div', { class: 'pills', role: 'radiogroup', 'aria-label': label, 'data-pills': key },
+    options.map(([v, t]) => el('button', { type: 'button', role: 'radio', class: 'pill', 'data-value': v, 'aria-checked': 'false', text: t })));
+  return el('div', { class: 'pill-field' }, el('span', { class: 'grp-t', text: label }), group);
+}
+
+async function newJobView(goalHint = '') {
   const c = state.config;
   let brand = { logo: false, outro: false, settings: {} };
   try { brand = await api('/brand'); } catch (e) { if (e instanceof SignInNeeded) throw e; }
   let styles = [];
   try { styles = (await api('/styles')).filter((x) => x.status === 'ready'); } catch (e) { if (e instanceof SignInNeeded) throw e; }
   let file = null;
+  let ready = false;                                                    // the steps below exist only once the form is built
   const fileName = el('div', { class: 'small muted', text: `MP4, MOV, MKV or WebM, up to ${c.max_upload_mb} MB` });
   const fileTitle = el('div', { class: 'ttl', text: 'Drop a video here, or choose a file' });
   const fileInput = el('input', { type: 'file', id: 'file', accept: 'video/*,.mkv,.m4v', 'aria-label': 'Video file' });
@@ -898,18 +914,21 @@ async function newJobView() {
   const rights = el('input', { type: 'checkbox', id: 'rights' });
   const submit = el('button', { class: 'btn primary', type: 'submit', text: 'Generate clips' });
   const cancelBtn = el('button', { class: 'btn', type: 'button', text: 'Cancel upload', hidden: true });
+  const backBtn = el('button', { class: 'btn', type: 'button', text: 'Back', hidden: true });
+  const nextBtn = el('button', { class: 'btn primary', type: 'button', text: 'Next: Goal' });
 
   const form = el('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
     err.hidden = true;
-    const fail = (m) => { err.textContent = m; err.hidden = false; submit.disabled = false; cancelBtn.hidden = true; progress.hidden = true; status.textContent = ''; };
-    if (!file) return fail('Choose a video first.');
-    if (file.size > c.max_upload_mb * 1048576) return fail(`That file is larger than the ${c.max_upload_mb} MB limit.`);
-    if (!rights.checked) return fail('Confirm that you own this video or have the rights to process it.');
+    if (step < 2) { showStep(step + 1); return; }                      // Enter in a field moves on; only the last step sends
+    const fail = (m, at) => { if (at !== undefined) showStep(at); err.textContent = m; err.hidden = false; submit.disabled = false; cancelBtn.hidden = true; progress.hidden = true; status.textContent = ''; };
+    if (!file) return fail('Choose a video first.', 0);
+    if (file.size > c.max_upload_mb * 1048576) return fail(`That file is larger than the ${c.max_upload_mb} MB limit.`, 0);
+    if (!rights.checked) return fail('Confirm that you own this video or have the rights to process it.', 0);
     const lo = $('min_clip').value.trim(), hi = $('max_clip').value.trim();
-    if ((lo && !(Number(lo) >= 5)) || (hi && !(Number(hi) >= 10))) return fail('The shortest reel is at least 5 seconds and the longest at least 10.');
-    if (lo && hi && Number(lo) >= Number(hi)) return fail('The shortest reel must be shorter than the longest.');
-    if (Number(lo) > 900 || Number(hi) > 900) return fail('A reel can be at most 15 minutes (900 seconds).');
+    if ((lo && !(Number(lo) >= 5)) || (hi && !(Number(hi) >= 10))) return fail('The shortest reel is at least 5 seconds and the longest at least 10.', 1);
+    if (lo && hi && Number(lo) >= Number(hi)) return fail('The shortest reel must be shorter than the longest.', 1);
+    if (Number(lo) > 900 || Number(hi) > 900) return fail('A reel can be at most 15 minutes (900 seconds).', 1);
     const whole = !lo && !hi && !$('style').value;                       // no length asked for: the whole video is one reel
     // only one end given: the other follows from it
     let minClip = lo, maxClip = hi;
@@ -953,15 +972,27 @@ async function newJobView() {
       if (!(ex.cancelled)) fail(ex.message || 'The upload failed.');
     }
   } },
-    el('h1', { text: 'New job' }),
-    drop,
-    el('section', { class: 'card ess' },
-      el('div', { class: 'ess-grid' },
-        el('div', {}, fieldLabel('languages', 'Spoken language', 'language', 'Marathi, Hindi and Nepali get a script-aware recogniser so text stays in Devanagari.'),
+    pageHead('New job', 'Three short steps: your video, what to make, and how it should look.'),
+    el('div', { class: 'stepsbar', role: 'group', 'aria-label': 'Steps' }, [['Video', 0], ['Goal', 1], ['Branding', 2]].map(([t, i]) =>
+      el('button', { type: 'button', class: 'stepb', 'data-step': String(i) }, el('b', { text: `${i + 1} · ${t}` }), el('span', { class: 'stepv', id: `stepv-${i}` })))),
+    el('div', { class: 'panel', id: 'step-0' },
+      drop,
+      el('div', { class: 'grid2' }, el('div', {}, fieldLabel('languages', 'Spoken language', 'language', 'Marathi, Hindi and Nepali get a script-aware recogniser so text stays in Devanagari.'),
           el('select', { id: 'language' }, c.languages.map((l) => el('option', { value: l.code, text: l.name })))),
-        el('div', {}, fieldLabel('layers', 'Clips to make', 'clips', 'Leave empty for about one per two minutes of video.'),
-          el('input', { id: 'clips', type: 'number', min: '1', max: '20', placeholder: 'Auto', inputmode: 'numeric' })),
-        el('div', {}, fieldLabel('timer', 'Reel length, seconds', 'min_clip', 'Shortest to longest. Leave both empty and the whole video becomes one reel (up to 15 minutes), with one title and hook. Give only one and the other follows from it. Longer reels suit a cleaned raw recording.'),
+        text('speaker', 'Speaker name (lower third)', { autocomplete: 'off', class: 'deva' }),
+        text('role', 'Role', { autocomplete: 'off', class: 'deva' })),
+      el('label', { class: 'check', for: 'rights' }, rights, el('span', { text: 'I own this video or have the rights to process it.' })),
+      el('section', { class: 'callout' }, el('h2', { text: 'How AI is used' }),
+        el('p', { class: 'small', text: 'AI chooses the cut points, titles, hooks and emphasised words. Your footage stays real. Nothing AI-generated is added, and every job keeps a record of what the AI decided.' }))),
+    el('div', { class: 'panel', id: 'step-1', hidden: true },
+      el('div', { class: 'goals', role: 'radiogroup', 'aria-label': 'What do you want to make' }, GOALS.map(([id, ic, title, desc]) =>
+        el('button', { type: 'button', role: 'radio', class: 'goalopt', 'data-goal': id, 'aria-checked': 'false' }, el('span', { class: 'goal-ic' }, icon(ic, 20)),
+          el('span', {}, el('strong', { text: title }), el('span', { class: 'goal-d', text: desc }))))),
+      el('div', { class: 'row2', id: 'sizing' },
+        pillGroup('How many reels', 'count', [['', 'Auto'], ['3', '3'], ['5', '5'], ['8', '8'], ['other', 'Other']]),
+        pillGroup('How long', 'len', [['15-30', '15–30 s'], ['30-60', '30–60 s'], ['60-120', '60–120 s'], ['other', 'Other']])),
+      el('div', { class: 'grid2', id: 'sizing-custom', hidden: true }, el('div', {}, fieldLabel('layers', 'Clips to make', 'clips', 'Leave empty for about one per two minutes of video.'),
+          el('input', { id: 'clips', type: 'number', min: '1', max: '20', placeholder: 'Auto', inputmode: 'numeric' })), el('div', {}, fieldLabel('timer', 'Reel length, seconds', 'min_clip', 'Shortest to longest. Leave both empty and the whole video becomes one reel (up to 15 minutes), with one title and hook. Give only one and the other follows from it. Longer reels suit a cleaned raw recording.'),
           el('div', { class: 'range2' },
             el('input', { id: 'min_clip', type: 'number', min: '5', max: '900', value: '30', inputmode: 'numeric', 'aria-label': 'Shortest reel, seconds' }),
             el('span', { class: 'to', text: 'to' }),
@@ -969,7 +1000,51 @@ async function newJobView() {
       segmented('multi', 'users', 'People in the video',
         'One person on screen is the quickest. Choose “Cut to speaker” or “Stack two” for interviews and podcasts filmed with a wide shot: it finds who is talking and either cuts to them or shows two at once.',
         [['off', 'One person', 'user-round'], ['switch', 'Cut to speaker', 'users'], ['split', 'Stack two', 'columns-2']]),
-      el('div', {}, fieldLabel('badge-check', 'Brand', brand.brands && brand.brands.length > 1 ? 'brand' : '', 'What goes on every clip. Logo, ending video, music, look, speaker and captions come from the chosen brand; set them up on the Brand page.'),
+      el('div', { id: 'clean-opts', class: 'pair2', hidden: true },
+          select('clean_pace', 'How tight', [['natural', 'Natural'], ['fast', 'Fast'], ['tight', 'Tight']],
+            'Natural keeps short pauses (talks, courses, interviews). Fast is tighter (YouTube talking head). Tight is jump-cut style (Reels and Shorts).'),
+          select('clean_take', 'A passage said twice', [['last', 'Keep the last take'], ['best', 'Keep the best take']],
+            'Keep the last take is the usual retake. Keep the best take lets the AI judge which one is better.')),
+      el('div', { id: 'explainer-opts', class: 'stack', hidden: true, style: { paddingLeft: '30px' } },
+        pics.node,
+        el('label', { class: c.ai_images ? 'check' : 'check muted', for: 'ai_images' }, el('input', { type: 'checkbox', id: 'ai_images', disabled: !c.ai_images }),
+          el('span', {}, el('strong', { text: 'Also generate images with AI' }), el('br'),
+            el('span', { class: 'muted', text: c.ai_images ? 'AI-generated pictures mean most platforms ask you to label the video as AI content.' : 'Not set up on this server.' })))),
+      el('details', { class: 'adv fine' }, el('summary', {}, 'Fine-tune', el('span', { class: 'sub', text: 'selection, cutting, look, sound' })),
+        el('div', { class: 'stack' },
+          el('div', { class: 'grp-t', text: 'Selection' }),
+          el('div', { class: 'grid2' }, select('spread', 'Spread across the video', [['0.5', 'Balanced (recommended)'], ['0', 'Off: best clips first'], ['0.8', 'Wide']],
+        'Keeps clips from being slices of one section.'), select('style', 'Style from a reference', [['', 'None'], ...styles.map((x) => [x.id, x.name])],
+        styles.length ? 'Uses what was measured in that reference: clip length, caption size, colour and position, and how often the picture pushes in.'
+          : 'Measure a reference video on the Styles page, then pick it here.')),
+          el('div', { class: 'grp-t', text: 'Cutting' }),
+          el('div', { class: 'chips' }, chip('clean', 'scissors', 'Raw recording: cut fumbles and dead air',
+        'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.')),
+          el('label', { class: 'check', for: 'fresh_transcript' }, el('input', { type: 'checkbox', id: 'fresh_transcript' }),
+        el('span', {}, el('strong', { text: 'Listen to the recording again' }), el('br'),
+          el('span', { class: 'muted', text: 'If you already made a job from this very file, its words are used again and nothing is transcribed twice. Tick this to transcribe it afresh (for example after changing the recogniser).' }))),
+          el('div', { class: 'grp-t', text: 'Look' }),
+          select('transition', 'Effect on every hard cut', [['none', 'None'], ['flash', 'Flash'], ['blur', 'Blur'], ['dip', 'Dip to black'], ['whip', 'Whip']],
+        'A short effect where two stretches of the recording were joined, the speaker changes or a slide starts. You can change it per clip afterwards.'),
+          el('label', { class: 'check', for: 'cutout' }, el('input', { type: 'checkbox', id: 'cutout' }),
+        el('span', {}, el('strong', { text: 'Text behind the speaker' }), el('br'),
+          el('span', { class: 'muted', text: 'Cuts the person out so a big word can sit behind them. Slower to render; best for a single face.' }))),
+          el('label', { class: 'check', for: 'immersive' }, el('input', { type: 'checkbox', id: 'immersive' }),
+        el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
+          el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back. Suits a person talking to camera.' }))),
+          el('label', { class: 'check', for: 'graphics' }, el('input', { type: 'checkbox', id: 'graphics' }),
+        el('span', {}, el('strong', { text: 'Video has slides, cards or graphics' }), el('br'),
+          el('span', { class: 'muted', text: 'For explainers that cut away from the speaker to text cards, charts or pictures. Those moments are shown whole instead of cropped to the middle, so the text is not cut off. Moments with the speaker are still framed on their face.' }))),
+          el('label', { class: 'check', for: 'explainer' }, el('input', { type: 'checkbox', id: 'explainer' }),
+        el('span', {}, el('strong', { text: 'Explainer: show pictures' }), el('br'),
+          el('span', { class: 'muted', text: 'Puts a picture over the video where the speaker names something: a picture you add below (the AI looks at it and picks the moment), or an AI-generated image.' }))),
+          el('div', { class: 'grp-t', text: 'Sound' }),
+          el('label', { class: 'check', for: 'sounds' }, el('input', { type: 'checkbox', id: 'sounds' }),
+        el('span', {}, el('strong', { text: 'Quiet sound cues' }), el('br'),
+          el('span', { class: 'muted', text: 'A soft pop, whoosh or tick under the speech where a title, card, picture or push-in appears, never on every word. Switch it off per clip when you edit.' })))))),
+    el('div', { class: 'panel', id: 'step-2', hidden: true },
+      el('div', { class: 'brandrow' },
+        el('div', { class: 'stack' }, el('div', {}, fieldLabel('badge-check', 'Brand', brand.brands && brand.brands.length > 1 ? 'brand' : '', 'What goes on every clip. Logo, ending video, music, look, speaker and captions come from the chosen brand; set them up on the Brand page.'),
         brand.brands && brand.brands.length > 1 && el('select', { id: 'brand', class: 'brand-pick' }, brand.brands.map((b) => el('option', { value: b.id, text: b.name + (b.default ? ' (default)' : '') }))),
         el('div', { class: 'chips' },
           chip('logo', 'badge-check', 'Logo', 'Your logo in a corner of every clip.'),
@@ -977,62 +1052,25 @@ async function newJobView() {
           chip('cover', 'type', 'Cover title', 'A bold title (the hook line) for the first quarter-second, so the poster frame says what the clip is about. You also get it as a picture. Platforms choose their own thumbnail, so this raises the odds, it cannot force it.'),
           chip('show_banner', 'megaphone', 'Full-video banner', 'A “watch the full video” line with your channel name.'),
           chip('outro', 'film', 'Ending video', 'Your branding video, added at the end of each clip.')),
-        el('p', { class: 'note', id: 'brand-note', 'aria-live': 'polite' })),
-      el('div', {}, el('div', { class: 'chips' }, chip('clean', 'scissors', 'Raw recording: cut fumbles and dead air',
-        'Removes ums and ahs, stutters, a sentence the speaker started again, “sorry, once more” takes and long silences, keeping picture and sound in sync. Best for one person talking to camera; the clips are made from the cleaned video. Uses the AI to spot restarted takes.')),
-        el('div', { id: 'clean-opts', class: 'pair2', hidden: true },
-          select('clean_pace', 'How tight', [['natural', 'Natural'], ['fast', 'Fast'], ['tight', 'Tight']],
-            'Natural keeps short pauses (talks, courses, interviews). Fast is tighter (YouTube talking head). Tight is jump-cut style (Reels and Shorts).'),
-          select('clean_take', 'A passage said twice', [['last', 'Keep the last take'], ['best', 'Keep the best take']],
-            'Keep the last take is the usual retake. Keep the best take lets the AI judge which one is better.')))),
-    el('details', { class: 'adv' }, el('summary', {}, 'More options', el('span', { class: 'sub', text: 'spread, speaker card, pictures, music, effects' })),
-      el('div', { class: 'stack' },
-      el('div', { class: 'grid2', style: { marginTop: 0 } },
-      select('spread', 'Spread across the video', [['0.5', 'Balanced (recommended)'], ['0', 'Off: best clips first'], ['0.8', 'Wide']],
-        'Keeps clips from being slices of one section.'),
-      select('style', 'Style from a reference', [['', 'None'], ...styles.map((x) => [x.id, x.name])],
-        styles.length ? 'Uses what was measured in that reference: clip length, caption size, colour and position, and how often the picture pushes in.'
-          : 'Measure a reference video on the Styles page, then pick it here.'),
-      text('speaker', 'Speaker name (lower third)', { autocomplete: 'off', class: 'deva' }),
-      text('role', 'Role', { autocomplete: 'off', class: 'deva' }),
-      select('transition', 'Effect on every hard cut', [['none', 'None'], ['flash', 'Flash'], ['blur', 'Blur'], ['dip', 'Dip to black'], ['whip', 'Whip']],
-        'A short effect where two stretches of the recording were joined, the speaker changes or a slide starts. You can change it per clip afterwards.')),
-      el('label', { class: 'check', for: 'fresh_transcript' }, el('input', { type: 'checkbox', id: 'fresh_transcript' }),
-        el('span', {}, el('strong', { text: 'Listen to the recording again' }), el('br'),
-          el('span', { class: 'muted', text: 'If you already made a job from this very file, its words are used again and nothing is transcribed twice. Tick this to transcribe it afresh (for example after changing the recogniser).' }))),
-      el('label', { class: 'check', for: 'cutout' }, el('input', { type: 'checkbox', id: 'cutout' }),
-        el('span', {}, el('strong', { text: 'Text behind the speaker' }), el('br'),
-          el('span', { class: 'muted', text: 'Cuts the person out so a big word can sit behind them. Slower to render; best for a single face.' }))),
-      el('label', { class: 'check', for: 'explainer' }, el('input', { type: 'checkbox', id: 'explainer' }),
-        el('span', {}, el('strong', { text: 'Explainer: show pictures' }), el('br'),
-          el('span', { class: 'muted', text: 'Puts a picture over the video where the speaker names something: a picture you add below (the AI looks at it and picks the moment), or an AI-generated image.' }))),
-      el('div', { id: 'explainer-opts', class: 'stack', hidden: true, style: { paddingLeft: '30px' } },
-        pics.node,
-        el('label', { class: c.ai_images ? 'check' : 'check muted', for: 'ai_images' }, el('input', { type: 'checkbox', id: 'ai_images', disabled: !c.ai_images }),
-          el('span', {}, el('strong', { text: 'Also generate images with AI' }), el('br'),
-            el('span', { class: 'muted', text: c.ai_images ? 'AI-generated pictures mean most platforms ask you to label the video as AI content.' : 'Not set up on this server.' })))),
-      el('label', { class: 'check', for: 'sounds' }, el('input', { type: 'checkbox', id: 'sounds' }),
-        el('span', {}, el('strong', { text: 'Quiet sound cues' }), el('br'),
-          el('span', { class: 'muted', text: 'A soft pop, whoosh or tick under the speech where a title, card, picture or push-in appears, never on every word. Switch it off per clip when you edit.' }))),
-      el('label', { class: brand.music ? 'check' : 'check muted', for: 'music' }, el('input', { type: 'checkbox', id: 'music', disabled: !brand.music, checked: brand.music && !!brand.settings.default_music }),
+        el('p', { class: 'note', id: 'brand-note', 'aria-live': 'polite' })), el('label', { class: brand.music ? 'check' : 'check muted', for: 'music' }, el('input', { type: 'checkbox', id: 'music', disabled: !brand.music, checked: brand.music && !!brand.settings.default_music }),
         el('span', {}, el('strong', { text: 'Background music (ducks under the speech)' }), el('br'),
-          el('span', { class: 'muted', id: 'music-hint', 'data-keep': '1' }, brand.music ? `${brand.music_name} (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music chosen. ', el('a', { href: '#/brand', text: 'Pick a track or add your own on the Brand page' }), '.']))),
-      el('label', { class: 'check', for: 'graphics' }, el('input', { type: 'checkbox', id: 'graphics' }),
-        el('span', {}, el('strong', { text: 'Video has slides, cards or graphics' }), el('br'),
-          el('span', { class: 'muted', text: 'For explainers that cut away from the speaker to text cards, charts or pictures. Those moments are shown whole instead of cropped to the middle, so the text is not cut off. Moments with the speaker are still framed on their face.' }))),
-      el('label', { class: 'check', for: 'immersive' }, el('input', { type: 'checkbox', id: 'immersive' }),
-        el('span', {}, el('strong', { text: 'Slow push-ins' }), el('br'),
-          el('span', { class: 'muted', text: 'The picture eases in as a new sentence begins, then snaps back. Suits a person talking to camera.' }))))),
+          el('span', { class: 'muted', id: 'music-hint', 'data-keep': '1' }, brand.music ? `${brand.music_name} (${brand.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music chosen. ', el('a', { href: '#/brand', text: 'Pick a track or add your own on the Brand page' }), '.'])))),
+        el('div', { class: 'cpv-wrap' },
+          el('div', { class: 'cpv', id: 'cpv', role: 'img', 'aria-label': 'Preview of a clip with the chosen branding' },
+            el('span', { class: 'cpv-face' }), el('span', { class: 'cpv-cap' }, 'तुमची झोप ', el('em', { text: 'का' }), ' महत्त्वाची आहे'),
+            el('i', { class: 'cpv-t cpv-logo', text: 'Logo' }), el('i', { class: 'cpv-t cpv-banner', text: 'Watch the full video' }), el('i', { class: 'cpv-t cpv-cover', text: 'Cover title' }),
+            el('i', { class: 'cpv-t cpv-overlay' }), el('i', { class: 'cpv-t cpv-outro', text: '+ ending video' })),
+          el('p', { class: 'small muted', text: 'A sample clip with your choices.' })))),
     err, progress,
     el('div', { class: 'actionbar' }, el('div', { class: 'abar' },
-      el('label', { class: 'row small muted', for: 'rights', style: { alignItems: 'flex-start', flexWrap: 'nowrap', gap: '10px' } }, rights,
-        el('span', { text: 'I own this video or have the rights to process it.' })),
+      el('div', { class: 'sum', id: 'sum', 'aria-live': 'polite' }),
       el('div', { class: 'grp' },
         c.gpu_worker && c.gpu_worker.enabled && el('div', { class: 'gpu' }, icon('cpu', 18),
           el('select', { id: 'gpu', 'aria-label': 'Which GPU does the heavy work' }, [['auto', 'GPU: automatic'], ['pod', 'GPU: on-demand (billed by time)'], ['home', 'GPU: home only']].map(([v, t]) => el('option', { value: v, text: t }))),
           !(c.gpu_worker.estimate || (c.accounts && c.pricing)) && tip(GPU_HELP, 'the GPU choice')),
         ((c.gpu_worker && c.gpu_worker.estimate) || (c.accounts && c.pricing)) && el('div', { class: 'cost' }, icon('wallet', 18), el('span', { class: 'cost-val', id: 'cost-val', 'aria-live': 'polite', text: '₹ —' }), costTip),
-        status, cancelBtn, submit))));
+        status, cancelBtn, backBtn, nextBtn, submit))));
+
 
   const $ = (id) => form.querySelector('#' + id);
   for (const id of ['clips', 'multi', 'gpu']) if ($(id)) $(id).addEventListener('change', estimateCost);
@@ -1069,6 +1107,7 @@ async function newJobView() {
     mbox.disabled = !b.music; mbox.checked = !!b.music && !!b.settings.default_music; mlabel.className = b.music ? 'check' : 'check muted';
     $('music-hint').replaceChildren(...[].concat(b.music ? `${b.music_name} (${b.music_seconds} s), kept below the voice and lowered further while someone talks.` : ['No music for this brand. ', el('a', { href: '#/brand', text: 'Open the Brand page' }), '.']));
     $('speaker').placeholder = b.settings.speaker_name || ''; $('role').placeholder = b.settings.speaker_title || '';
+    syncUI();
   };
   if ($('brand')) {
     $('brand').value = brand.id;
@@ -1077,16 +1116,152 @@ async function newJobView() {
   applyBrand(brand);
   $('style').addEventListener('change', lengthChanged);                                              // the style sets the clip length
 
-  const aside = el('div', { class: 'aside' },
-    el('section', { class: 'card' }, el('h2', { text: 'What happens next' }),
-      el('ol', { class: 'steps' },
-        ['Transcribe: word-by-word timing, in the spoken language.', 'Plan: AI picks self-contained moments and writes the hook and title.',
-          'Frame: a vertical crop that follows the speaker.', 'Render: captions, hook, stat and name card burned in.'].map((t) => el('li', { text: t })))),
-    c.gpu_worker && c.gpu_worker.enabled && el('section', { class: 'card' }, el('h2', { text: 'Speech recognition' }),
-      el('p', { class: 'small', style: { margin: 0 }, text: c.gpu_worker.online ? (c.gpu_worker.render ? 'A GPU worker is online: transcription is fast and clips are rendered on it too.' : 'A GPU worker is online: transcription should be fast.') : 'No GPU worker is online right now, so the server transcribes on its CPU, which is slower. Start the worker and it takes over by itself.' })),
-    el('section', { class: 'callout' }, el('h2', { text: 'How AI is used' }),
-      el('p', { class: 'small', style: { margin: 0 }, text: 'AI chooses the cut points, titles, hooks and emphasised words. Your footage stays real. Nothing AI-generated is added, and every job keeps a record of what the AI decided.' })));
-  app.replaceChildren(el('div', { class: 'layout' }, form, aside));
+  // ---- steps, goals, sizing, the live summary and the sample clip ---------------------------------------------------------------------
+  const stepBtns = [...form.querySelectorAll('.stepb')];
+  const panels = [0, 1, 2].map((i) => $(`step-${i}`));
+  const GOAL_NAME = Object.fromEntries(GOALS.map(([id, , t]) => [id, t]));
+  let step = 0, goal = '';
+  const custom = { count: false, len: false };
+  function showStep(i, scroll = true) {
+    step = i;
+    panels.forEach((p, k) => { p.hidden = k !== i; });
+    stepBtns.forEach((b, k) => { if (k === i) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); b.classList.toggle('done', k < i); });
+    backBtn.hidden = i === 0; nextBtn.hidden = i === 2; submit.hidden = i !== 2;
+    nextBtn.textContent = i === 0 ? 'Next: Goal' : 'Next: Branding';
+    syncUI();
+    if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  function syncUI() {
+    if (!ready) return;
+    const opt = $('language').selectedOptions[0];
+    const feats = [['logo', 'Logo'], ['overlay', 'Overlay'], ['cover', 'Cover title'], ['show_banner', 'Banner'], ['outro', 'Ending video'], ['music', 'Music']].filter(([id]) => $(id) && $(id).checked).map(([, t]) => t);
+    const single = goal === 'whole' || goal === 'clean';
+    const n = $('clips').value.trim(), lo = $('min_clip').value.trim(), hi = $('max_clip').value.trim();
+    const made = single ? '1 reel' : `${n || 'auto'} reels${lo && hi ? ` of ${lo}–${hi} s` : ''}`;
+    $('sum').textContent = [opt ? opt.textContent : '', GOAL_NAME[goal], made, feats.length ? feats.join(', ') : 'no branding'].filter(Boolean).join(' · ');
+    $('stepv-0').textContent = file ? file.name : 'Choose a video';
+    $('stepv-1').textContent = GOAL_NAME[goal] || '';
+    $('stepv-2').textContent = feats.length ? feats.join(', ') : 'none';
+    const pv = $('cpv');
+    for (const [id, cls] of [['logo', 'logo'], ['overlay', 'overlay'], ['cover', 'cover'], ['show_banner', 'banner'], ['outro', 'outro']]) pv.classList.toggle(`on-${cls}`, !!$(id).checked);
+    $('sizing').hidden = single;
+    $('sizing-custom').hidden = single || !(custom.count || custom.len);
+  }
+  const setPill = (key, value) => form.querySelectorAll(`[data-pills="${key}"] .pill`).forEach((b) => b.setAttribute('aria-checked', b.dataset.value === value ? 'true' : 'false'));
+  const setLen = (lo, hi) => { $('min_clip').value = lo; $('max_clip').value = hi; $('min_clip').dispatchEvent(new Event('input')); };
+  const setClips = (v) => { $('clips').value = v; $('clips').dispatchEvent(new Event('input')); };
+  const toggleBox = (id, on) => { if ($(id).checked !== on) { $(id).checked = on; $(id).dispatchEvent(new Event('change')); } };
+  const pickMulti = (v) => { const b = $('multi').parentElement.querySelector(`[data-value="${v}"]`); if (b) b.click(); };
+  function applyGoal(g) {
+    goal = g;
+    form.querySelectorAll('.goalopt').forEach((b) => b.setAttribute('aria-checked', b.dataset.goal === g ? 'true' : 'false'));
+    toggleBox('clean', false); toggleBox('explainer', false); $('graphics').checked = false; $('immersive').checked = false; pickMulti('off');         // every goal starts from the same plain settings
+    custom.count = false; custom.len = false;
+    setClips(''); setPill('count', ''); setLen('30', '60'); setPill('len', '30-60');
+    if (g === 'vox') { pickMulti('switch'); setLen('15', '45'); setPill('len', 'other'); custom.len = true; }
+    else if (g === 'clean') toggleBox('clean', true);
+    else if (g === 'explainer') toggleBox('explainer', true);
+    else if (g === 'edited') { $('graphics').checked = true; $('immersive').checked = true; }
+    else if (g === 'whole') setLen('', '');
+    syncUI();
+  }
+  form.addEventListener('click', (e) => {
+    const goalBtn = e.target.closest('.goalopt');
+    if (goalBtn) { applyGoal(goalBtn.dataset.goal); return; }
+    const pill = e.target.closest('.pill');
+    if (!pill) return;
+    const key = pill.parentElement.dataset.pills, v = pill.dataset.value;
+    setPill(key, v);
+    custom[key] = v === 'other';
+    if (key === 'count' && v !== 'other') setClips(v);
+    if (key === 'len' && v !== 'other') { const [lo, hi] = v.split('-'); setLen(lo, hi); }
+    syncUI();
+    if (v === 'other') $(key === 'count' ? 'clips' : 'min_clip').focus();
+  });
+  stepBtns.forEach((b, i) => b.addEventListener('click', () => showStep(i)));
+  backBtn.addEventListener('click', () => showStep(Math.max(0, step - 1)));
+  nextBtn.addEventListener('click', () => showStep(Math.min(2, step + 1)));
+  form.addEventListener('change', syncUI);
+  form.addEventListener('input', syncUI);
+  drop.addEventListener('drop', syncUI);
+  app.replaceChildren(form);
+  ready = true;
+  showStep(0, false);
+  applyGoal(goalHint || 'talk');
+}
+
+// ---- shared page header: every screen starts the same way (title, one line of purpose, the page's actions) ------------------------------
+function pageHead(title, purpose, ...actions) {
+  return el('header', { class: 'phead' },
+    el('div', { class: 'phead-text' }, el('h1', { text: title }), purpose ? el('p', { class: 'lead', text: purpose }) : null),
+    actions.filter(Boolean).length ? el('div', { class: 'phead-actions' }, ...actions.filter(Boolean)) : null);
+}
+const DAY = 86400000;
+const ago = (iso) => {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 129600) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+};
+
+// ---- Home: where a person lands after signing in. What is running, what needs them, and the next thing to do ---------------------------
+async function homeView() {
+  const c = state.config;
+  const [jobs, me, brand] = await Promise.all([
+    api('/jobs').catch((e) => { if (e instanceof SignInNeeded) throw e; return []; }),
+    c.accounts && c.signed_in ? api('/me').catch((e) => { if (e instanceof SignInNeeded) throw e; return null; }) : null,
+    api('/brand').catch((e) => { if (e instanceof SignInNeeded) throw e; return null; }),
+  ]);
+  const running = jobs.filter((j) => j.status === 'running' || j.status === 'queued');
+  const ready = jobs.filter((j) => j.status === 'done' && Date.now() - new Date(j.created_at).getTime() < 3 * DAY && j.clips.some((k) => k.ready));
+  const failed = jobs.filter((j) => j.status === 'failed' && Date.now() - new Date(j.created_at).getTime() < 7 * DAY);
+
+  // what needs the person, most urgent first. Every item says what to do and links there.
+  const todo = [];
+  failed.slice(0, 3).forEach((j) => todo.push({ tone: 'bad', ic: 'triangle-alert', title: 'A job did not finish', text: `${j.name} · ${ago(j.created_at)}`, href: `#/jobs/${j.id}`, go: 'See why' }));
+  if (me && me.left_minutes < 10) todo.push({ tone: 'warn', ic: 'wallet', title: `${me.left_minutes} minutes left`, text: 'Add minutes before your next job so it does not stop at the start.', href: '#/account', go: 'Add minutes' });
+  ready.slice(0, 3).forEach((j) => {
+    const n = j.clips.filter((k) => k.ready).length;
+    todo.push({ tone: 'ok', ic: 'send', title: `${n} clip${n > 1 ? 's' : ''} ready to share`, text: `${j.name} · ${ago(j.created_at)}`, href: `#/jobs/${j.id}`, go: 'Open' });
+  });
+  if (brand && !brand.logo && !(brand.settings && brand.settings.banner_handle) && jobs.length) todo.push({ tone: 'info', ic: 'badge-check', title: 'Your brand is empty', text: 'Add a logo, a channel name or an overlay once and every clip carries it.', href: '#/brand', go: 'Set up brand' });
+
+  const tile = (label, value, hint, href) => el(href ? 'a' : 'div', { class: 'tile', href: href || null }, el('span', { class: 'tile-l', text: label }), el('span', { class: 'tile-v', text: value }), el('span', { class: 'tile-h', text: hint }));
+  const tiles = el('div', { class: 'tiles' },
+    me ? tile('Minutes left', String(me.left_minutes), `${me.plan.name}${me.credit_minutes ? ` · ${me.credit_minutes} added` : ''}`, '#/account') : null,
+    me ? tile('Used this month', String(me.used_minutes), me.plan.monthly_minutes ? `of ${me.plan.monthly_minutes} in your plan` : 'minutes of video', '#/account') : null,
+    tile('Running now', String(running.length), running.length ? 'open Jobs to follow them' : 'nothing in progress', '#/jobs'),
+    tile('Jobs made', String(jobs.length), jobs.length ? `last one ${ago(jobs[0].created_at)}` : 'none yet', '#/jobs'));
+
+  const startCard = jobs.length ? null : el('section', { class: 'card hero' },
+    el('h2', { text: 'Make your first reel' }),
+    el('p', { class: 'muted', text: 'Upload one video. ClipCrow listens, picks the best moments, frames the speaker and burns in captions. It takes three short steps.' }),
+    el('ol', { class: 'flow' }, [['Video', 'Choose the file and its language.'], ['Goal', 'Reels from a long talk, a clean take, an explainer or the whole video.'], ['Branding', 'Logo, overlay, cover title and ending, with a preview.']].map(([t, d]) => el('li', {}, el('strong', { text: t }), el('span', { text: d })))),
+    el('div', { class: 'row' }, el('a', { class: 'btn primary', href: '#/new', text: 'New job' })));
+
+  const attention = el('section', { class: 'card stack' }, el('h2', { text: 'Needs you' }),
+    todo.length ? el('ul', { class: 'todo' }, todo.map((t) => el('li', { class: `todo-${t.tone}` }, el('span', { class: 'todo-ic' }, icon(t.ic, 18)),
+      el('span', { class: 'todo-t' }, el('strong', { text: t.title }), el('span', { text: t.text })), el('a', { class: 'btn', href: t.href, text: t.go }))))
+      : el('p', { class: 'muted', text: running.length ? 'Nothing needs you. Your jobs are running; we email you when they finish if you turned that on.' : 'Nothing needs you right now.' }));
+
+  const recent = el('section', { class: 'card stack' }, el('div', { class: 'row between' }, el('h2', { text: 'Recent jobs' }), el('a', { href: '#/jobs', text: 'All jobs' })),
+    jobs.length ? el('ul', { class: 'recent' }, jobs.slice(0, 5).map((j) => el('li', {},
+      el('a', { href: `#/jobs/${j.id}`, translate: 'no', text: j.name }),
+      el('span', { class: `badge ${STATUS_CLASS[j.status]}`, text: statusText(j) }),
+      el('span', { class: 'small muted', text: ago(j.created_at) }))))
+      : el('p', { class: 'muted', text: 'Jobs you start appear here.' }));
+
+  const guides = el('section', { class: 'stack' }, el('h2', { text: 'Get more out of ClipCrow' }),
+    el('div', { class: 'guides' }, [
+      ['badge-check', 'Brand once, use everywhere', 'Logo, overlay, cover title, channel banner and ending video are saved to your brand and ticked on every new job.', '#/brand', 'Open Brand'],
+      ['scissors', 'Clean up a raw recording', 'Cuts ums, restarts and dead air and keeps picture and sound in sync. Best for one person to camera.', '#/new?goal=clean', 'Start a clean take'],
+      ['image', 'Explain with your screenshots', 'Add pictures and ClipCrow shows each one when the speaker names it, with its source, and moves the captions out of the way.', '#/new?goal=explainer', 'Start an explainer'],
+      ['palette', 'Copy a look you like', 'Measure a reference video once and reuse its clip length, caption style and pace on new jobs.', '#/styles', 'Open Styles'],
+    ].map(([ic, t, d, href, go]) => el('a', { class: 'guide', href }, el('span', { class: 'guide-ic' }, icon(ic, 20)), el('strong', { text: t }), el('span', { text: d }), el('span', { class: 'guide-go', text: go })))));
+
+  app.replaceChildren(pageHead('Home', 'What is running, what needs you, and the next thing to make.', jobs.length ? el('a', { class: 'btn primary', href: '#/new', text: 'New job' }) : null),
+    startCard, tiles, el('div', { class: 'two' }, attention, recent), guides);
 }
 
 const STATUS_CLASS = { queued: 'queued', running: 'running', done: 'done', failed: 'failed', cancelled: 'cancelled' };
@@ -1503,7 +1678,7 @@ async function jobsView() {
         el('td', {}, el('span', { class: `badge ${STATUS_CLASS[j.status]}`, text: statusText(j) })),
         el('td', { text: when(j.created_at) }),
         el('td', { text: j.clips.length ? `${j.clips.filter((c) => c.ready).length} of ${j.clips.length}` : '—' }))))))
-    : el('div', { class: 'card empty' }, el('div', { class: 'ico' }, icon('film', 26)), 'No jobs yet. ', el('a', { href: '#/', text: 'Start one' }), '.');
+    : el('div', { class: 'card empty' }, el('div', { class: 'ico' }, icon('film', 26)), 'No jobs yet. ', el('a', { href: '#/new', text: 'Start one' }), '.');
   app.replaceChildren(el('h1', { text: 'Jobs' }), el('div', { style: { height: '16px' } }), body);
 }
 
@@ -2382,7 +2557,7 @@ async function route() {
   const hash = location.hash || '#/';
   renderAcct();
   document.querySelectorAll('nav a').forEach((a) => {
-    const on = (a.dataset.nav === 'new' && (hash === '#/' || hash === '#' || hash === '#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs')) || (a.dataset.nav === 'brand' && hash.startsWith('#/brand')) || (a.dataset.nav === 'styles' && hash === '#/styles') || (a.dataset.nav === 'account' && hash === '#/account');
+    const on = (a.dataset.nav === 'home' && (hash === '#/' || hash === '#')) || (a.dataset.nav === 'new' && hash.startsWith('#/new')) || (a.dataset.nav === 'jobs' && hash.startsWith('#/jobs')) || (a.dataset.nav === 'brand' && hash.startsWith('#/brand')) || (a.dataset.nav === 'styles' && hash === '#/styles') || (a.dataset.nav === 'account' && hash === '#/account');
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   try {
@@ -2390,7 +2565,8 @@ async function route() {
     if (hash === '#/privacy') return legalView('privacy');
     if (state.config.needs_login && !state.config.signed_in) return loginView();
     let m;
-    if (hash === '#/' || hash === '#' || hash === '#/new') await newJobView();
+    if (hash === '#/' || hash === '#') await homeView();
+    else if ((m = hash.match(/^#\/new(?:\?goal=(talk|vox|clean|edited|explainer|whole))?$/))) await newJobView(m[1] || '');
     else if ((m = hash.match(/^#\/brand(?:\/([a-f0-9]{12}))?$/))) await brandView(m[1]);
     else if (hash === '#/styles') { const v = await stylesView(); cleanup = v.cleanup; }
     else if (hash === '#/jobs') await jobsView();

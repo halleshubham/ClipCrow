@@ -47,17 +47,20 @@ def test_the_script_parses():
     assert r.returncode == 0, r.stderr[:400]
 
 
-def test_the_options_people_use_every_time_are_not_hidden_behind_more_options():
-    """New job: language, clip count, reel length, people, brand toggles, raw-recording clean-up, the GPU choice and the cost are on the page itself."""
+def test_the_options_people_use_every_time_are_not_hidden_behind_fine_tune():
+    """New job is three steps (video, goal, branding). The everyday options sit in the steps themselves; only the rare ones are inside Fine-tune."""
     js = read("app.js")
-    start = js.index("async function newJobView()")
+    start = js.index("async function newJobView(")
     body = js[start:]
-    more = body.index("el('details', { class: 'adv' }")
-    for needle in ("id: 'language'", "id: 'clips'", "id: 'min_clip'", "id: 'max_clip'", "segmented('multi'", "chip('logo'", "chip('cover'", "chip('show_banner'", "chip('outro'", "chip('clean'"):
-        assert body.index(needle) < more, f"{needle} must sit above 'More options'"
-    after = body[more:]
-    assert "id: 'gpu'" in after and "id: 'cost-val'" in after                     # beside Generate clips
-    assert body.index("id: 'gpu'") > more and body.index("id: 'cost-val'") > body.index("class: 'actionbar'")
+    fine = body.index("el('details', { class: 'adv fine' }")
+    for needle in ("id: 'language'", "id: 'clips'", "id: 'min_clip'", "id: 'max_clip'", "segmented('multi'", "chip('logo'", "chip('cover'", "chip('show_banner'", "chip('outro'", "id: 'step-2'"):
+        assert needle in body, needle
+    for needle in ("id: 'language'", "id: 'clips'", "id: 'min_clip'", "id: 'max_clip'", "segmented('multi'"):
+        assert body.index(needle) < fine, f"{needle} must sit above Fine-tune"
+    assert body.index("chip('logo'") > fine or "chip('logo'" in body[body.index("id: 'step-2'"):], "brand chips are on the Branding step"
+    for goal in ("'talk'", "'vox'", "'clean'", "'edited'", "'explainer'", "'whole'"):
+        assert goal in js[js.index("const GOALS = ["):js.index("function pillGroup")], goal       # the five goals
+    assert "id: 'gpu'" in body and "id: 'cost-val'" in body and body.index("id: 'cost-val'") > body.index("class: 'actionbar'")
 
 
 def test_a_select_is_drawn_as_a_control_you_open_not_as_a_text_box():

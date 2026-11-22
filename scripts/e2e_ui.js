@@ -21,14 +21,17 @@ const fail = (m) => { console.error('FAIL:', m); process.exit(1); };
     await page.goto(`${base}/dashboard#/jobs/${process.env.JOB_ID}`);
     await page.waitForSelector('.clipcard video', { timeout: 30000 });
   } else {
-    await page.goto(base);
+    await page.goto(`${base}/dashboard#/new`);
     await page.waitForSelector('h1:has-text("New job")');
+    await page.click('.stepb[data-step="2"]');                  // the last step carries Generate; a missing file sends you back to step 1 with a message
     await page.click('button:has-text("Generate clips")');
     if (!(await page.locator('[role=alert]').innerText()).includes('Choose a video')) fail('no message without a file');
     await page.setInputFiles('#file', video);
+    await page.click('.stepb[data-step="2"]');
     await page.click('button:has-text("Generate clips")');
     if (!(await page.locator('[role=alert]').innerText()).includes('rights')) fail('no message without the rights box');
     await page.check('#rights');
+    await page.click('.stepb[data-step="2"]');
     await page.click('button:has-text("Generate clips")');
     await page.waitForURL(/#\/jobs\/[a-f0-9]{12}/, { timeout: 60000 });
     await page.waitForFunction(() => document.querySelector('.badge')?.textContent === 'Done', null, { timeout: 480000 });
