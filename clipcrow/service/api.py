@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Callable, Literal, Optional, Union
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -2559,8 +2559,16 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
     # The landing page is the front door (static/index.html, served at /); the app itself is at /dashboard (hash routes: /dashboard#/jobs/...).
     @app.get("/dashboard", include_in_schema=False)
     @app.get("/dashboard/", include_in_schema=False)
-    def dashboard_page() -> FileResponse:
-        return FileResponse(STATIC / "dashboard.html", media_type="text/html")
+    def dashboard_page(request: Request) -> Response:
+        # Cloudflare may give the files a browser cache of hours whatever the origin says: a version in the address (from the file contents) makes a deploy reach every browser at once.
+        html = (STATIC / "dashboard.html").read_text(encoding="utf-8")
+        for name in ("style.css", "app.js", "icons.css"):
+            ver = hashlib.sha256((STATIC / name).read_bytes()).hexdigest()[:10]
+            html = html.replace(f'"/{name}"', f'"/{name}?v={ver}"')
+        etag = '"' + hashlib.sha256(html.encode()).hexdigest()[:16] + '"'
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag})
+        return HTMLResponse(html, headers={"ETag": etag})
 
     @app.get("/landing", include_in_schema=False)
     @app.get("/landing/", include_in_schema=False)
