@@ -62,13 +62,13 @@ class AnthropicLLM:
     cheaper one for the scoring pass.
     """
 
-    def __init__(self, model: str | None = None, *, max_tokens: int = 8000, client=None):
+    def __init__(self, model: str | None = None, *, max_tokens: int = 8000, client=None, by_purpose: dict | None = None):
         import anthropic  # imported lazily: the planner's tests need no SDK or key
         self._anthropic = anthropic
         self.client = client or anthropic.Anthropic()
         self.model = model or os.environ.get("CLIPCROW_MODEL") or DEFAULT_MODEL
         self.max_tokens = max_tokens
-        self.by_purpose = purpose_models()
+        self.by_purpose = purpose_models() if by_purpose is None else dict(by_purpose)
         self._calls: list[CallUsage] = []
         self._lock = threading.Lock()
         self._local = threading.local()

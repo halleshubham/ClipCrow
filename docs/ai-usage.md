@@ -1,6 +1,6 @@
 # AI usage: where the tokens go, and how to spend fewer
 
-Status 2026-11-23: plan items 1 to 4 are built (Operator usage card; stored answers per job, cleared when a job is started over; `CLIPCROW_MODEL_SCORE|REFINE|VERIFY|JUDGE`, all unset by default; text correction only for doubtful sentences, `CLIPCROW_REFINE_ALL=1` for all). Items 5 to 9 are not built. Set the cheaper models only after comparing outputs on real recordings.
+Status 2026-11-23: plan items 1 to 4 are built (Operator usage card; stored answers per job, cleared when a job is started over; `CLIPCROW_MODEL_SCORE|REFINE|VERIFY|JUDGE`, all unset by default; text correction only for doubtful sentences, OFF unless `CLIPCROW_REFINE_DOUBTFUL=1`). Items 5 to 9 are not built. Nothing that can change a result is on by default. Before switching one on, run `clipcrow compare-models` (below).
 
 Audit of 2026-11-23, from the code (no production numbers yet: see "Measure first"). Prices are in `clipcrow/costs.py` (USD per million tokens, input / output).
 
@@ -51,3 +51,19 @@ Suggested order: 1, 3, 2 (with the comparison), 4, 7, then 5, 8, 9, 6.
 ## Measure first
 
 Before changing a default, run 3 to 5 real recordings (a Marathi talk, a Hindi one, an English one, one cleaned, one explainer) and record tokens and USD per `purpose` for the current setup. Then run the same transcripts with the cheaper models, and compare outputs (picked windows, corrected sentences, cuts), not only the bill. Keep the comparison in `.claude/development-log.md`.
+
+## The quality rule: no saving ships on a guess
+
+- **Quality-neutral by construction, on now:** the answer cache returns exactly the answer a call already got for the same model, purpose, schema and prompt; any change to the recording, options or model asks again. The usage table only reads. Both can be left on.
+- **Can change results, off until measured:** `CLIPCROW_MODEL_SCORE|REFINE|VERIFY|JUDGE` and `CLIPCROW_REFINE_DOUBTFUL=1`.
+- **How to measure:** `clipcrow compare-models TRANSCRIPT.json --cheap claude-haiku-5-5 [--baseline MODEL] [--what score,refine,judge]` runs both models on the same real transcript (spends tokens, needs `ANTHROPIC_API_KEY`) and compares the decisions:
+
+| Part | Passes when |
+|---|---|
+| score | at least 80% of the windows that go on to the detail pass are the same, and the rank correlation of all windows is at least 0.7 |
+| refine (cheaper model) | the two models treat at least 95% of sentences the same way (same correction, or both leave it) |
+| refine (doubtful only) | at most 5% of the corrections the baseline made are on sentences the shortcut would not have asked about |
+| judge | at least 80% of the lines either model would cut are cut by both |
+
+It prints the verdict per part (exit status 1 if any part fails) and the tokens and list-price cost of both runs. Use 3 to 5 recordings (a Marathi talk, a Hindi one, an English one, one that needs cleanup). Switch on only the parts that pass on all of them, one at a time, and write the result in `.claude/development-log.md`.
+- **Never moved to a cheaper model:** `detail` (titles, hooks, clips), `repair`, `beats` (picture choices), `style:captions`. These write what viewers see.

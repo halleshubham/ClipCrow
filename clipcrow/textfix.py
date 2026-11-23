@@ -43,7 +43,8 @@ Rules:
 LANGUAGE_NAME = {"mr": "Marathi", "hi": "Hindi"}
 
 # Which sentences are worth a paid correction. Whisper is sure of most words; the model is asked only about the sentences where it was not, or where it wrote a
-# word that is Hindi and not Marathi. When the transcript has no word confidences (subtitle cues) every sentence is sent, as before. CLIPCROW_REFINE_ALL=1 sends all.
+# word that is Hindi and not Marathi. OFF unless CLIPCROW_REFINE_DOUBTFUL=1, because it can only be switched on safely after ``clipcrow compare-models`` shows
+# how many corrections it would miss on real recordings. Without it, or when the words carry no confidences (subtitle cues), every sentence is sent.
 DOUBT_MIN_CONF = 0.6             # a word the recogniser was less sure of than this
 DOUBT_MEAN_CONF = 0.85           # or a sentence whose words average below this
 HINDI_IN_MARATHI = frozenset("है हैं नहीं क्या था थी थे और यह वह कि को में से का की के मैं हम आप तुम लेकिन भी रहा रही रहे हूँ हूं".split())
@@ -95,8 +96,15 @@ def _retime(words: list, new_tokens: list[str]) -> list[dict]:
 
 
 def doubtful(tr: Transcript) -> list:
-    """The sentences worth asking the model about (all of them when the words carry no confidences, or when ``CLIPCROW_REFINE_ALL=1``)."""
-    if os.environ.get("CLIPCROW_REFINE_ALL") == "1" or not any(w.conf is not None for w in tr.words):
+    """The sentences worth asking the model about. All of them unless ``CLIPCROW_REFINE_DOUBTFUL=1`` and the words carry confidences."""
+    if os.environ.get("CLIPCROW_REFINE_DOUBTFUL") != "1":
+        return list(tr.sentences)
+    return flagged(tr)
+
+
+def flagged(tr: Transcript) -> list:
+    """The doubtful sentences by the rules above (what ``doubtful`` returns when the switch is on)."""
+    if not any(w.conf is not None for w in tr.words):
         return list(tr.sentences)
     out = []
     for s in tr.sentences:
@@ -109,16 +117,11 @@ def doubtful(tr: Transcript) -> list:
     return out
 
 
-def refine(tr: Transcript, llm, *, say: Callable[[str], None] = lambda _m: None) -> tuple[Transcript, int]:
-    """The corrected transcript and how many sentences changed. Batches that fail keep their original words."""
+def corrections(tr: Transcript, llm, todo: list, *, say: Callable[[str], None] = lambda _m: None) -> dict[int, str]:
+    """``{sentence id: corrected text}`` for the sentences in ``todo`` that the model changed and that still look like the same sentence. Batches that fail are skipped."""
     name = LANGUAGE_NAME.get(tr.language)
-    if name is None or not tr.sentences:
-        return tr, 0
     system = SYSTEM.format(language=name)
     fixed: dict[int, str] = {}
-    todo = doubtful(tr)
-    if len(todo) < len(tr.sentences):
-        say(f"checking {len(todo)} of {len(tr.sentences)} sentences (the others the recogniser was sure of)")
     for i in range(0, len(todo), BATCH):
         batch = todo[i:i + BATCH]
         user = "\n".join(f"{s.id}: {s.text}" for s in batch)
@@ -127,16 +130,30 @@ def refine(tr: Transcript, llm, *, say: Callable[[str], None] = lambda _m: None)
         except Exception as e:                                     # a refusal, a rate limit, a timeout: the raw words are still good
             say(f"text correction skipped for sentences {batch[0].id}-{batch[-1].id}: {type(e).__name__}")
             continue
-        ids = {s.id for s in batch}
+        ids = {s.id: s for s in batch}
         for item in got.items:
-            if item.id in ids and item.id not in fixed:
-                fixed[item.id] = item.text
+            s = ids.get(item.id)
+            if s is not None and item.id not in fixed:
+                old = tr.words[s.first:s.last + 1]
+                if acceptable(s.text, item.text) and item.text.split() != [w.w for w in old]:
+                    fixed[item.id] = item.text
+    return fixed
+
+
+def refine(tr: Transcript, llm, *, say: Callable[[str], None] = lambda _m: None) -> tuple[Transcript, int]:
+    """The corrected transcript and how many sentences changed. Batches that fail keep their original words."""
+    if LANGUAGE_NAME.get(tr.language) is None or not tr.sentences:
+        return tr, 0
+    todo = doubtful(tr)
+    if len(todo) < len(tr.sentences):
+        say(f"checking {len(todo)} of {len(tr.sentences)} sentences (the others the recogniser was sure of)")
+    fixed = corrections(tr, llm, todo, say=say)
     words: list[dict] = []
     changed = 0
     for s in tr.sentences:
         old = tr.words[s.first:s.last + 1]
         new = fixed.get(s.id)
-        if new is not None and acceptable(s.text, new) and new.split() != [w.w for w in old]:
+        if new is not None:
             words.extend(_retime(old, new.split()))
             changed += 1
         else:

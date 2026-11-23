@@ -106,6 +106,11 @@ def main(argv: list[str] | None = None) -> int:
     st.add_argument("--no-render", action="store_true", help="check the tools only")
     u = sub.add_parser("usage", help="show the AI-usage record of an EDL")
     u.add_argument("edl")
+    cm = sub.add_parser("compare-models", help="run the current model and a cheaper one on the same transcript and compare their decisions (needs ANTHROPIC_API_KEY; spends tokens)")
+    cm.add_argument("transcript")
+    cm.add_argument("--cheap", required=True, help="the model to try, e.g. claude-haiku-5-5")
+    cm.add_argument("--baseline", help="the model it must match (default: $CLIPCROW_MODEL or the built-in one)")
+    cm.add_argument("--what", default="score,refine,judge", help="comma list of: score, refine, judge")
     pl = sub.add_parser("plan", help="transcript -> EDL with an LLM (needs ANTHROPIC_API_KEY)")
     pl.add_argument("transcript"); pl.add_argument("--source", required=True, help="the source video file")
     pl.add_argument("--out", required=True); pl.add_argument("--media-root", default=".")
@@ -298,6 +303,15 @@ def main(argv: list[str] | None = None) -> int:
                        say=lambda m: print(f"  {m}", file=sys.stderr))
             print(f"{len(res.edl.clips)} clip(s) -> {a.out}" + (f"; rendered {len(res.videos)}" if res.videos else ""))
             return 0
+        if a.cmd == "compare-models":
+            from .aicompare import compare
+            from .planner import AnthropicLLM, load_transcript
+            tr = load_transcript(a.transcript)
+            report = compare(tr, AnthropicLLM(a.baseline, by_purpose={}), AnthropicLLM(a.cheap, by_purpose={}), tuple(x.strip() for x in a.what.split(",")))
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+            bad = [k for k, v in report.items() if isinstance(v, dict) and v.get("ok") is False]
+            print("SAFE to use the cheaper model for: " + (", ".join(k for k in report if k != "cost" and k not in bad) or "nothing") + (f"; NOT safe for: {', '.join(bad)}" if bad else ""), file=sys.stderr)
+            return 1 if bad else 0
         edl = None if a.cmd in ("plan",) else load_edl(a.edl)
         if a.cmd == "usage":
             from .provenance import summary

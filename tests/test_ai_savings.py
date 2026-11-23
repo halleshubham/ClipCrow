@@ -31,7 +31,7 @@ class FakeClient:
 
 @pytest.fixture(autouse=True)
 def no_model_env(monkeypatch):
-    for k in ("CLIPCROW_MODEL", "CLIPCROW_MODEL_SCORE", "CLIPCROW_MODEL_REFINE", "CLIPCROW_MODEL_VERIFY", "CLIPCROW_MODEL_JUDGE", "CLIPCROW_REFINE_ALL"):
+    for k in ("CLIPCROW_MODEL", "CLIPCROW_MODEL_SCORE", "CLIPCROW_MODEL_REFINE", "CLIPCROW_MODEL_VERIFY", "CLIPCROW_MODEL_JUDGE", "CLIPCROW_REFINE_DOUBTFUL"):
         monkeypatch.delenv(k, raising=False)
 
 
@@ -101,7 +101,8 @@ def _tr(sentences, language="mr"):
     return parse_transcript({"language": language, "words": words})
 
 
-def test_only_sentences_the_recogniser_doubted_are_sent():
+def test_only_sentences_the_recogniser_doubted_are_sent(monkeypatch):
+    monkeypatch.setenv("CLIPCROW_REFINE_DOUBTFUL", "1")
     tr = _tr([[("मी", 0.95), ("घरी", 0.97), ("गेलो", 0.9)],          # sure
               [("तो", 0.95), ("काल", 0.3), ("आला", 0.9)],            # one unsure word
               [("मी", 0.99), ("नहीं", 0.99), ("गेलो", 0.99)]])       # Hindi in Marathi
@@ -111,12 +112,15 @@ def test_only_sentences_the_recogniser_doubted_are_sent():
     assert len(calls) == 1 and "0:" not in calls[0] and "1:" in calls[0] and "2:" in calls[0]
 
 
-def test_without_confidences_or_when_asked_everything_is_sent(monkeypatch):
+def test_by_default_everything_is_sent_and_without_confidences_too(monkeypatch):
+    sure0 = _tr([[("मी", 0.99), ("घरी", 0.99)], [("तो", 0.99), ("आला", 0.99)]])
+    assert len(textfix.doubtful(sure0)) == 2                                  # the switch is off: nothing is skipped
+    monkeypatch.setenv("CLIPCROW_REFINE_DOUBTFUL", "1")
     tr = _tr([[("मी", None), ("घरी", None)], [("तो", None), ("आला", None)]])
     assert len(textfix.doubtful(tr)) == 2
     sure = _tr([[("मी", 0.99), ("घरी", 0.99)], [("तो", 0.99), ("आला", 0.99)]])
     assert textfix.doubtful(sure) == []
-    monkeypatch.setenv("CLIPCROW_REFINE_ALL", "1")
+    monkeypatch.delenv("CLIPCROW_REFINE_DOUBTFUL")
     assert len(textfix.doubtful(sure)) == 2
 
 

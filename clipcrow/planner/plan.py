@@ -95,6 +95,29 @@ def target_count(duration: float, opts: PlannerOptions) -> int:
     return max(1, min(opts.max_clips, n))
 
 
+def score_windows(tr: Transcript, windows: list[Window], llm: LLM, opts: PlannerOptions, report: dict) -> dict[int, float]:
+    """Pass 1: a score per window id (one fixed score when the whole recording is one clip). Raises PlanError when every call failed."""
+    batches = [] if opts.whole else [windows[i:i + opts.score_batch] for i in range(0, len(windows), opts.score_batch)]
+
+    def score_batch(batch: list[Window]):
+        items = [(w.id, "\n".join(prompts.fmt_sentence(s) for s in w.sentences(tr.sentences))) for w in batch]
+        try:
+            res = llm.generate(prompts.SYSTEM, prompts.score_prompt(items, opts.min_clip, opts.max_clip),
+                               ScoreResult, purpose="score")
+        except LLMError as e:
+            report["warnings"].append(f"scoring batch skipped: {e}")
+            return []
+        return res.windows
+
+    scores: dict[int, float] = {0: 1.0} if opts.whole else {}                  # nothing to rank when there is one clip
+    for ws in _map(score_batch, batches, opts.workers):
+        for s in ws:
+            scores[s.id] = window_score(s)
+    if not scores:
+        raise PlanError("every scoring call failed", report)
+    return scores
+
+
 def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions | None = None,
              *, score_llm: LLM | None = None) -> Plan:
     opts = opts or PlannerOptions()
@@ -113,24 +136,7 @@ def plan_edl(tr: Transcript, source: SourceInfo, llm: LLM, opts: PlannerOptions 
     say(f"{len(tr.sentences)} sentences, {len(windows)} windows" if not opts.whole else f"{len(tr.sentences)} sentences, one clip for the whole recording")
 
     # --- pass 1: score windows --------------------------------------------------
-    batches = [] if opts.whole else [windows[i:i + opts.score_batch] for i in range(0, len(windows), opts.score_batch)]
-
-    def score_batch(batch: list[Window]):
-        items = [(w.id, "\n".join(prompts.fmt_sentence(s) for s in w.sentences(tr.sentences))) for w in batch]
-        try:
-            res = score_llm.generate(prompts.SYSTEM, prompts.score_prompt(items, opts.min_clip, opts.max_clip),
-                                     ScoreResult, purpose="score")
-        except LLMError as e:
-            report["warnings"].append(f"scoring batch skipped: {e}")
-            return []
-        return res.windows
-
-    scores: dict[int, float] = {0: 1.0} if opts.whole else {}                  # nothing to rank when there is one clip
-    for ws in _map(score_batch, batches, opts.workers):
-        for s in ws:
-            scores[s.id] = window_score(s)
-    if not scores:
-        raise PlanError("every scoring call failed", report)
+    scores = score_windows(tr, windows, score_llm, opts, report)
     for w in windows:
         report["windows"].append({"id": w.id, "start": round(w.start, 1), "end": round(w.end, 1),
                                   "score": round(scores.get(w.id, 0.0), 3)})
