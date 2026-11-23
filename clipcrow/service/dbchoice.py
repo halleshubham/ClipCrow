@@ -7,6 +7,7 @@ starts beside ClipCrow; the compose file sets it and the operator never has to. 
   server at an empty database makes every account look deleted. ``CLIPCROW_ALLOW_EMPTY_DB=1`` says "yes, I really want a fresh database".
 * Else the bundled PostgreSQL is used, unless the SQLite file has people and the bundled database has none: then the server KEEPS USING the SQLite file and says so loudly,
   so adding the bundled database to a running installation can never lose anyone. ``clipcrow migrate-db`` moves the people; after that the bundled database takes over.
+  With ``CLIPCROW_AUTO_MIGRATE_DB=1`` the server does that copy itself at start (and stays on the SQLite file if the copy fails).
 * Else (a fresh install, or no database variable at all): the SQLite file.
 
 The report and the messages never contain the address (it holds a password).
@@ -72,6 +73,21 @@ def choose(data_dir: str | Path, env: Optional[Mapping[str, str]] = None) -> Cho
                 raise DatabaseChoiceError(
                     f"DATABASE_URL points at an EMPTY database, but the SQLite file in {data} has {waiting} people. Starting would make every account look deleted. "
                     "Move them first (in the container terminal: clipcrow migrate-db --data /data), or set CLIPCROW_ALLOW_EMPTY_DB=1 if you really want a fresh database.")
+            if not explicit and env.get("CLIPCROW_AUTO_MIGRATE_DB") == "1":
+                # The operator asked for the move to happen by itself (there is no terminal to type migrate-db in). It is the same copy: repeatable, read-only on
+                # the SQLite file, and it checks the counts and the purchased minutes. Any problem leaves the server on the SQLite file, exactly as before.
+                try:
+                    from .dbmigrate import migrate
+                    report = migrate(sqlite, acc)
+                    if people(acc) < waiting:
+                        raise RuntimeError("fewer people arrived than were in the SQLite file")
+                    return Choice(acc, "bundled", f"moved {report.get('users', 0)} people (and {report.get('sessions', 0)} sessions, {report.get('usage', 0)} usage rows) from the SQLite file into "
+                                                  "the bundled PostgreSQL; the SQLite file is untouched and is no longer used. Remove CLIPCROW_AUTO_MIGRATE_DB once you have checked.")
+                except Exception as e:                                    # noqa: BLE001 - whatever went wrong, the people stay where they are
+                    acc.db.close()
+                    keep = Accounts(sqlite, secret_file=secret)
+                    return Choice(keep, "sqlite-waiting", f"moving the people into the bundled PostgreSQL failed ({type(e).__name__}), so the SQLite file is still in use and nothing was lost. "
+                                                          "Details are in the log; fix the cause or run: clipcrow migrate-db --data /data")
             if not explicit:
                 acc.db.close()
                 keep = Accounts(sqlite, secret_file=secret)

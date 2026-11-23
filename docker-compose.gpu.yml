@@ -79,6 +79,7 @@ services:
       - DATABASE_URL=${DATABASE_URL:-}
       - CLIPCROW_DB_POOL=${CLIPCROW_DB_POOL:-}
       - CLIPCROW_BUNDLED_DB=postgresql://clipcrow:${SERVICE_PASSWORD_POSTGRES:-${POSTGRES_PASSWORD}}@postgres:5432/clipcrow
+      - CLIPCROW_AUTO_MIGRATE_DB=${CLIPCROW_AUTO_MIGRATE_DB:-}   # 1 = on start, copy the people from the SQLite file into the bundled PostgreSQL (safe to leave on; remove it afterwards)
       - CLIPCROW_ALLOW_EMPTY_DB=${CLIPCROW_ALLOW_EMPTY_DB:-}
       # --- shutdown: how long a deploy waits for the running job before putting it back in the queue
       - DRAIN_TIMEOUT_SECONDS=${DRAIN_TIMEOUT_SECONDS:-45}

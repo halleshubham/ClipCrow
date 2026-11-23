@@ -95,3 +95,35 @@ def test_once_the_people_are_moved_the_database_takes_over(data, pg_url):
     c = choose(data, {"DATABASE_URL": pg_url})
     assert c.kind == "explicit"
     c.accounts.db.close()
+
+
+def test_the_server_can_move_the_people_itself_and_a_second_start_just_uses_the_database(data, pg_url):
+    with_people(data, 3)
+    c = choose(data, {"CLIPCROW_BUNDLED_DB": pg_url, "CLIPCROW_AUTO_MIGRATE_DB": "1"})
+    assert c.kind == "bundled" and c.accounts.postgres and c.accounts.by_email("p2@example.com") is not None
+    assert "moved 3 people" in c.note and pg_url not in c.note
+    c.accounts.db.close()
+    assert sqlite_people(data / "clipcrow.db") == 3                                   # the old file is untouched
+    again = choose(data, {"CLIPCROW_BUNDLED_DB": pg_url, "CLIPCROW_AUTO_MIGRATE_DB": "1"})
+    assert again.kind == "bundled" and not again.note                                 # nothing left to move
+    again.accounts.db.close()
+
+
+def test_a_failed_automatic_move_leaves_everyone_on_the_sqlite_file(data, pg_url, monkeypatch):
+    from clipcrow.service import dbmigrate
+    with_people(data, 2)
+
+    def boom(*a, **k):
+        raise RuntimeError("secret detail that must not be shown")
+    monkeypatch.setattr(dbmigrate, "migrate", boom)
+    c = choose(data, {"CLIPCROW_BUNDLED_DB": pg_url, "CLIPCROW_AUTO_MIGRATE_DB": "1"})
+    assert c.kind == "sqlite-waiting" and c.accounts.postgres is False and c.accounts.by_email("p0@example.com")
+    assert "failed" in c.note and "RuntimeError" in c.note and "secret detail" not in c.note and pg_url not in c.note
+    c.accounts.db.close()
+
+
+def test_the_switch_does_nothing_without_the_bundled_database(data):
+    with_people(data, 1)
+    c = choose(data, {"CLIPCROW_AUTO_MIGRATE_DB": "1"})
+    assert c.kind == "sqlite" and not c.note
+    c.accounts.db.close()

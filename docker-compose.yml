@@ -72,6 +72,7 @@ services:
       # the PostgreSQL service above. Used unless DATABASE_URL names another one; if the SQLite file still holds your people it keeps being used (with a warning) until you run
       # clipcrow migrate-db, so adding this service to a running installation cannot lose anyone.
       - CLIPCROW_BUNDLED_DB=postgresql://clipcrow:${SERVICE_PASSWORD_POSTGRES:-${POSTGRES_PASSWORD}}@postgres:5432/clipcrow
+      - CLIPCROW_AUTO_MIGRATE_DB=${CLIPCROW_AUTO_MIGRATE_DB:-}   # 1 = on start, copy the people from the SQLite file into the bundled PostgreSQL (safe to leave on; remove it afterwards)
       - CLIPCROW_ALLOW_EMPTY_DB=${CLIPCROW_ALLOW_EMPTY_DB:-}   # 1 = start on an empty DATABASE_URL although the SQLite file has people (a deliberate fresh start)
       - CLIPCROW_DB_POOL=${CLIPCROW_DB_POOL:-}              # PostgreSQL connections kept ready (default 10)
       - CLIPCROW_SECRET_KEY=${CLIPCROW_SECRET_KEY:-}        # keys sign-in codes and seals stored credentials; empty = a random one in /data/clipcrow.secret (back it up)
