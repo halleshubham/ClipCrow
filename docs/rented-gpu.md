@@ -65,3 +65,11 @@ upload a fresh tarball of the repo to `/workspace/clipcrow-src.tar.gz` and run `
 worker needs the new image (`docker pull`). Seen on 2026-11-19: a pod built from a tarball of the morning rendered with the old banner layout and failed the layout check.
 
 **Order of workers.** With on-demand pods configured, a job set to *Automatic* behaves like *On-demand GPU* first: the pod is woken (and the next pod tried). Only when the pods cannot take the task (the provider has no GPU, the wake keeps failing, the daily limit is reached) does it go to any other connected worker, the home GPU, and only after that to the server. Set `CLIPCROW_GPU_FALLBACK=strict` to stop that hand-over, `CLIPCROW_WORKER_DISABLED=home-gpu` to switch the home GPU off.
+
+## A second kind of pod: RTX PRO 4500 (set up 2026-11-23)
+`start-pod` with `slice_id` 52, `template_id` 1 (Jupyter PyTorch), `disk_size` 60, `enable_ssh` false gave a pod with an RTX PRO 4500 Blackwell (the catalogue says 48 GB, the pod reports about 32 GB) at 55 INR an hour; torch 2.11+cu128 sees it. Setup took about 3 minutes (`setup_pod.sh`) plus `chromelibs.sh`. Notes from doing it:
+- Jupyter's contents API root IS `/workspace`: upload to `scripts.sh`, not `workspace/scripts.sh`; it refuses names that start with a dot (a token file must be called `hfhdr.txt`, not `.hfhdr`).
+- `chromelibs.sh` used to overwrite `env.sh` with an older copy that lost the Chrome path and the CUDA library paths; it no longer writes it. Upload `env.sh` first.
+- SraVaani is 0.91 GB. Either download it on your machine and copy it up in chunks, or (with the owner's agreement) put the Hugging Face token in a mode-600 header file for a `curl -H @file` download of each file at the pinned revision, then `shred` the file and check nothing else holds it.
+- Give a rented pod its own token: `CLIPCROW_WORKER_TOKEN_RENTED` on the server, the same value as `CLIPCROW_WORKER_TOKEN` in the pod's `worker.env`, so revoking the pod never touches the home worker. The server must be restarted to learn it.
+
