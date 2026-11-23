@@ -1,5 +1,7 @@
 # AI usage: where the tokens go, and how to spend fewer
 
+Status 2026-11-23: plan items 1 to 4 are built (Operator usage card; stored answers per job, cleared when a job is started over; `CLIPCROW_MODEL_SCORE|REFINE|VERIFY|JUDGE`, all unset by default; text correction only for doubtful sentences, `CLIPCROW_REFINE_ALL=1` for all). Items 5 to 9 are not built. Set the cheaper models only after comparing outputs on real recordings.
+
 Audit of 2026-11-23, from the code (no production numbers yet: see "Measure first"). Prices are in `clipcrow/costs.py` (USD per million tokens, input / output).
 
 ## Where Claude is called

@@ -1007,6 +1007,11 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
     def admin_storage(admin: User = Depends(admin_only)) -> dict:
         return {**storage_report(), "superadmin": admin.email in env_admins}
 
+    @app.get("/api/admin/ai-usage")
+    def admin_ai_usage(days: int = 30, admin: User = Depends(admin_only)) -> dict:
+        from .aiusage import summarize
+        return summarize(store, days)
+
     @app.post("/api/admin/storage/cleanup")
     def admin_storage_cleanup(request: Request, admin: User = Depends(superadmin_only)) -> dict:
         """Remove from the server the clip files that have an identical copy in the bucket. Each one is checked with the bucket first (the object must be there, same size)."""
@@ -1904,6 +1909,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
             reset_from(j, step)                                           # keeps the steps before ``step`` as finished; None starts everything over
             j.resume_from = body.resume_from if step else None
             j.add_log("run again by request" + (f", continuing from the {step} step" if step else ""))
+        if not step:                                                      # starting over wants a new try: the stored AI answers of the last one are dropped
+            from ..planner.llm import clear_cache
+            clear_cache(store.dir(job_id) / "out" / "llm_cache")
         store.update(job_id, reset)
         runner.submit(job_id)
         return view(store.get(job_id))

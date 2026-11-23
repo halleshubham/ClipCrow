@@ -117,3 +117,11 @@ def test_old_jobs_with_no_owner_are_given_to_one_account_and_kept(tmp_path, stor
     assert all(j.id not in {x["id"] for x in helper.get("/api/jobs").json()} for j in old)              # and nobody else's
     assert boss.post("/api/admin/jobs/claim", json={"email": "boss@example.com"}).json() == {"assigned": 0}   # safe to repeat
     assert boss.get("/api/admin/storage").json()["unowned_jobs"] == 0
+
+
+def test_the_ai_usage_table_is_for_operators_only(tmp_path, storage, monkeypatch):
+    app, a, boss, helper = _admin_app(tmp_path, monkeypatch, storage)
+    r = boss.get("/api/admin/ai-usage?days=7")
+    assert r.status_code == 200 and r.json()["days"] == 7 and r.json()["rows"] == []
+    stranger = TestClient(app)
+    assert stranger.get("/api/admin/ai-usage").status_code in (401, 403)

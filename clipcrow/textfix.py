@@ -12,6 +12,7 @@ What is trusted and what is not:
 """
 from __future__ import annotations
 
+import os
 from typing import Callable
 
 from pydantic import BaseModel
@@ -40,6 +41,12 @@ Rules:
 - No quotation marks or explanations around a sentence; plain text only."""
 
 LANGUAGE_NAME = {"mr": "Marathi", "hi": "Hindi"}
+
+# Which sentences are worth a paid correction. Whisper is sure of most words; the model is asked only about the sentences where it was not, or where it wrote a
+# word that is Hindi and not Marathi. When the transcript has no word confidences (subtitle cues) every sentence is sent, as before. CLIPCROW_REFINE_ALL=1 sends all.
+DOUBT_MIN_CONF = 0.6             # a word the recogniser was less sure of than this
+DOUBT_MEAN_CONF = 0.85           # or a sentence whose words average below this
+HINDI_IN_MARATHI = frozenset("है हैं नहीं क्या था थी थे और यह वह कि को में से का की के मैं हम आप तुम लेकिन भी रहा रही रहे हूँ हूं".split())
 
 
 class Fixed(BaseModel):
@@ -87,6 +94,21 @@ def _retime(words: list, new_tokens: list[str]) -> list[dict]:
     return out
 
 
+def doubtful(tr: Transcript) -> list:
+    """The sentences worth asking the model about (all of them when the words carry no confidences, or when ``CLIPCROW_REFINE_ALL=1``)."""
+    if os.environ.get("CLIPCROW_REFINE_ALL") == "1" or not any(w.conf is not None for w in tr.words):
+        return list(tr.sentences)
+    out = []
+    for s in tr.sentences:
+        ws = tr.words[s.first:s.last + 1]
+        confs = [w.conf for w in ws if w.conf is not None]
+        unsure = bool(confs) and (min(confs) < DOUBT_MIN_CONF or sum(confs) / len(confs) < DOUBT_MEAN_CONF)
+        hindi = tr.language == "mr" and any(w.w.strip(".,?!।…\"'()").strip() in HINDI_IN_MARATHI for w in ws)
+        if unsure or hindi:
+            out.append(s)
+    return out
+
+
 def refine(tr: Transcript, llm, *, say: Callable[[str], None] = lambda _m: None) -> tuple[Transcript, int]:
     """The corrected transcript and how many sentences changed. Batches that fail keep their original words."""
     name = LANGUAGE_NAME.get(tr.language)
@@ -94,8 +116,11 @@ def refine(tr: Transcript, llm, *, say: Callable[[str], None] = lambda _m: None)
         return tr, 0
     system = SYSTEM.format(language=name)
     fixed: dict[int, str] = {}
-    for i in range(0, len(tr.sentences), BATCH):
-        batch = tr.sentences[i:i + BATCH]
+    todo = doubtful(tr)
+    if len(todo) < len(tr.sentences):
+        say(f"checking {len(todo)} of {len(tr.sentences)} sentences (the others the recogniser was sure of)")
+    for i in range(0, len(todo), BATCH):
+        batch = todo[i:i + BATCH]
         user = "\n".join(f"{s.id}: {s.text}" for s in batch)
         try:
             got = llm.generate(system, user, Fixes, purpose="text-refine")

@@ -197,7 +197,7 @@ sentences ─► windows (≥90 s, overlapping) ─► [LLM] score hook / comple
   if it is still wrong the on-screen hook is dropped (the clip keeps its title and is flagged).
 - **Untrusted transcript**: it is fenced as data, the system prompt says so, and every output is
   length-capped, control-character-stripped, validated and HTML-escaped later.
-- **Models**: `$CLIPCROW_MODEL` or `claude-opus-5-5`; `--score-model` takes a cheaper one for the scoring pass.
+- **Models**: `$CLIPCROW_MODEL` or `claude-opus-5-5`; `--score-model` takes a cheaper one for the scoring pass. On the service, `CLIPCROW_MODEL_SCORE`, `_REFINE` (Marathi/Hindi text correction), `_VERIFY` (cleanup read-through) and `_JUDGE` (retake judge) name a cheaper model for those easy calls; unset means the main model (`docs/ai-usage.md`).
   A refusal or truncation skips one window instead of failing the plan.
 - Tested with a scripted model; **not yet run against the live API** (needs `ANTHROPIC_API_KEY`).
 - `examples/plan_demo.py --render` runs planner → EDL → MP4 end to end with a scripted model.

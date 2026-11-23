@@ -399,6 +399,21 @@ async function adminUserView(userId) {
     el('section', { class: 'card stack' }, el('h2', { text: 'Ledger' }), ledger)));
 }
 
+// What the AI spent in the last 30 days, by kind of call, from the plans the jobs saved; and what the answer cache saved. Numbers only; prices are list prices.
+const AI_WORDS = { score: 'Scoring the windows', detail: 'Picking clips and writing copy', repair: 'Rewriting in the right script', 'text-refine': 'Correcting Marathi/Hindi text',
+  'retake-judge': 'Judging retakes', 'retake-verify': 'Final read-through', beats: 'Picture choices', 'style:captions': 'Reading a reference look' };
+function aiUsageCard(ai) {
+  const usd = (v) => (v == null ? '—' : `$${v.toFixed(v < 1 ? 3 : 2)}`);
+  const n = (v) => v.toLocaleString();
+  const picked = Object.entries(ai.models).filter(([k]) => k !== 'main').map(([k, m]) => `${k}: ${m}`);
+  return el('section', { class: 'card stack' }, el('h2', { text: `AI usage, last ${ai.days} days` }),
+    el('p', { class: 'small muted', text: `${ai.jobs} job${ai.jobs === 1 ? '' : 's'}, about ${usd(ai.per_job_usd)} each, ${usd(ai.total_usd)} in all${ai.unpriced ? ' (some models have no known price)' : ''}. Main model ${ai.models.main}${picked.length ? '; cheaper models: ' + picked.join(', ') : '; no cheaper model is set for the easy calls'}.` }),
+    ai.rows.length ? el('div', { class: 'tablewrap' }, el('table', {}, el('thead', {}, el('tr', {}, ['What', 'Model', 'Calls', 'Input tokens', 'Output tokens', 'Cost'].map((h, i) => el('th', { class: i > 1 ? 'num' : '', text: h })))),
+      el('tbody', {}, ai.rows.map((r) => el('tr', {}, el('td', { text: AI_WORDS[r.purpose] || r.purpose }), el('td', { translate: 'no', text: r.model }), el('td', { class: 'num', text: n(r.calls) }),
+        el('td', { class: 'num', text: n(r.input_tokens) }), el('td', { class: 'num', text: n(r.output_tokens) }), el('td', { class: 'num', text: usd(r.est_usd) })))))) : el('p', { class: 'small muted', text: 'No plans in this period yet.' }),
+    el('p', { class: 'small muted', text: ai.cache.hits ? `The answer cache served ${n(ai.cache.hits)} repeated call${ai.cache.hits === 1 ? '' : 's'}, about ${n(ai.cache.input_tokens + ai.cache.output_tokens)} tokens and ${usd(ai.cache.est_usd)} not paid again.` : 'The answer cache has not been needed yet: it saves the cost of a call that a retry or a restart would ask again.' }));
+}
+
 const AUDIT_WORDS = { 'view-as-start': 'started viewing', 'view-as-stop': 'stopped viewing', credits: 'changed minutes', plan: 'changed plan', disable: 'disabled account', enable: 'enabled account',
   settings: 'changed settings', 'settings-reset': 'reset a setting', 'claim-jobs': 'gave old jobs to', 'storage-cleanup': 'removed local clips', 'storage-upload-missing': 'uploaded missing copies' };
 
@@ -443,6 +458,7 @@ async function adminView(notice) {
   const ov = await api('/admin/overview');
   const st = await api('/admin/storage');
   const audit = ov.superadmin ? (await api('/admin/audit')).entries : [];
+  const ai = await api('/admin/ai-usage?days=30').catch(() => null);
   const err = el('div', { class: 'alert', role: 'alert', hidden: true });
   const act = async (path, body) => {
     err.hidden = true;
@@ -485,6 +501,7 @@ async function adminView(notice) {
     err,
     storageCard(st, state.config.email, adminView, typeof notice === 'string' ? notice : ''),
     moneyCard(ov.money),
+    ai && aiUsageCard(ai),
     el('section', { class: 'card stack' }, el('h2', { text: `People (${people.length})` }),
       el('div', { class: 'tablewrap people' }, el('table', {}, el('thead', {}, el('tr', {}, peopleHead.map((t, i) => el('th', { class: ['Minutes left', 'Used this month', 'Jobs'].includes(t) ? 'num' : '', text: t })))), el('tbody', {}, rows)))),
     ov.superadmin ? el('section', { class: 'card stack' }, el('h2', { text: 'Audit log' }),

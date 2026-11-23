@@ -36,6 +36,10 @@ services:
       # --- the planner
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - CLIPCROW_MODEL=${CLIPCROW_MODEL:-}
+      - CLIPCROW_MODEL_SCORE=${CLIPCROW_MODEL_SCORE:-}
+      - CLIPCROW_MODEL_REFINE=${CLIPCROW_MODEL_REFINE:-}
+      - CLIPCROW_MODEL_VERIFY=${CLIPCROW_MODEL_VERIFY:-}
+      - CLIPCROW_MODEL_JUDGE=${CLIPCROW_MODEL_JUDGE:-}
       - CLIPCROW_INDIC_MODEL=${CLIPCROW_INDIC_MODEL:-}      # e.g. large-v3 for Marathi/Hindi
       - CLIPCROW_WHISPER_DEVICE=${CLIPCROW_WHISPER_DEVICE:-}  # empty = auto: the GPU when one is visible, else the CPU
       - CLIPCROW_ASR=${CLIPCROW_ASR:-}                      # sravaani = SraVaani first for Marathi/Hindi (needs HF_TOKEN of an account with access), Whisper as the fallback

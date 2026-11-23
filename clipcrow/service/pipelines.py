@@ -100,7 +100,7 @@ class RealPipeline:
     hub = None                                                   # a WorkerHub, set by create_app when CLIPCROW_WORKER_TOKEN is on
 
     def run(self, job: Job, video: Path, out: Path, hooks: Hooks, say) -> MakeResult:
-        from ..planner import AnthropicLLM
+        from ..planner import AnthropicLLM, CachingLLM
         from ..planner.llm import Interruptible
         transcribe_fn = None
         hub = hub_view(self.hub, job)
@@ -143,7 +143,7 @@ class RealPipeline:
                     extra.update(edl_path=rp.edl_path, skip_frame=rp.skip_frame, skip_render=rp.rendered)
             else:
                 say("the earlier steps could not be reused: starting from the beginning")
-        kw = dict(language=job.params.language, clean_take=job.params.clean_take, **recut, llm=Interruptible(AnthropicLLM(), hooks.check), opts=planner_options(job, out.parent / "pictures"),
+        kw = dict(language=job.params.language, clean_take=job.params.clean_take, **recut, llm=Interruptible(CachingLLM(AnthropicLLM(), out / "llm_cache"), hooks.check), opts=planner_options(job, out.parent / "pictures"),
                     hooks=hooks, say=say, multi=job.params.multi, graphics=job.params.graphics, clean=job.params.clean, clean_pace=job.params.clean_pace, transcribe_fn=transcribe_fn, render_fn=render_fn,
                     images=self._images() if job.params.ai_images else None,
                     gsap_js=os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"),

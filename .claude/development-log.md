@@ -362,3 +362,9 @@ A restart used to put an interrupted job back with EVERY stage pending, so a job
 
 ## 2026-11-23: the UI files carry a version in their address
 Cloudflare gave `/app.js` and `/style.css` a 4-hour browser cache (`max-age=14400`) whatever the origin sent (`no-cache`), so a deploy could leave old JavaScript in browsers for hours. `/dashboard` now links `/style.css?v=<hash>`, `/app.js?v=<hash>` and `/icons.css?v=<hash>` (hash of the file contents), and has its own ETag, so a new deploy changes the address and reaches everyone at once.
+
+## 2026-11-23: fewer tokens (stored answers, a model per purpose, correcting only doubtful sentences, usage table)
+- `CachingLLM` (planner/llm.py) keeps every validated answer in `out/llm_cache/` keyed by model, purpose, schema and exact prompt; a retry, restart or "continue from" asks nothing twice. "Run again" without a step (start over) clears it, because that person wants a new try. Counters in `_stats.json`.
+- `CLIPCROW_MODEL_SCORE|REFINE|VERIFY|JUDGE` pick a cheaper model for scoring, text correction, the cleanup read-through and the retake judge. Unset (default) changes nothing; titles, hooks and picture choices always use the main model. Not switched on yet: compare outputs first (docs/ai-usage.md).
+- `textfix.doubtful`: text correction sends only sentences with a word under 0.6 confidence, a mean under 0.85, or Hindi words in Marathi; all of them when the words carry no confidence or `CLIPCROW_REFINE_ALL=1`. Thresholds are a first guess: measure on real recordings.
+- Operator > "AI usage" card (`/api/admin/ai-usage`): tokens and list-price cost by kind of call and model for the last 30 days, and what the cache saved.
