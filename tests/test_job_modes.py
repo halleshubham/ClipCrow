@@ -1,6 +1,7 @@
 """Job records wherever they live: the files, both, or the database only. The same lifecycle, the same answers, and no lost update when writers race."""
 import json
 import threading
+import time
 
 import pytest
 
@@ -26,6 +27,7 @@ def test_a_job_through_its_whole_life(kit):
     mode, tmp, docs, st = kit
     a = st.create("Podcast ep 12", Params())
     a = st.update(a.id, lambda j: (setattr(j, "owner", OWNER), setattr(j, "status", "running")))
+    time.sleep(0.01)                                                                             # created_at has millisecond resolution: keep the two apart
     b = st.create("Another", Params())
     st.update(b.id, lambda j: setattr(j, "owner", OTHER))
     assert st.exists(a.id) and not st.exists("0" * 12) and st.get(a.id).status == "running" and st.get(a.id).owner == OWNER

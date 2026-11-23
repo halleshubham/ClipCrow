@@ -55,10 +55,10 @@ class JobRows:
     def briefs(self) -> list[tuple[str, Optional[str], str, str]]:
         """``(id, owner, status, created_at)`` newest first: one query, no parsing."""
         return [(r["id"], r["owner"], r["status"], r["created_at"])
-                for r in self.db.q("SELECT id, owner, status, created_at FROM jobs ORDER BY created_at DESC").fetchall()]
+                for r in self.db.q("SELECT id, owner, status, created_at FROM jobs ORDER BY created_at DESC, id DESC").fetchall()]
 
     def texts(self) -> list[str]:
-        return [r["doc"] for r in self.db.q("SELECT doc FROM jobs ORDER BY created_at DESC").fetchall()]
+        return [r["doc"] for r in self.db.q("SELECT doc FROM jobs ORDER BY created_at DESC, id DESC").fetchall()]
 
     def ids(self) -> list[str]:
         return [r["id"] for r in self.db.q("SELECT id FROM jobs ORDER BY id").fetchall()]
