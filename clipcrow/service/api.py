@@ -105,6 +105,7 @@ class LogoPreview(BaseModel):
 
 class RetryBody(BaseModel):
     multi: Optional[Literal["switch", "split", "off"]] = None
+    resume_from: Optional[Literal["auto", "plan", "frame", "render"]] = None      # continue from a step this job already finished (the job's "resumable" lists them); None = start over
 
 
 class BrandName(BaseModel):
@@ -463,6 +464,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
         d["queue_position"] = runner.queue_position(job.id) if job.status == "queued" else 0
         days = days_for(job)[0]
         d["expires_at"] = None if (job.sample or job.keep) else expires_at(job, days)        # a sample is never expired by retention
+        if job.status in ("failed", "cancelled"):                         # the steps a person can continue from (resume.py): a few file checks, only for a job that stopped
+            from .resume import available
+            d["resumable"] = available(job, store.dir(job.id) / "out")
         return d
 
     def charge_minutes(duration: float) -> int:
@@ -1876,6 +1880,10 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
             raise HTTPException(409, "A finished job is run again only with a changed option.")
         if store.source_path(job_id) is None:
             raise HTTPException(409, "The video of this job is no longer on the server, so it cannot be run again. Upload it again.")
+        from .resume import reset_from, resolve
+        step = resolve(job, store.dir(job_id) / "out", body.resume_from) if body and body.resume_from else None
+        if body and body.resume_from and step is None:
+            raise HTTPException(409, "That step cannot be continued from: its saved result is missing. Choose an earlier step, or start over.")
         problem = pipeline.check_ready()
         if problem:
             raise HTTPException(503, problem)
@@ -1893,9 +1901,9 @@ def create_app(data_dir: str | Path, pipeline: Pipeline, *, max_upload_mb: int =
             j.reserved_minutes = minutes
             if body and body.multi:
                 j.params = j.params.model_copy(update={"multi": body.multi})
-            for st in j.stages:
-                st.state, st.detail = "pending", ""
-            j.add_log("run again by request")
+            reset_from(j, step)                                           # keeps the steps before ``step`` as finished; None starts everything over
+            j.resume_from = body.resume_from if step else None
+            j.add_log("run again by request" + (f", continuing from the {step} step" if step else ""))
         store.update(job_id, reset)
         runner.submit(job_id)
         return view(store.get(job_id))

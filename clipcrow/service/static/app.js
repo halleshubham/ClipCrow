@@ -1288,10 +1288,26 @@ async function jobView(jobId) {
     cancelBtn.disabled = true;
     try { job = await api(`/jobs/${jobId}/cancel`, { method: 'POST' }); update(); } catch (e) { cancelBtn.disabled = false; alert(e.message); }
   } });
+  // where "Run again" starts: from the beginning, or from a step this job already finished (only the steps that really can be continued are offered)
+  const RESUME_WORDS = { plan: 'Planning (keeps the words)', frame: 'Framing (keeps the plan)', render: 'Rendering (keeps finished clips)' };
+  const resumeSel = el('select', { class: 'resume-pick', 'aria-label': 'Where to continue from', hidden: true });
   const retryBtn = el('button', { class: 'btn primary', type: 'button', text: 'Run again', hidden: true, onclick: async () => {
     retryBtn.disabled = true;
-    try { job = await api(`/jobs/${jobId}/retry`, { method: 'POST' }); retryBtn.disabled = false; update(); } catch (e) { retryBtn.disabled = false; alert(e.message); }
+    const from = resumeSel.hidden ? '' : resumeSel.value;
+    try {
+      job = await api(`/jobs/${jobId}/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(from ? { resume_from: from } : {}) });
+      retryBtn.disabled = false; update();
+    } catch (e) { retryBtn.disabled = false; alert(e.message); }
   } });
+  const syncResume = () => {                                                     // fills the list from the job's own "resumable" steps
+    const steps = (job && job.resumable) || [];
+    const stopped = job && ['failed', 'cancelled'].includes(job.status);
+    resumeSel.hidden = !(stopped && steps.length);
+    if (resumeSel.hidden) return;
+    const keep = resumeSel.value;
+    resumeSel.replaceChildren(...[...steps].reverse().map((st) => el('option', { value: st, text: `Continue from: ${RESUME_WORDS[st] || st}` })), el('option', { value: '', text: 'Start over (everything again)' }));
+    resumeSel.value = [...resumeSel.options].some((o) => o.value === keep) ? keep : steps[steps.length - 1];
+  };
   const deleteBtn = el('button', { class: 'btn', type: 'button', text: 'Delete', onclick: async () => {
     if (!confirm('Delete this job and its clips?')) return;
     try { await api(`/jobs/${jobId}`, { method: 'DELETE' }); location.hash = '#/jobs'; } catch (e) { alert(e.message); }
@@ -1622,6 +1638,7 @@ async function jobView(jobId) {
     cancelBtn.hidden = !['queued', 'running'].includes(job.status);
     deleteBtn.hidden = ['queued', 'running'].includes(job.status);
     retryBtn.hidden = !['failed', 'cancelled'].includes(job.status);
+    syncResume();
     errBox.hidden = !job.error;
     errBox.textContent = job.error || '';
     renderStages();
@@ -1655,7 +1672,7 @@ async function jobView(jobId) {
 
   app.replaceChildren(
     el('div', { class: 'stack' },
-      el('div', { class: 'row' }, el('div', { class: 'grow' }, title, meta), badge, cancelBtn, retryBtn, deleteBtn),
+      el('div', { class: 'row' }, el('div', { class: 'grow' }, title, meta), badge, cancelBtn, resumeSel, retryBtn, deleteBtn),
       errBox,
       el('section', { class: 'card' }, stages),
       clipsSection,

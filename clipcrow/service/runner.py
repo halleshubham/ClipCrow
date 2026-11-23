@@ -67,9 +67,10 @@ class JobRunner:
         self._gen: dict[tuple[str, str], int] = {}               # bumped by every edit; a render only finishes the latest
 
     def recover(self) -> None:
-        """After a restart: queued jobs go back in the queue. A job a restart interrupted is queued AGAIN once (a long
-        transcription cannot always be stopped in time for a deploy, and losing it would waste the person's wait); a job that
-        was already interrupted once is marked failed, so one that keeps taking the server down cannot loop for ever."""
+        """After a restart: queued jobs go back in the queue. A job a restart interrupted is queued AGAIN (a long transcription cannot always be
+        stopped in time for a deploy, and losing it would waste the person's wait), and it CONTINUES from the furthest step it had finished
+        (``resume.py``) instead of starting over. A job that was already interrupted is tried again only if it got further than at the last restart
+        (and never more than ``MAX_RESTARTS`` times); otherwise it is marked failed, so one that keeps taking the server down cannot loop for ever."""
         for job in reversed(self.store.list()):
             if job.status == "queued":
                 self.submit(job.id)
@@ -83,12 +84,18 @@ class JobRunner:
                 self._finished(job)
             elif job.status == "running":
                 has_video = self.store.source_path(job.id) is not None or bool(job.source_pending)
-                if job.attempts < 1 and has_video:
+                from .resume import MAX_RESTARTS, available, progress
+                moved = job.progress_at_restart >= 0 and progress(job) > job.progress_at_restart      # got further than when the last restart put it back (no mark: no proof)
+                if (job.attempts < 1 or moved) and job.attempts < MAX_RESTARTS and has_video:
                     job.attempts += 1
+                    job.progress_at_restart = progress(job)
                     job.status = "queued"
                     for s in job.stages:
-                        s.state, s.detail = "pending", ""
-                    job.add_log("the server restarted while this job was running; it starts again by itself")
+                        if s.state == "running":                             # the step it was on stopped there; the finished ones stay finished
+                            s.state, s.detail = "pending", ""
+                    steps = available(job, self.store.dir(job.id) / "out")
+                    job.resume_from = "auto" if steps else None
+                    job.add_log("the server restarted while this job was running; " + (f"it continues from the {steps[-1]} step by itself" if steps else "it starts again by itself"))
                     self.store.save(job)
                     self.submit(job.id)
                     continue
@@ -213,6 +220,8 @@ class JobRunner:
         def stage(name: str, state: str, detail: str = "") -> None:
             job.cancel_requested = job.cancel_requested or ev.is_set()      # this thread saves its own copy of the job: keep the flag
             s = job.stage(name)
+            if job.resume_from and state == "skipped" and s.state == "done":
+                return                                                  # a step kept from before a restart stays "done" with its own detail
             if state == "running" and s.state != "running":
                 s.started, s.seconds = time.time(), None
             elif state in ("done", "failed", "skipped") and s.started is not None and s.seconds is None:
@@ -276,10 +285,14 @@ class JobRunner:
             job.status = "done"
         except Cancelled:
             if job_id in self._requeue and not job.cancel_requested:       # stopped by a deploy, not by a person
+                from .resume import available
                 job.status = "queued"
                 for s in job.stages:
-                    s.state, s.detail = "pending", ""
-                job.add_log("the server was restarted; this job starts again by itself")
+                    if s.state == "running":
+                        s.state, s.detail = "pending", ""
+                steps = available(job, store.dir(job_id) / "out")
+                job.resume_from = "auto" if steps else None
+                job.add_log("the server was restarted; " + (f"this job continues from the {steps[-1]} step by itself" if steps else "this job starts again by itself"))
             else:
                 job.status = "cancelled"
                 job.add_log("cancelled")
@@ -291,6 +304,8 @@ class JobRunner:
         for s in job.stages:
             if s.state == "running":
                 s.state = "failed" if job.status == "failed" else "pending"
+        if job.status != "queued":
+            job.resume_from = None                              # a finished, failed or cancelled run has used its resume request; a queued one (a deploy) keeps it
         store.save(job)
         self._finished(job)
 

@@ -129,8 +129,24 @@ class RealPipeline:
         if self.hub is not None:                                              # a worker with a GPU does the voice work; else it is done here
             from .workers import RemoteSpeakers
             recut.setdefault("speakers_fn", RemoteSpeakers(hub, job.id, check=hooks.check))
-        return make(video, out, language=job.params.language, clean_take=job.params.clean_take, **recut, llm=Interruptible(AnthropicLLM(), hooks.check), opts=planner_options(job, out.parent / "pictures"),
+        extra: dict = {}
+        if job.resume_from and getattr(self, "store", None) is not None:       # continue from a finished step: the files on disk are the proof (service/resume.py)
+            from .resume import plan_for
+            rp = plan_for(job, out, self.store.working_video(job.id))
+            if rp is not None:
+                say(f"continuing from the {rp.step} step: the earlier steps are kept")
+                video, recut, transcribe_fn = rp.video, {}, None               # the working video (the cleaned cut when the cleanup ran); a saved re-cut does not apply here
+                extra = dict(clean=False)                                      # the cleanup is already in the saved words and video
+                if rp.transcript_path is not None:
+                    extra["transcript_path"] = rp.transcript_path
+                if rp.edl_path is not None:
+                    extra.update(edl_path=rp.edl_path, skip_frame=rp.skip_frame, skip_render=rp.rendered)
+            else:
+                say("the earlier steps could not be reused: starting from the beginning")
+        kw = dict(language=job.params.language, clean_take=job.params.clean_take, **recut, llm=Interruptible(AnthropicLLM(), hooks.check), opts=planner_options(job, out.parent / "pictures"),
                     hooks=hooks, say=say, multi=job.params.multi, graphics=job.params.graphics, clean=job.params.clean, clean_pace=job.params.clean_pace, transcribe_fn=transcribe_fn, render_fn=render_fn,
                     images=self._images() if job.params.ai_images else None,
                     gsap_js=os.environ.get("CLIPCROW_GSAP", "vendor/gsap.min.js"),
                     refine_text=os.environ.get("CLIPCROW_TEXT_REFINE", "1") != "0")      # 0 = keep Whisper's Marathi/Hindi words as they are
+        kw.update(extra)
+        return make(video, out, **kw)

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Collection, Callable, Optional
 
 from .branding import BrandingChoice, BrandKit, apply_brand
 from .edl import EDL, load_edl
@@ -60,9 +60,11 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
          multi: str = "switch", graphics: bool = False, images=None, capture_fn=None,
          brand: BrandKit | None = None, choice: BrandingChoice | None = None, refine_text: bool = True,
          clean: bool = False, clean_pace: str = "natural", clean_take: str = "last", clean_cuts: list | None = None, clean_reading: dict | None = None,
-         speakers_fn: Callable | None = None) -> MakeResult:
+         speakers_fn: Callable | None = None, skip_frame: bool = False, skip_render: Collection[str] = ()) -> MakeResult:
     """``clean``: cut hesitation sounds, stutters, retakes and long dead air out of the raw recording first (``cleancut``). The cleaned video
-    (``out/clean.mp4``) becomes the source for everything after: planning, framing, rendering and later re-renders."""
+    (``out/clean.mp4``) becomes the source for everything after: planning, framing, rendering and later re-renders.
+    ``skip_frame`` (needs ``edl_path``, an EDL written after framing): pictures, framing and branding are not done again. ``skip_render``: clips (ids) that are already rendered are
+    kept as they are and only the others are made: how a job continues from the render step (``service/resume.py``)."""
     video, out = Path(video), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     report: dict = {}
@@ -170,36 +172,37 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
         say(f"planned {len(edl.clips)} clip(s)")
         hk.stage("plan", "done", f"{len(edl.clips)} clip(s)")
 
-    hk.check()
-    pending = [a for a in edl.assets if not a.uri and (a.origin in ("capture", "ai_image") or (a.origin == "upload" and a.ref))]
-    if pending:
-        from .assets.fetch import fetch_assets
-        hk.stage("assets", "running", f"{len(pending)} picture(s)")
-        kw = {"capture_fn": capture_fn} if capture_fn else {}
-        edl, warns = fetch_assets(edl, out, images=images, say=say, pictures={pid: Path(p) for pid, p in (opts.pictures if opts else ())}, **kw)
-        for w in warns:
-            say(w)
-        hk.stage("assets", "done", f"{sum(1 for a in edl.assets if a.uri)} of {len(pending)} picture(s) made")
-    else:
-        hk.stage("assets", "skipped", "no pictures requested")
-    hk.check()
-    hk.stage("frame", "running", "")
-    speakers = None
-    if multi != "off" and not graphics:                                  # who is on screen, who is heard, who is whose: once per video, kept in out/speakers.json
-        try:
-            if speakers_fn is None:
-                from .seats import build_speaker_map as speakers_fn
-            speakers = speakers_fn(video, out, detector=detector, say=say, check=hk.check)
-        except Exception as e:                                               # a model that will not load must never fail the job (a cancel is not an Exception): the picture alone decides
-            say(f"voices could not be matched to people ({type(e).__name__}); the picture alone decides who is shown")
-    edl = apply_framing(edl, str(video), detector=detector, say=say, multi=multi, graphics=graphics, speakers=speakers)
-    hk.stage("frame", "done", ", ".join(f"{c.id}: {c.layout.framing}" for c in edl.clips))
-    if choice is not None and choice.any():
-        edl = apply_brand(edl, brand or BrandKit(), choice, out)
-    hk.planned(edl, report)
-    (out / "edl.json").write_text(edl.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
-    if report:
-        (out / "plan-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not skip_frame:
+        hk.check()
+        pending = [a for a in edl.assets if not a.uri and (a.origin in ("capture", "ai_image") or (a.origin == "upload" and a.ref))]
+        if pending:
+            from .assets.fetch import fetch_assets
+            hk.stage("assets", "running", f"{len(pending)} picture(s)")
+            kw = {"capture_fn": capture_fn} if capture_fn else {}
+            edl, warns = fetch_assets(edl, out, images=images, say=say, pictures={pid: Path(p) for pid, p in (opts.pictures if opts else ())}, **kw)
+            for w in warns:
+                say(w)
+            hk.stage("assets", "done", f"{sum(1 for a in edl.assets if a.uri)} of {len(pending)} picture(s) made")
+        else:
+            hk.stage("assets", "skipped", "no pictures requested")
+        hk.check()
+        hk.stage("frame", "running", "")
+        speakers = None
+        if multi != "off" and not graphics:                                  # who is on screen, who is heard, who is whose: once per video, kept in out/speakers.json
+            try:
+                if speakers_fn is None:
+                    from .seats import build_speaker_map as speakers_fn
+                speakers = speakers_fn(video, out, detector=detector, say=say, check=hk.check)
+            except Exception as e:                                               # a model that will not load must never fail the job (a cancel is not an Exception): the picture alone decides
+                say(f"voices could not be matched to people ({type(e).__name__}); the picture alone decides who is shown")
+        edl = apply_framing(edl, str(video), detector=detector, say=say, multi=multi, graphics=graphics, speakers=speakers)
+        hk.stage("frame", "done", ", ".join(f"{c.id}: {c.layout.framing}" for c in edl.clips))
+        if choice is not None and choice.any():
+            edl = apply_brand(edl, brand or BrandKit(), choice, out)
+        hk.planned(edl, report)
+        (out / "edl.json").write_text(edl.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
+        if report:
+            (out / "plan-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     res = MakeResult(edl, out / "edl.json", report=report)
     if render:
@@ -208,6 +211,11 @@ def make(video: str | Path, out_dir: str | Path, *, language: Optional[str] = No
         hk.stage("render", "running", f"0 of {len(edl.clips)}")
         for i, c in enumerate(edl.clips):
             hk.check()
+            if c.id in skip_render and (out / f"{c.id}.mp4").is_file():
+                say(f"{c.id} was already rendered: kept")
+                res.videos.append(out / f"{c.id}.mp4")
+                hk.stage("render", "running", f"{i + 1} of {len(edl.clips)}")
+                continue
             say(f"rendering {c.id}")
             mp4, compiled = render_fn(edl, c.id, out / f"{c.id}.mp4", workdir=out / "work", media_root=video.parent,
                                       gsap_js=gsap_js, workers=workers, asset_root=out)
